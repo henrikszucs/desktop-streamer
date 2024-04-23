@@ -1,0 +1,20 @@
+{
+    "port":8888,
+    "key":"server.key",
+    "cert":"server.crt",
+    "allowRegister":true,
+    "email":{
+        "host":"smtp.outlook.com",
+        "port":465,
+        "user":"user@email.com",
+        "pass":"Password123"
+    },
+    "db":"database.db",
+    "users":[
+        {
+            "email":"",
+            "username":"admin",
+            "pass":"admin"
+        }
+    ]
+}
