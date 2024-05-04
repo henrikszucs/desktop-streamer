@@ -1,20 +1,19 @@
 {
-    "port":8888,
-    "key":"server.key",
-    "cert":"server.crt",
-    "allowRegister":true,
-    "email":{
-        "host":"smtp.outlook.com",
-        "port":465,
-        "user":"user@email.com",
-        "pass":"Password123"
-    },
-    "db":"database.db",
-    "users":[
+    "port": 8888,
+	"https": {
+		"key": "server.key",
+		"cert": "server.crt",
+		"redirectFrom": 8887
+	},
+    "db": "database.db",
+    "allowSameEmail": true,
+    "users": [
         {
-            "email":"",
-            "username":"admin",
-            "pass":"admin"
+            "email": "henyusi@gmail.com",
+            "username": "admin",
+            "pass": "admin",
+            "isAdmin": true
         }
     ]
+    
 }
