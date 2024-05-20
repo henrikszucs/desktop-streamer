@@ -11,14 +11,14 @@ const https = require("node:https");
 
 const mime = require("./libs/mime.js");
 
-const sqlite3 = require("sqlite3");
+const mysql = require("mysql");
 const ws = require("ws");
 const nodemailer = require("nodemailer");
 const { stat } = require("node:fs");
 
 
 
-
+// General functions
 /**
  * Get a named CLI argument
  * @param {Object<Array>} args - Array of arguments
@@ -34,52 +34,65 @@ const getArg = function(args, argName, def = "") {
     return def;
 };
 
+const cutEdges = function (str) {
+    return str.slice(1, str.length-1);
+};
 
-/**
- * Escape SQL text's (note: not satisfied with original one)
- * @param {string} str - String to escape
- * @returns {string}
- */
-const mysqlRealEscapeString = function(str) {
-    str = String(str);
-    return str.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, function(char) {
-        switch (char) {
-            case "\0":
-                return "\\0";
-            case "\x08":
-                return "\\b";
-            case "\x09":
-                return "\\t";
-            case "\x1a":
-                return "\\z";
-            case "\n":
-                return "\\n";
-            case "\r":
-                return "\\r";
-            case "\"":
-            case "'":
-            case "\\":
-            case "%":
-                return "\\" + char; // prepends a backslash to backslash, percent,
-                // and double/single quotes
-            default:
-                return char;
-        }
+
+
+// MySQL general functions
+const mysqlConnect = async function(mysql, data) {
+    return new Promise(function(resolve, reject) {
+        const con = mysql.createConnection(data);
+        con.connect(function(err) {
+            if (err) {
+                reject(err);
+            }
+            resolve(con);
+        });
+    });
+
+};
+
+const mysqlClose = async function(con) {
+    return new Promise(function(resolve) {
+        con.end(function(err) {
+            if (err) {
+                resolve(false);
+            }
+            resolve(true);
+        });
+    })
+};
+
+const mysqlChangeDatabase = async function(con, dbName) {
+    return new Promise(async function(resolve) {
+        const changeObj = {
+            "database" : cutEdges(con.escapeId(dbName))
+        };
+        con.changeUser(changeObj, function(err) {
+            if (err) {
+                resolve(false);
+            } else {
+                resolve(true);
+            }
+        });
     });
 };
+
 /**
  * Promisify verion of sqlite3 API
  * @param {Object<Sqlite3>} db - Database access
  * @param {string} query - SQL query
  * @returns {Object<Promise<Array>>}
  */
-const mysqlQuery = async function(db, query) {
+const mysqlQuery = async function(con, query) {
     return new Promise(function(resolve, reject) {
-        db.all(query, function(error, rows) {
-            if (error !== null) {
+        con.query(query, function(error, results, fields) {
+            if (error) {
                 reject(error);
             }
-            resolve(rows);
+            resolve(results);
         });
     });
 };
@@ -91,11 +104,11 @@ const mysqlQuery = async function(db, query) {
  * @param {string} val - value to search
  * @returns {Object<Promise<boolean>>}
  */
-const checkExist = async function(db, table, col, val) {
-    const res = await mysqlQuery(db, `
-        SELECT \`` + mysqlRealEscapeString(col) + `\`
-        FROM \`` + mysqlRealEscapeString(table) + `\`
-        WHERE \`` + mysqlRealEscapeString(col) + `\` = '` + mysqlRealEscapeString(val) + `'
+const checkExist = async function(con, table, col, val) {
+    const res = await mysqlQuery(con, `
+        SELECT ` + con.escapeId(col) + `
+        FROM ` + con.escapeId(table) + `
+        WHERE ` + con.escapeId(col) + ` = ` + con.escape(val) + `
         LIMIT 1
     `);
     if (res.length !== 0) {
@@ -110,15 +123,19 @@ const checkExist = async function(db, table, col, val) {
  * @param {string} col - column where search
  * @returns {Object<Promise<number>>}
  */
-const genID = async function(db, table, col) {
+const genID = async function(con, table, col) {
     let id;
     let isExist = false;
     do {
         id = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER - 1) + 1;
-        isExist = await checkExist(db, table, col, id);
+        isExist = await checkExist(con, table, col, id);
     } while (isExist);
     return id;
 };
+
+
+
+
 
 /**
  * Clean unused data from Database
@@ -161,24 +178,13 @@ const userDelete = function(db) {
 };
 
 
-//global configuration (with default value)
+
+
+//global configuration parse
 const initialSetup = async function(confPath) {
     let confIn = {};
     let confOut = {};
-    
-    //check if conf file exist
-    try {
-        const contents = await fs.readFile(confPath, {
-            "encoding": "utf8"
-        });
-        confIn = JSON.parse(contents);
-        if (!(confIn instanceof Object)) {
-            confIn = {};
-        }
-    } catch (error) {
-        console.error("Error in configuration read:" + error + " (use default conf)");
-    }
-    
+
     //this will convert path if relative to configuration file
     const confPathToAbsolute = function(src) {
         if (path.isAbsolute(src) === false) {
@@ -187,64 +193,84 @@ const initialSetup = async function(confPath) {
         return path.resolve(src);
     };
     
-    //check port value
-    if (typeof confIn["port"] !== "number") {
-        confIn["port"] = 8888;
+    //load conf file (required)
+    const contents = await fs.readFile(confPath, {
+        "encoding": "utf8"
+    });
+    confIn = JSON.parse(contents);
+    if (typeof confIn !== "object") {
+        throw new Error("Invalid JSON format!");
     }
-    confOut["port"] = parseInt(confIn["port"]);
     
-    //check key and cert
-    if (typeof confIn["https"] === "object" && typeof confIn["https"]["key"] === "string" && typeof confIn["https"]["cert"] === "string") {
+    //check port value (required)
+    if (typeof confIn["port"] !== "number" || Number.isInteger(confIn["port"]) === false || confIn["port"] < 0) {
+        throw new Error("Invalid port number!");
+    }
+    confOut["port"] = confIn["port"];
+    
+    //check key and cert (optional)
+    if (typeof confIn["https"] === "object") {
+        //check cert path
+        if (typeof confIn["https"]["key"] !== "string" && typeof confIn["https"]["cert"] !== "string") {
+            throw new Error("Invalid cert or key path!");
+        }
         confIn["https"]["key"] = confPathToAbsolute(confIn["https"]["key"]);
         confIn["https"]["cert"] = confPathToAbsolute(confIn["https"]["cert"]);
-        try {
-            //read cert
-            confIn["https"]["key"] = await fs.readFile(confIn["https"]["key"], {
-                "encoding": "utf8"
-            });
-            confIn["https"]["cert"] = await fs.readFile(confIn["https"]["cert"], {
-                "encoding": "utf8"
-            });
-            //copy cert data
-            confOut["https"] = {};
-            confOut["https"]["key"] = confIn["https"]["key"];
-            confOut["https"]["cert"] = confIn["https"]["cert"];
-            if (typeof confIn["https"]["redirectFrom"] === "number" && confOut["port"] !== confIn["https"]["redirectFrom"]) {
-                confOut["https"]["redirectFrom"] = confIn["https"]["redirectFrom"];
+        //read cert
+        confIn["https"]["key"] = await fs.readFile(confIn["https"]["key"], {
+            "encoding": "utf8"
+        });
+        confIn["https"]["cert"] = await fs.readFile(confIn["https"]["cert"], {
+            "encoding": "utf8"
+        });
+        //copy cert data
+        confOut["https"] = {};
+        confOut["https"]["key"] = confIn["https"]["key"];
+        confOut["https"]["cert"] = confIn["https"]["cert"];
+        //check redirect (optional)
+        if (typeof confIn["https"]["redirectFrom"] !== "undefined") {
+            if (typeof confIn["https"]["redirectFrom"] !== "number" || Number.isInteger(confIn["https"]["redirectFrom"]) === false || confIn["https"]["redirectFrom"] < 0 || confIn["https"]["redirectFrom"] === confOut["port"]) {
+                throw new Error("Invalid redirect port number!");
             }
-        } catch (error) {
-            console.error("Error in cert and key read:" + error + " (use HTTP)");
+            confOut["https"]["redirectFrom"] = confIn["https"]["redirectFrom"];
         }
     }
     
-    //check and create database
-    if (typeof confIn["db"] !== "string") {
-        confIn["db"] = "database.db";
+    //check and create database (required)
+    if (typeof confIn["db"] !== "object") {
+        throw new Error("Invalid database connection object!");
     }
-    confIn["db"] = confPathToAbsolute(confIn["db"]);
-    await fs.mkdir(path.dirname(confIn["db"]), {
-        "recursive": true
+    if (typeof confIn["db"]["host"] !== "string") {
+        throw new Error("Invalid database host format!");
+    }
+    if (typeof confIn["db"]["port"] !== "number" || Number.isInteger(confIn["db"]["port"]) === false || confIn["db"]["port"] < 0) {
+        throw new Error("Invalid database host format!");
+    }
+    if (typeof confIn["db"]["user"] !== "string") {
+        throw new Error("Invalid database user format!");
+    }
+    if (typeof confIn["db"]["pass"] !== "string") {
+        throw new Error("Invalid database pass format!");
+    }
+    if (typeof confIn["db"]["database"] !== "string") {
+        throw new Error("Invalid database name format!");
+    }
+    confOut["con"] = await mysqlConnect(mysql, {
+        "host": confIn["db"]["host"],
+        "port": confIn["db"]["port"],
+        "user": confIn["db"]["user"],
+        "password": confIn["db"]["pass"]
     });
-    const isFirstStart = await new Promise(async function(resolve) {
-        try {
-            await fs.access(confIn["db"], fs.constants.R_OK | fs.constants.W_OK);
-            console.log("Load existing db");
-            resolve(false);
-        } catch (error) {
-            console.log("Create new db");
-            resolve(true);
-        }
-        
-    });
-    confOut["db"] = await new Promise(function(resolve) {
-        new sqlite3.Database(confIn["db"], function(error) {
-            if (error !== null) {
-                console.error("Failed to open database!");
-            }
-            resolve(this);
-        });
-    });
-    await mysqlQuery(confOut["db"], `
+    //check database
+    await mysqlQuery(confOut["con"], "CREATE DATABASE IF NOT EXISTS  " + confOut["con"].escapeId(confIn["db"]["database"]));
+    await mysqlChangeDatabase(confOut["con"], cutEdges(confOut["con"].escapeId(confIn["db"]["database"])));
+    const userTable = await mysqlQuery(confOut["con"], `
+        SELECT \`TABLE_NAME\` FROM \`INFORMATION_SCHEMA\`.\`TABLES\`
+        WHERE \`TABLE_SCHEMA\` = 'desktop_streamer' AND \`TABLE_NAME\` = 'users'
+    `);
+    const isFirstStart = userTable.length === 0;
+
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`verifications\` (
             \`verification_id\` INT(11) NOT NULL,
             \`email\` VARCHAR(255) NOT NULL,
@@ -254,7 +280,7 @@ const initialSetup = async function(confPath) {
             PRIMARY KEY(\`verification_id\`)
         );
     `);
-    await mysqlQuery(confOut["db"], `
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`users\` (
             \`user_id\` INT(11) NOT NULL,
             \`email\` VARCHAR(255) NOT NULL,
@@ -263,34 +289,35 @@ const initialSetup = async function(confPath) {
             PRIMARY KEY(\`user_id\`)
         );
     `);
-    await mysqlQuery(confOut["db"], `
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`admins\` (
             \`user_id\` INT(11) NOT NULL,
             PRIMARY KEY(\`user_id\`),
             FOREIGN KEY(\`user_id\`) REFERENCES \`users\`(\`user_id\`) ON UPDATE CASCADE ON DELETE CASCADE
         );
     `);
-    await mysqlQuery(confOut["db"], `
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`delete\` (
             \`user_id\` INT(11) NOT NULL,
-            \`expire\` TIMESTAMP NOT NULL,
-            PRIMARY KEY(\`user_id\`)
+            \`expire\` TIMESTAMP NULL DEFAULT NULL,
+            PRIMARY KEY(\`user_id\`),
+            FOREIGN KEY(\`user_id\`) REFERENCES \`users\`(\`user_id\`) ON UPDATE CASCADE ON DELETE CASCADE
         );
     `);
-    await mysqlQuery(confOut["db"], `
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`sessions\` (
             \`session_id\` INT(11) NOT NULL,
             \`user_id\` INT(11) NOT NULL,
-            \`last_login\` TIMESTAMP NOT NULL,
+            \`last_login\` TIMESTAMP NULL DEFAULT NULL,
             \`last_ip\` VARCHAR(255) NULL,
-            \`expire\` TIMESTAMP NOT NULL,
+            \`expire\` TIMESTAMP NULL DEFAULT NULL,
             \`is_recovery\` TINYINT(1) NOT NULL,
             \`recovery_email\` VARCHAR(255) NOT NULL,
             PRIMARY KEY(\`session_id\`),
             FOREIGN KEY(\`user_id\`) REFERENCES \`users\`(\`user_id\`) ON UPDATE CASCADE ON DELETE CASCADE
         );
     `);
-    await mysqlQuery(confOut["db"], `
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`resources\` (
             \`resource_id\` INT(11) NOT NULL,
             \`parent_resource_id\` INT(11) NULL,
@@ -300,7 +327,7 @@ const initialSetup = async function(confPath) {
             PRIMARY KEY(\`resource_id\`)
         );
     `);
-    await mysqlQuery(confOut["db"], `
+    await mysqlQuery(confOut["con"], `
         CREATE TABLE IF NOT EXISTS \`permissions\` (
             \`permission_id\` INT(11) NOT NULL,
             \`resource_id\` INT(11) NOT NULL,
@@ -313,67 +340,57 @@ const initialSetup = async function(confPath) {
     `);
     
     //check email
-    if (confIn["email"] instanceof Object && confIn["email"]["smtp"] instanceof Object) {
+    if (typeof confIn["email"] === "object" && typeof confIn["email"]["smtp"] === "object") {
         let isCorrect = true;
         const fields = ["host", "user", "pass", "from", "name"];
         //check input
         for (const key of fields) {
             if (typeof confIn["email"]["smtp"][key] !== "string") {
-                isCorrect = false;
-                break
+                throw new Error("Wrong email " + key + " format!");
             }
         }
-        if (typeof confIn["email"]["smtp"]["port"] !== "number") {
-            isCorrect = false;
-        } else {
-            confIn["email"]["smtp"]["port"] = parseInt(confIn["email"]["smtp"]["port"]);
+        if (typeof confIn["email"]["smtp"]["port"] !== "number" || Number.isInteger(confIn["email"]["smtp"]["port"]) || confIn["email"]["smtp"]["port"] < 0) {
+            throw new Error("Wrong email port number!");
         }
         
         //check connection
-        if (isCorrect) {
-            const connection = nodemailer.createTransport({
-                "host": confIn["email"]["smtp"]["host"],
-                "port": confIn["email"]["smtp"]["port"],
-                "secure": confIn["email"]["smtp"]["port"] === 465, // true for 465, false for other ports
-                "tls": {
-                    "rejectUnauthorized": true
-                },
-                "requireTLS": true,
-                "auth": {
-                    "user": confIn["email"]["smtp"]["user"],
-                    "pass": confIn["email"]["smtp"]["pass"]
-                },
-                "pool": false
-            });
-            let result = false;
-            try {
-                result = await connection.verify();
-            } catch (error) {
-                
-            }
-            if (result === false) {
-                console.log("Falied to connect SMTP server");
-            }
-            isCorrect = result;
+        const connection = nodemailer.createTransport({
+            "host": confIn["email"]["smtp"]["host"],
+            "port": confIn["email"]["smtp"]["port"],
+            "secure": confIn["email"]["smtp"]["port"] === 465, // true for 465, false for other ports
+            "tls": {
+                "rejectUnauthorized": true
+            },
+            "requireTLS": true,
+            "auth": {
+                "user": confIn["email"]["smtp"]["user"],
+                "pass": confIn["email"]["smtp"]["pass"]
+            },
+            "pool": false
+        });
+        let result = false;
+        try {
+            result = await connection.verify();
+        } catch (error) {
+            throw new Error("Falied to connect SMTP server");
         }
+        isCorrect = result;
         //copy conf
-        if (isCorrect) {
-            confOut["email"] = {};
-            confOut["email"]["smtp"] = {};
-            //copy smtp
-            for (const key of fields) {
-                confOut["email"]["smtp"][key] = confIn["email"]["smtp"][key];
-            }
-            //copy allowRegister
-            if (typeof confIn["email"]["allowRegister"] !== "boolean") {
-                confIn["email"]["allowRegister"] = true;
-            }
-            confOut["email"]["allowRegister"] = confIn["email"]["allowRegister"];
-            
+        confOut["email"] = {};
+        confOut["email"]["smtp"] = {};
+        for (const key of fields) {
+            confOut["email"]["smtp"][key] = confIn["email"]["smtp"][key];
         }
+        confOut["email"]["smtp"]["port"] = confIn["email"]["smtp"]["port"];
+        //check allowRegister (optional)
+        if (typeof confIn["email"]["allowRegister"] !== "boolean") {
+            confIn["email"]["allowRegister"] = true;
+        }
+        confOut["email"]["allowRegister"] = confIn["email"]["allowRegister"];
+        
     }
     
-    //check allowSameEmail
+    //check allowSameEmail (optional)
     if (typeof confIn["allowSameEmail"] !== "boolean") {
         confIn["allowSameEmail"] = false;
     }
@@ -383,11 +400,11 @@ const initialSetup = async function(confPath) {
     //check and create users
     if (isFirstStart && confIn["users"] instanceof Array) {
         for (const user of confIn["users"]) {
-            if (confIn["users"] instanceof Object && typeof user["username"] === "string" && typeof user["pass"] === "string") {
+            if (typeof user === "object" && typeof user["username"] === "string" && typeof user["pass"] === "string") {
                 let isCorrect = true;
                 //check email
                 if (typeof user["email"] === "string") {
-                    const hasEmail = await checkExist(confOut["db"], "users", "email", user["email"]);
+                    const hasEmail = await checkExist(confOut["con"], "users", "email", user["email"]);
                     if (confOut["allowSameEmail"] === false && hasEmail === true) {
                         isCorrect = false;
                         console.log("Skip user (" + user["username"] + ") - not allowed duplicated emails (" + user["email"] + ")");
@@ -398,7 +415,7 @@ const initialSetup = async function(confPath) {
                 
                 //check username
                 if (isCorrect) {
-                    const hasUsename = await checkExist(confOut["db"], "users", "username", user["username"]);
+                    const hasUsename = await checkExist(confOut["con"], "users", "username", user["username"]);
                     if (hasUsename === true) {
                         isCorrect = false;
                         console.log("Skip user (" + user["username"] + ") - not allowed duplicated username");
@@ -407,24 +424,22 @@ const initialSetup = async function(confPath) {
                 
                 //add user
                 if (isCorrect) {
-                    let id = await genID(confOut["db"], "users", "user_id");
-                    id = mysqlRealEscapeString(id);
-                    let email = mysqlRealEscapeString(user["email"]);
-                    let username = mysqlRealEscapeString(user["username"]);
-                    let pass = mysqlRealEscapeString(crypto.createHash("sha256")
-                        .update(user["pass"])
-                        .digest("hex"));
-                    await mysqlQuery(confOut["db"], `
+                    let id = await genID(confOut["con"], "users", "user_id");
+                    id = confOut["con"].escape(id);
+                    let email = confOut["con"].escape(user["email"]);
+                    let username = confOut["con"].escape(user["username"]);
+                    let pass = confOut["con"].escape(crypto.createHash("sha256").update(user["pass"]).digest("hex"));
+                    await mysqlQuery(confOut["con"], `
                         INSERT INTO \`users\` (\`user_id\`, \`email\`, \`username\`, \`password\`)
                         VALUES (
-                            '` + id + `',
-                            '` + email + `',
-                            '` + username + `',
-                            '` + pass + `'
+                            ` + id + `,
+                            ` + email + `,
+                            ` + username + `,
+                            ` + pass + `
                         );
                     `);
                     if (user?.["isAdmin"] === true) {
-                        await mysqlQuery(confOut["db"], `
+                        await mysqlQuery(confOut["con"], `
                             INSERT INTO \`admins\` (\`user_id\`)
                             VALUES (
                                 '` + id + `'
@@ -437,7 +452,6 @@ const initialSetup = async function(confPath) {
         }
     }
     
-    
     return confOut;
     
     
@@ -445,46 +459,16 @@ const initialSetup = async function(confPath) {
     
     
     /*
-    input configuration:
-        {
-            "port": 8888,
-            "https": {                 //optional
-                "key": "server.key",
-		        "cert": "server.crt",
-		        "redirectFrom": 80
-            },
-            "db": "database.db",
-            "email": {                 //optional
-                "smtp": {
-                    "host": "smtp.outlook.com",
-                    "port": 465,
-                    "user": "user@email.com",
-                    "pass": "Password123",
-                    "from": "user@email.com",
-                    "name": "Administrator"
-                },
-                "allowRegister": true
-            },
-            "allowSameEmail": false,
-            "users": [                //optional
-                {
-                    "email":"",
-                    "username":"admin",
-                    "pass":"admin",
-                    "isAdmin": false   // optional
-                }
-            ]
-        }
 
     output configuration:
         {
-            "port": 8888,
+            "port": 443,
             "https": {                 //optional
                 "key": "FILEDATA",
 		        "cert": "FILEDATA",
 		        "redirectFrom": 80     //optional
             },
-            "db": "dbObject,
+            "con": "mysqlConnection,
             "email": {               // optional
                 "smtp": {
                     "host": "smtp.outlook.com",
@@ -502,6 +486,8 @@ const initialSetup = async function(confPath) {
     
 };
 
+
+//static HTTP server
 const getFileData = async function(src) {
     try {
         const data = await fs.readFile(src);
@@ -533,9 +519,7 @@ const generateCache = async function(src) {
     }
     return cache;
 };
-
-
-const startStaticServer = async function(conf) {
+const HTTPServerStart = async function(conf) {
     let servers = [];
     //Cache UI pages
     const fileCache = await generateCache("ui/");
@@ -553,7 +537,7 @@ const startStaticServer = async function(conf) {
         res.writeHead(200, {
             "Last-Modified": fileData["lastModified"],
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            'Content-Length': Buffer.byteLength(fileData["buffer"]),
+            "Content-Length": Buffer.byteLength(fileData["buffer"]),
             "Content-Type": fileData["type"]
         });
         res.write(fileData["buffer"]);
@@ -588,57 +572,118 @@ const startStaticServer = async function(conf) {
     }
     return servers;
 };
-
-//Main funtion
-const main = async function() {
-    //read CLI options
-    const confPath = getArg(process.argv, "--configuration=", "conf/conf.json");
-    
-    //Load configuration
-    const conf = await initialSetup(confPath);
-    
-    //Business logic
-    // Expected output: 1
-
-    
-
-    
-    //Start server
-    const servers = await startStaticServer(conf);
-    console.log("Press CTRL+C to stop servers");
-    
-    
-    
-    //cleanup
-    const exitServer = async function() {
-        console.log("Closing database...");
+const HTTPServerStop = async function(servers) {
+    for (const server of servers) {
         await new Promise(function(resolve) {
-            conf["db"].close(function(error) {
+            server.close(function() {
                 resolve(true);
             });
         });
-        console.log("Closing servers...");
-        for (const server of servers) {
-            await new Promise(function(resolve) {
-                server.close(function() {
-                    resolve(true);
+    }
+};
+
+
+// Websocket servers
+const wsServerStart = async function(HTTPserver) {
+    const wsServer = new ws.WebSocketServer({
+        "server": HTTPserver
+    });
+    wsServer.on("connection", function(ws) {
+        ws.on("error", function(err) {
+            console.log("Error " + err);
+        });
+      
+        ws.on("message", function(data) {
+            console.log("received: %s", data);
+        });
+      
+        //ws.send("something");
+    });
+    return wsServer;
+};
+const wsServerStop = async function(ws) {
+    return new Promise(function(resolve) {
+        let round = 0;
+        const close = function() {
+            if (round === 0) {
+                // First sweep, soft close
+                ws.clients.forEach(function (socket) {
+                    socket.close();
                 });
-            });
-        }
+            } else if (round < 50) {
+                // Check clients
+                let isAllClosed = true;
+                for (const socket of ws.clients) {
+                    if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                        isAllClosed = false;
+                        break;
+                    }
+                }
+                if (isAllClosed === true) {
+                    resolve(true);
+                    return;
+                }
+            } else {
+                // Last sweep, hard close for everyone who's left
+                ws.clients.forEach(function(socket) {
+                    if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                        socket.terminate();
+                    }
+                });
+                resolve(true);
+                return;
+            }
+            round++;
+            setTimeout(close, 500);
+        };
+        close();
         
-    };
+    });
+};
+
+
+// Close the backend
+const close = async function(con, HTTPservers, ws) {
+    console.log("Closing database...");
+    await mysqlClose(con);
+
+    console.log("Closing HTTP servers...");
+    await HTTPServerStop(HTTPservers);
+
+    console.log("Closing Websocket server...");
+    await wsServerStop(ws);
+};
+
+
+//Main funtion
+const main = async function(args) {
+    //read CLI options
+    console.log("Load arguments...");
+    const confPath = getArg(args, "--configuration=", "conf/conf.json");
     
+    //Load configuration
+    console.log("Run initial setup...");
+    const conf = await initialSetup(confPath);
+    
+    //Start HTTP server
+    console.log("Start HTTP server...");
+    const HTTPservers = await HTTPServerStart(conf);
+    
+    //Start WS server
+    console.log("Start Websocket server...");
+    const ws = await wsServerStart(HTTPservers[0]);
+    
+    //cleanup
+    console.log("Press CTRL+C to stop servers");
     process.on("SIGTERM", async function() {
         console.log("SIGTERM signal received.");
         // Perform cleanup tasks here
-        await exitServer();
-        
+        await close(conf["con"], HTTPservers, ws);
     });
-    
     process.on("SIGINT", async function() {
         console.log("SIGINT signal received.");
         // Perform cleanup tasks here
-        await exitServer();
+        await close(conf["con"], HTTPservers, ws);
     });
 };
-main();
+main(process.argv);
