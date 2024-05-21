@@ -589,6 +589,8 @@ const wsServerStart = async function(HTTPserver) {
         "server": HTTPserver
     });
     wsServer.on("connection", function(ws) {
+        console.log("Client connected");
+        console.log(ws);
         ws.on("error", function(err) {
             console.log("Error " + err);
         });
