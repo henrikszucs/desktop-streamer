@@ -10,7 +10,7 @@ node server.js --configuration=path/to/conf.json
 ```
 
 ## Server configuration
-
+server configuration file path: server/conf/conf.json
 
 ```
 {
@@ -51,3 +51,10 @@ node server.js --configuration=path/to/conf.json
     
 }
 ```
+
+## Client
+clients files in client/desktop/resources/app
+
+clients configuration file path: client/desktop/resources/app/ui/conf.js
+
+Share client/desktop/resources folder with platform executable files (current win32 is default)

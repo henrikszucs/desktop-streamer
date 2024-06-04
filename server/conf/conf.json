@@ -13,7 +13,7 @@
         "database": "desktop_streamer"
     },
     "allowSameEmail":true,
-    "users":[
+    "users": [
         {
             "email":"henyusi@gmail.com",
             "username":"admin",
