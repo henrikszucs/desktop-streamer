@@ -1,97 +1,115 @@
 "use strict";
-
-
 /**
- * From Client
+ * from Sender
  */
 [
-    123,               // callback id
-    0                  // method 0-ping 1-login 2-logout, 3-switch-to-main, 4-switch-to-room
+    FROM,                          // start sender 0-client, 1-server
+    ID,                             // callback id, -1 if fire and forget
+    METHOD/REQUEST                // method 0> number
     //... other parameters for methods
-]
+],
 
 
 /**
- * From Server
+ * to sender
  */
 [
-    123,                // callback id
-    0                   // status 0-everything is good, -400 - worng JSON syntax; -404 wrong api request negtive error; positive request;
-    //... other parameters from methods
-]
+    FROM,                   // start sender 0-client, 1-server
+    ID,                     // callback id
+    STATUS                 // status 0-everything is good, 400 - worng JSON syntax; 404 wrong api request negtive error;
+    //... other parameters for respond
+],
 
-
-
+// Communicator class handle FROM and ID varables
+// METHOD/REQUEST id identify the function
 
 /**
- * Login
+ * Ping -  method 0
  */
-//Guest login
 [
-    123,                // callback id
-    1,                  // method 1-login
-    0,                  // login method - guest login
+
+],
+[
+
+]
+
+/**
+ * Login guest - method 1
+ */
+[
     "Guest name"
 ],
 [
-    123,                // callback id
-    0,                  // status 0-everything is good
+    0,                  // status 0-everything is good 401 not allowed
     "Accepted guest name #2"
 ]
 
-//Session login
+/**
+ * Login session - method 2
+ */
 [
-    123,                // callback id
-    1,                  // method 1-login
-    1,                  // login method - session login
-    123                 // session id - session login
+    123
 ],
 [
-    123,                // callback id
-    0,                  // status 0-everything is good or 401 if fail
+    0                  // status 0-everything is good 401 not allowed
 ]
 
-//Password login
+/**
+ * Login password - method 3
+ */
 [
-    123,                // callback id
-    1,                  // method 1-login
-    2,                  // login method - password login
     "username",         // username
-    "password"          // password
+    "password"          // password SHA256
 ],
 [
-    123,                // callback id
-    0,                  // status 0-everything is good or 401 if fail
-    "username"          // username if good
+    0,                 // status 0-everything is good 401 not allowed
+    12323              // session id
 ]
-
-
 
 
 /**
- * Logout
+ * Logout - method 4
  */
 [
-    123,                // callback id
-    2,                  // method 2-logout
     1234                // session id
 ],
 [
-    123,                // callback id
+    0,                 // status 0-everything is good 401 not allowed
 ]
 
 
 
 
 /**
- * Switch to main
+ * Listener pause - method 5
  */
 [
-    123,                // callback id
-    3                  // method 3-main page listener
+    1234                // session id
 ],
 [
-    123                // callback id
+    0                   // status 0-everything is good 401 not allowed
+]
+
+
+/**
+ *  Listener Main page - method 6
+ */
+[
+    1234                // session id
+],
+[
+    0                   // status 0-everything is good 401 not allowed
+]
+
+
+/**
+ *  Listener Room page - method 7
+ */
+[
+    1234                // session id
+],
+[
+    0                   // status 0-everything is good 401 not allowed
 ]
 
 
@@ -99,55 +117,36 @@
 
 
 
-
-
-
-
 /**
- * Switch to room
+ * Join to room
  */
 [
-    123,                // callback id
-    4,                  // method
-    12345               // room id
+    1234,                  // session id
+    12345,                 // room id
+    ["video1", "video2"],  // screens
+    true,                  // system audio
+    true                   // mouse and keyboard control
 ],
 
 [
-    123,                // callback id
-    0                   // 0, -401, -102 processing
+    0                   // 0, 401,
 ]
-[
-    123,                // callback id
-    0                   // 0, -401, -102 processing
-    [
-        [clientID, "user", [true, ["video1", "video2"], true]]
-    ]
-]
-
 
 
 /**
- * Access to control
+ * Request Control
  */
 [
-    123,                // callback id
-    5,                  // method
+    1234,               // session id
     12345,              // room id
-    12356,              // client id
+    "video1",           // screens
     true,               // system audio
-    "video1",           // screen
-    true                //mouse
+    true                // mouse and keyboard control
 ],
-
 [
-    123,                // callback id
-    0                   // 0, -401, -102 processing
-]
-
-[
-    123,                    // callback id
-    0,                      // 0, -401, -102 processing
-    "webrtc connection"     // webrtc connection json
+    0,                             // 0, 401
+    "webrtc media connection",     // webrtc connection json
+    "webrtc control connection"    // webrtc connection json
 ]
 
 

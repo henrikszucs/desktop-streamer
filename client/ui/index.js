@@ -21,12 +21,200 @@ const getWsAdress = function (src) {
     return address;
 };
 
+const API = class extends EventTarget {
+    //properties
+    isOnline = false;
+    address = "";
+
+    //connection and process
+    ws = null;
+    communicator = null;
+    
+
+    Communicator = class extends EventTarget {
+        ws = null;
+        processes = [];
+        isServer = false;
+        gcClear = 0;
+        gcClearLimit = 10;
+
+        FROM_MYSELF = 0;
+        FROM_OTHER = 1;
+        
+        // methods: invoke, send, reply (for events),
+        // events: invoke, send
+        constructor(ws, isServer) {
+            super();
+
+            this.reset(ws, isServer);
+        }
+        reset(ws=this.ws, isServer=false) {
+            this.FROM_MYSELF = (isServer ? 1 : 0);
+            this.FROM_OTHER = (isServer ? 0 : 1);
+
+            this.processes = [];
+            this.ws = ws;
+            this.ws.addEventListener("message", (event) =>  {
+                console.log("Message from server: ", event.data);
+
+                // handle syntax errors
+                let data;
+                try {
+                    data = JSON.parse(event.data);
+                    if ((data instanceof Array) === false || data.length < 2) {
+                        throw new Error("Wrong format");
+                    }
+                } catch (error) {
+                    console.log(error);
+                    this.ws.send(JSON.stringify([this.FROM_OTHER, -1, 400]));
+                    return;
+                }
+
+                // call recieve
+                this.recieve(data);
+            });
+            
+        };
+        
+        send(msg=[]) {
+            //send data, fire and forget
+            let data = [this.FROM_MYSELF, -1, ...msg];
+            this.ws.send(JSON.stringify(data));
+        };
+
+        gc() {
+            const lastEl = this.processes.length - 1;
+            let i = lastEl;
+            while(i >= 0 && this.processes[i] === null) {
+                i--;
+            }
+            this.processes.splice(i+1, lastEl-i);
+        };
+        async invoke(msg=[], timeout=5000) {
+            return new Promise((resolve, reject) => {
+                // run garbage collector
+                if (this.gcClear > this.gcClearLimit) {
+                    this.gcClear = 0;
+                    this.gc();
+                }
+                this.gcClear++;
+
+                //get unique id from stack
+                const id = this.processes.length;
+
+                //start timeout
+                const myTimeout = setTimeout(function() {
+                    reject(new Error("Timeout (" + id + ")"));
+                }, timeout);
+
+                //set callback function in stack
+                this.processes.push((data) => {
+                    this.processes[id] = null;
+                    clearTimeout(myTimeout);
+                    resolve(data);
+                });
+                
+                //send data
+                let data = [this.FROM_MYSELF, id, ...msg];
+                this.ws.send(JSON.stringify(data));
+            });
+        };
+        recieve(data) {
+            //process data
+            if (data[0] === this.FROM_MYSELF) {
+                //recieve response
+                if (data[1] < this.processes.length && this.processes[data[1]] !== null) {
+                    this.processes[data[1]](data.slice(2));
+                }
+
+            } else if (data[0] === this.FROM_OTHER) {
+                //recieve request
+                if (data[1] === -1) {
+                    // no need reply for this
+                    this.dispatchEvent(
+                        new CustomEvent("send", {"detail": {
+                            "data": data.slice(2)
+                        }})
+                    );
+                } else {
+                    // need reply for this with id
+                    this.dispatchEvent(
+                        new CustomEvent("invoke", {"detail": {
+                            "id": data[1],
+                            "data": data.slice(2)
+                        }})
+                    );
+                }
+                
+            }
+        };
+        reply(id, msg=[]) {
+            //send data
+            let data = [this.FROM_OTHER, id, ...msg];
+            this.ws.send(JSON.stringify(data));
+        };
+    };
+    
+    constructor(address) {
+        super();
+
+        this.address = address;
+        this.connect();
+    };
+    connect() {
+        this.ws = new WebSocket(this.address);
+        this.communicator = new this.Communicator(this.ws, false);
+
+        this.ws.addEventListener("open", () => {
+            console.log("connected");
+            this.isOnline = true;
+            this.dispatchEvent(new Event("online"));
+        });
+        this.ws.addEventListener("error", () => {
+            console.log("disconnected");
+            this.isOnline = false;
+            this.dispatchEvent(new CustomEvent("offline"));
+        });
+        this.ws.addEventListener("close", () => {
+            console.log("closed");
+            this.isOnline = false;
+            this.dispatchEvent(new CustomEvent("offline"));
+            setTimeout(this.connect.bind(this), 2000);
+        });
+
+
+
+        //listen non-respond api
+        this.communicator.addEventListener("send", (event) => {
+
+        });
+        
+        //listen respond api
+        this.communicator.addEventListener("invoke", (event) => {
+            console.log(event.detail);
+            if (event.detail.data[0] === 1) {
+                communicator.reply(event.detail.id, [0]);
+            } else {
+                communicator.reply(event.detail.id, [404]);
+            }
+        });
+    };
+
+    async ping() {
+        return this.communicator.invoke([0]);
+    };
+    async login() {
+
+    }
+};
+
+
+let api = null;
 window.addEventListener("load", async function() {
     // Main (load libs and call the next step)
     const isDesktop = (typeof globalThis.require !== "undefined");
     let db = null;
-    let address = "";
-    let ws = null;
+    
 
     let ipcRenderer = null;
     let os = null;
@@ -35,6 +223,8 @@ window.addEventListener("load", async function() {
     let nutjs = null;
     let appAutoLaunch = null;
     const main = async function () {
+        let address = "";
+
         //load libs
         if (isDesktop) {
             // Electron import
@@ -85,30 +275,21 @@ window.addEventListener("load", async function() {
         db = await IdbHelper.DatabaseGet("db");
 
         // handle websocket
-        const loader = document.getElementById("loading");
-        const createConnection = function() {
-            ws = new WebSocket(address);
-            ws.addEventListener("open", function() {
-                console.log("connected");
-                loader.classList.add("d-none");
-                //ws.send("ping");
-            });
-            ws.addEventListener("error", function() {
-                loader.classList.remove("d-none");
-                createConnection();
-            });
-            ws.addEventListener("close", function() {
-                loader.classList.remove("d-none");
-                createConnection();
-            });
+        const loaderEl = document.getElementById("loading");
+        const mainEl = document.getElementById("main");
+        api = new API(address);
+        api.addEventListener("online", function() {
+            api.communicator.invoke([1]);
+            loaderEl.classList.add("d-none");
+            mainEl.classList.remove("d-none");
+        });
+        api.addEventListener("offline", function() {
+            loaderEl.classList.remove("d-none");
+            mainEl.classList.add("d-none");
+        });
 
-            //handle API
-            ws.addEventListener("message", function(event) {
-                console.log("Message from server ", event.data);
-            });
-            return ws;
-        };
-        ws = createConnection();
+        
+        
     };
     await main();
 
@@ -138,8 +319,7 @@ window.addEventListener("load", async function() {
 
         // Home page - Account
         {
-            //download
-            const client = tabs["account"].querySelector(".client");
+            // Download client
             if (isDesktop === false) {
                 let req = null;
                 const download = tabs["account"].querySelector(".download");
@@ -201,11 +381,11 @@ window.addEventListener("load", async function() {
                     req.send();
                 });
             } else {
+                const client = tabs["account"].querySelector(".client");
                 client.classList.add("d-none");
             }
 
-            // Autolaunch and lock autolock
-            const program = tabs["account"].querySelector(".program");
+            // AutoLaunch and AutoLock
             let refreshButton = null;
             if (isDesktop) {
                 const checker = tabs["account"].querySelector("#autolaunch");
@@ -234,25 +414,17 @@ window.addEventListener("load", async function() {
                     lockerDiv.classList.add("d-none");
                 }
             } else {
+                const program = tabs["account"].querySelector(".program");
                 program.classList.add("d-none");
             }
-            
 
+            
+            
+            // Show page
             HomeAccount = async function() {
                 page.classList.remove("d-none");
                 btns["account"].classList.add("active");
                 await refreshButton?.();
-                return;
-                //get ws address
-                let address = "";
-                if (window.location.protocol === "https:") {
-                    address += "wss://";
-                } else {
-                    address += "ws://";
-                }
-                address += window.location.host;
-
-                
             };
         };
     }

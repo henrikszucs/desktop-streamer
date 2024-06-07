@@ -392,6 +392,7 @@ const Runtime = class {
     TBL_SESSIONS = "sessions";
     TBL_RESOURCES = "resources";
     TBL_PERMISSIONS = "permissions";
+
     constructor() {
 
     };
@@ -513,63 +514,133 @@ const Runtime = class {
         return id;
     };
 
-    async handleAPI(data) {
-        /*
-            Client: [
-                123,                // callback id
-                0:                  // method 0-ping 1-login 2-logout, 3-switch-to-main, 4-switch-to-room
-                // data
-                    Login
-                    [
-                        0,                  // type: 0-guest login 1-session login 2-password login
-                        "",                 // guest name or sessionID or username
-                        "",                 // user password, only for password login
-                    ]
-                    Logout
-                    [
-                        123                 //session code
-                    ]
-                    
-            ]
 
+    // helper for communication
+    Communicator = class extends EventTarget {
+        ws = null;
+        processes = [];
+        isServer = false;
+        gcClear = 0;
+        gcClearLimit = 10;
+
+        FROM_MYSELF = 0;
+        FROM_OTHER = 1;
+        
+        // methods: invoke, send, reply,
+        // events: invoke, send
+        constructor(ws, isServer) {
+            super();
+
+            this.reset(ws, isServer);
+        }
+        reset(ws=this.ws, isServer=false) {
+            this.FROM_MYSELF = (isServer ? 1 : 0);
+            this.FROM_OTHER = (isServer ? 0 : 1);
+
+            this.processes = [];
+            this.ws = ws;
+            this.ws.addEventListener("message", (event) =>  {
+                console.log("Message from server: ", event.data);
+
+                // handle syntax errors
+                let data;
+                try {
+                    data = JSON.parse(event.data);
+                    if ((data instanceof Array) === false || data.length < 2) {
+                        throw new Error("Wrong format");
+                    }
+                } catch (error) {
+                    console.log(error);
+                    this.ws.send(JSON.stringify([this.FROM_OTHER, -1, 400]));
+                    return;
+                }
+
+                // call recieve
+                this.recieve(data);
+            });
             
+        };
+        
+        send(msg=[]) {
+            //send data, fire and forget
+            let data = [this.FROM_MYSELF, -1, ...msg];
+            this.ws.send(JSON.stringify(data));
+        };
 
-            Server: [
-                123,                // callback id
-                0,                  // status 0-everything is good,  400 - worng JSON syntax; 404 wrong api request, only if has error
-                [                   // data if no error
-                    
-                ]
-            ]
-        */
-        const answer = [0, 0];
+        gc() {
+            const lastEl = this.processes.length - 1;
+            let i = lastEl;
+            while(i >= 0 && this.processes[i] === null) {
+                i--;
+            }
+            this.processes.splice(i+1, lastEl-i);
+        };
+        async invoke(msg=[], timeout=5000) {
+            return new Promise((resolve, reject) => {
+                // run garbage collector
+                if (this.gcClear > this.gcClearLimit) {
+                    this.gcClear = 0;
+                    this.gc();
+                }
+                this.gcClear++;
 
-        // handle syntax errors
-        try {
-            data = JSON.parse(data);
-        } catch (error) {
-            answer[0] = 0;
-            answer[1] = 400;
-            return answer;
-        }
-        if ((data instanceof Array) === false || data.length < 2) {
-            answer[0] = 0;
-            answer[1] = 400;
-            return answer;
-        }
+                //get unique id from stack
+                const id = this.processes.length;
 
-        //search for API
-        answer[0] = data[0];
-        answer[1] = 0;
-        if (data[1] === 0) {
+                //start timeout
+                const myTimeout = setTimeout(function() {
+                    reject(new Error("Timeout (" + id + ")"));
+                }, timeout);
 
-        } else if (data[1] === 1) {
+                //set callback function in stack
+                this.processes.push((data) => {
+                    this.processes[id] = null;
+                    clearTimeout(myTimeout);
+                    resolve(data);
+                });
+                
+                //send data
+                let data = [this.FROM_MYSELF, id, ...msg];
+                this.ws.send(JSON.stringify(data));
+            });
+        };
+        recieve(data) {
+            //process data
+            if (data[0] === this.FROM_MYSELF) {
+                //recieve response
+                if (data[1] < this.processes.length && this.processes[data[1]] !== null) {
+                    this.processes[data[1]](data.slice(2));
+                }
 
-        } else {
-            answer[1] = 404;
-        }
-        return answer;
+            } else if (data[0] === this.FROM_OTHER) {
+                //recieve request
+                if (data[1] === -1) {
+                    // no need reply for this
+                    this.dispatchEvent(
+                        new CustomEvent("send", {"detail": {
+                            "data": data.slice(2)
+                        }})
+                    );
+                } else {
+                    // need reply for this with id
+                    this.dispatchEvent(
+                        new CustomEvent("invoke", {"detail": {
+                            "id": data[1],
+                            "data": data.slice(2)
+                        }})
+                    );
+                }
+                
+            }
+        };
+        reply(id, msg=[]) {
+            //send data
+            let data = [this.FROM_OTHER, id, ...msg];
+            this.ws.send(JSON.stringify(data));
+        };
     };
+
+
     //
     // clients functions
     //
@@ -578,20 +649,29 @@ const Runtime = class {
         // generate clientID
         const clientID = await this.genID(this.clients, "", "");
         console.log("Client connected (" + clientID + ")");
+        const communicator = new this.Communicator(ws, true);
         this.clients.set(clientID, {
             "ws": ws,
+            "communicator": communicator,
             "sessionID": 0,
             "rooms": new Set()
-        })
+        });
+
+        //listen non-respond api
+        communicator.addEventListener("send", (event) => {
+
+        });
         
-        // listen API messages
-        ws.addListener("message", async (data) => {
-            console.log("received: %s", data);
-            const answer = await this.handleAPI(data);
-            if (typeof answer !== "undefined") {
-                ws.send(JSON.stringify(answer));
+        //listen respond api
+        communicator.addEventListener("invoke", (event) => {
+            console.log(event.detail);
+            if (event.detail.data[0] === 1) {
+                communicator.reply(event.detail.id, [0]);
+            } else {
+                communicator.reply(event.detail.id, [404]);
             }
         });
+        
 
         // listen error
         ws.addListener("error", (err) => {
@@ -605,7 +685,7 @@ const Runtime = class {
         });
     };
     clientDestroy(clientID) {
-
+        this.clients.delete(clientID);
     };
     clientLogin(type) {
         //guest login || login with session || login with password
@@ -850,7 +930,11 @@ const wsServerStart = async function(HTTPserver, runtime) {
         "server": HTTPserver
     });
     wsServer.addListener("connection", function(ws) {
-        runtime.clientCreate(ws);
+        if (isClosing) {
+            ws.terminate();
+        } else {
+            runtime.clientCreate(ws);
+        }
     });
     return wsServer;
 };
@@ -863,7 +947,7 @@ const wsServerStop = async function(ws) {
                 ws.clients.forEach(function (socket) {
                     socket.close();
                 });
-            } else if (round < 50) {
+            } else if (round < 20) {
                 // Check clients
                 let isAllClosed = true;
                 for (const socket of ws.clients) {

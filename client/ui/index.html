@@ -25,7 +25,7 @@
                     <div class="spinner-border" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
-                    <div class="text-center">
+                    <div class="text-center message">
                         Connecting to server...
                     </div>
                 </div>
@@ -33,143 +33,143 @@
             
         </div>
 
-
-        <div id="home" class="container-fluid flex-nowrap d-none">
-            <div class="row vh-100">
-                <div class="flex-fill p-0 d-flex align-items-start ">
-                    <div class="nav flex-column nav-pills me-3 ps-1" role="tablist" >
-                        <div class="pb-3 text-center">
-                            <span class="fs-4 d-none d-sm-inline">Menu</span>
+        <div id ="main" class="d-none">
+            <div id="home" class="container-fluid flex-nowrap d-none">
+                <div class="row vh-100">
+                    <div class="flex-fill p-0 d-flex align-items-start ">
+                        <div class="nav flex-column nav-pills me-3 ps-1" role="tablist" >
+                            <div class="pb-3 text-center">
+                                <span class="fs-4 d-none d-sm-inline">Menu</span>
+                            </div>
+                            <button class="text-start nav-link rooms" type="button" role="tab">
+                                <i class=" bi bi-house"></i>
+                                <span class="d-none d-sm-inline">Rooms</span>
+                            </button>
+                            <button class="text-start nav-link shared" type="button" role="tab">
+                                <i class=" bi bi-share"></i>
+                                <span class="d-none d-sm-inline">Shared rooms</span>
+                            </button>
+                            <button class="text-start nav-link broadcast" type="button" role="tab">
+                                <i class=" bi bi-broadcast"></i>
+                                <span class="d-none d-sm-inline">Broadcasts</span>
+                            </button>
+                            <button class="text-start nav-link account" type="button" role="tab">
+                                <i class=" bi bi-person-circle"></i>
+                                <span class="d-none d-sm-inline">Accounts</span>
+                            </button>
                         </div>
-                        <button class="text-start nav-link rooms" type="button" role="tab">
-                            <i class=" bi bi-house"></i>
-                            <span class="d-none d-sm-inline">Rooms</span>
-                        </button>
-                        <button class="text-start nav-link shared" type="button" role="tab">
-                            <i class=" bi bi-share"></i>
-                            <span class="d-none d-sm-inline">Shared rooms</span>
-                        </button>
-                        <button class="text-start nav-link broadcast" type="button" role="tab">
-                            <i class=" bi bi-broadcast"></i>
-                            <span class="d-none d-sm-inline">Broadcasts</span>
-                        </button>
-                        <button class="text-start nav-link account" type="button" role="tab">
-                            <i class=" bi bi-person-circle"></i>
-                            <span class="d-none d-sm-inline">Accounts</span>
-                        </button>
-                    </div>
-                    <div class="py-3 tab-pane tab-content flex-fill text-center vh-100 overflow-auto">
-                        <div class="account container">
-                            <div class="client">
-                                <h2>Desktop client</h2>
-                                <div class="row justify-content-center mx-auto col-lg-5 col-xl-4 text-center mt-3 mb-3">
-                                    <div class="input-group">
-                                        <select class="form-select version">
-                                            <option value="win">Windows</option>
-                                        </select>
-                                        <input class="btn btn-primary download" type="button" value="Download client">
+                        <div class="py-3 tab-pane tab-content flex-fill text-center vh-100 overflow-auto">
+                            <div class="account container">
+                                <div class="client">
+                                    <h2>Desktop client</h2>
+                                    <div class="row justify-content-center mx-auto col-lg-5 col-xl-4 text-center mt-3 mb-3">
+                                        <div class="input-group">
+                                            <select class="form-select version">
+                                                <option value="win">Windows</option>
+                                            </select>
+                                            <input class="btn btn-primary download" type="button" value="Download client">
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div class="program">
-                                <h2>Startup</h2>
+                                <div class="program">
+                                    <h2>Startup</h2>
+                                    <div class="row justify-content-center">
+                                        <div class="mt-3 col-lg-5 mb-3 form-check">
+                                            <input class="btn btn-primary" type="checkbox" id="autolaunch">
+                                            <label class="form-check-label" for="autolaunch">
+                                                Start with the operationg system
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="row justify-content-center locker">
+                                        <div class="mt-3 col-lg-5 mb-3 form-check">
+                                            <input class="btn btn-primary" type="checkbox" id="autolock">
+                                            <label class="form-check-label" for="autolock">
+                                                Lock screen when change monitor
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <h2 class="mb-5">Users</h2>
+                                <h2 class="">Login</h2>
                                 <div class="row justify-content-center">
-                                    <div class="mt-3 col-lg-5 mb-3 form-check">
-                                        <input class="btn btn-primary" type="checkbox" id="autolaunch">
-                                        <label class="form-check-label" for="autolaunch">
-                                            Start with the operationg system
-                                        </label>
+                                    <div class="col-lg-4 mt-3">
+                                        <div class="mb-3 form-floating">
+                                            <input type="text" class="form-control" id="guestName" placeholder="user">
+                                            <label for="guestName">Guest name</label>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="row justify-content-center locker">
-                                    <div class="mt-3 col-lg-5 mb-3 form-check">
-                                        <input class="btn btn-primary" type="checkbox" id="autolock">
-                                        <label class="form-check-label" for="autolock">
-                                            Lock screen when change monitor
-                                        </label>
+                                <div class="row justify-content-center">
+                                    <div class="mt-3 col-lg-4 mb-3 text-center">
+                                        <input class="btn btn-primary" type="button" value="Connect">
                                     </div>
                                 </div>
+                                <div class="row justify-content-center">
+                                    <div class="col-lg-4 mt-3">
+                                        <div class="mb-3 form-floating">
+                                            <input type="text" class="form-control" id="guestName" placeholder="user">
+                                            <label for="guestName">Username</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row justify-content-center">
+                                    <div class="col-lg-4 mt-3">
+                                        <div class="mb-3 form-floating">
+                                            <input type="text" class="form-control" id="guestName" placeholder="user">
+                                            <label for="guestName">Password</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row justify-content-center">
+                                    <div class="mt-3 col-md-4 mb-3 text-center">
+                                        <input class="btn btn-primary" type="button" value="Login">
+                                    </div>
+                                </div>
+                                
+                                Teszt...<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>2
                             </div>
                             
-                            <h2 class="mb-5">Users</h2>
-                            <h2 class="">Login</h2>
-                            <div class="row justify-content-center">
-                                <div class="col-lg-4 mt-3">
-                                    <div class="mb-3 form-floating">
-                                        <input type="text" class="form-control" id="guestName" placeholder="user">
-                                        <label for="guestName">Guest name</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row justify-content-center">
-                                <div class="mt-3 col-lg-4 mb-3 text-center">
-                                    <input class="btn btn-primary" type="button" value="Connect">
-                                </div>
-                            </div>
-                            <div class="row justify-content-center">
-                                <div class="col-lg-4 mt-3">
-                                    <div class="mb-3 form-floating">
-                                        <input type="text" class="form-control" id="guestName" placeholder="user">
-                                        <label for="guestName">Username</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row justify-content-center">
-                                <div class="col-lg-4 mt-3">
-                                    <div class="mb-3 form-floating">
-                                        <input type="text" class="form-control" id="guestName" placeholder="user">
-                                        <label for="guestName">Password</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row justify-content-center">
-                                <div class="mt-3 col-md-4 mb-3 text-center">
-                                    <input class="btn btn-primary" type="button" value="Login">
-                                </div>
-                            </div>
-                            
-                            Teszt...<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>2
                         </div>
                         
                     </div>
-                    
-                  </div>
+                </div>
+            </div>
+
+
+            <div id="room" class="container-fluid flex-nowrap vh-100 d-none">
+                <div class="row">
+                    <ul class="nav nav-tabs" role="tablist">
+                        <li class="nav-item">
+                            <span class="nav-link active" role="button">
+                                <i class="bi bi-people"></i> Users
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link " role="button">
+                                <i class="bi bi-play-circle"></i> View
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link " role="button">
+                                <i class=" bi bi-broadcast"></i> Broadcast
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link " role="button">
+                                <i class="bi bi-gear"></i> Room settings
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link text-danger" role="button">
+                                <i class="bi bi-box-arrow-right"></i> Exit
+                            </span>
+                        </li>
+                    </ul>
+                </div>
             </div>
         </div>
-
-
-        <div id="room" class="container-fluid flex-nowrap vh-100 d-none">
-            <div class="row">
-                <ul class="nav nav-tabs" role="tablist">
-                    <li class="nav-item">
-                        <span class="nav-link active" role="button">
-                            <i class="bi bi-people"></i> Users
-                        </span>
-                    </li>
-                    <li class="nav-item">
-                        <span class="nav-link " role="button">
-                            <i class="bi bi-play-circle"></i> View
-                        </span>
-                    </li>
-                    <li class="nav-item">
-                        <span class="nav-link " role="button">
-                            <i class=" bi bi-broadcast"></i> Broadcast
-                        </span>
-                    </li>
-                    <li class="nav-item">
-                        <span class="nav-link " role="button">
-                            <i class="bi bi-gear"></i> Room settings
-                        </span>
-                    </li>
-                    <li class="nav-item">
-                        <span class="nav-link text-danger" role="button">
-                            <i class="bi bi-box-arrow-right"></i> Exit
-                        </span>
-                    </li>
-                </ul>
-            </div>
-        </div>
-
 
 
         <!--
