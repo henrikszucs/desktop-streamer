@@ -4,21 +4,5 @@
         "key": "server.key",
         "cert": "server.crt",
         "redirectFrom": 8887
-    },
-    "db": {
-        "host": "localhost",
-        "port": 3306,
-        "user": "root",
-        "pass": "",
-        "database": "desktop_streamer"
-    },
-    "allowSameEmail":true,
-    "users": [
-        {
-            "email":"henyusi@gmail.com",
-            "username":"admin",
-            "pass":"admin",
-            "isAdmin":true
-        }
-    ]
+    }
 }

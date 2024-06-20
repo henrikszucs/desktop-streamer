@@ -5,271 +5,210 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Remote Desktop</title>
         <link rel="icon" type="image/x-icon" href="icons/icon-64.png">
-        <!--Custom import -->
-        <link href="index.css" rel="stylesheet">
+        <!--Custom import-->
+        <link rel="stylesheet" href="index.css">
         <script src="index.js"></script>
+
+        <!--Pico CSS-->
+        <link rel="stylesheet" href="libs/pico.blue.min.css">
         <!--IDB helper-->
         <script src="libs/idb-helper.js"></script>
         <!--JSzip import -->
         <script src="libs/jszip.min.js"></script>
-        <!--Bootstrap-->
-        <link rel="stylesheet" href="libs/bootstrap/bootstrap-icons.css">
-        <link href="libs/bootstrap/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH">
-        <script src="libs/bootstrap/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"></script>  
+        <!--Peerjs import -->
+        <script src="libs/peerjs.min.js"></script>
         
     </head>
     <body>
-        <div id="loading" class="container-fluid">
-            <div class="row align-items-center min-vh-100">
-                <div class="col-12 text-center">
-                    <div class="spinner-border" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <div class="text-center message">
-                        Connecting to server...
-                    </div>
-                </div>
-            </div>
-            
-        </div>
+        <!-- Main -->
+        <main class="container" id="main">
+            <hgroup>
+                <p>A minimalist remote desktop application, with open source.</p>
+            </hgroup>
+            <section class="d-none" id="download">
+                <h2>Download client</h2>
+                <fieldset role="group">
+                    <select name="select" class="version">
+                        <option selected value="win">Windows</option>
+                    </select>
+                    <button class="download" aria-busy="false">Download</button>
+                </fieldset>
+            </section>
 
-        <div id ="main" class="d-none">
-            <div id="home" class="container-fluid flex-nowrap d-none">
-                <div class="row vh-100">
-                    <div class="flex-fill p-0 d-flex align-items-start ">
-                        <div class="nav flex-column nav-pills me-3 ps-1" role="tablist" >
-                            <div class="pb-3 text-center">
-                                <span class="fs-4 d-none d-sm-inline">Menu</span>
-                            </div>
-                            <button class="text-start nav-link rooms" type="button" role="tab">
-                                <i class=" bi bi-house"></i>
-                                <span class="d-none d-sm-inline">Rooms</span>
+            <section class="d-none" id="settings">
+                <h2>Settings</h2>
+                <label for="autolaunch">
+                    <input type="checkbox" role="switch" id="autolaunch" name="autolaunch">
+                    Start with operating system
+                </label>
+                <label for="autolock" class="autolock">
+                    <input type="checkbox" role="switch" id="autolock" name="autolock">
+                    Auto lock
+                </label>
+            </section>
+            
+            <section id="remote">
+                <h2>Remote access</h2>
+                <p class="status">Connecting...</p>
+                
+                <div class="connect d-none">
+                    <h4>Connect to desktop</h4>
+                    <fieldset role="group">
+                        <input name="text" class="joinCode" type="text" placeholder="ID to connect" value="">
+                        <button aria-busy="false" class="join">Connect</button>
+                    </fieldset>
+                </div>
+                <div class="share d-none">
+                    <h4>Share desktop</h4>
+                    <label for="allowConnect">
+                        <input type="checkbox" role="switch" id="allowConnect" name="allowConnect">
+                        Allow incoming connections
+                    </label>
+                    <div class="shareSub d-none">
+                        <fieldset role="group" class="codeField">
+                            <button class="codeCopy">
+                                Copy
                             </button>
-                            <button class="text-start nav-link shared" type="button" role="tab">
-                                <i class=" bi bi-share"></i>
-                                <span class="d-none d-sm-inline">Shared rooms</span>
-                            </button>
-                            <button class="text-start nav-link broadcast" type="button" role="tab">
-                                <i class=" bi bi-broadcast"></i>
-                                <span class="d-none d-sm-inline">Broadcasts</span>
-                            </button>
-                            <button class="text-start nav-link account" type="button" role="tab">
-                                <i class=" bi bi-person-circle"></i>
-                                <span class="d-none d-sm-inline">Accounts</span>
-                            </button>
-                        </div>
-                        <div class="py-3 tab-pane tab-content flex-fill text-center vh-100 overflow-auto">
-                            <div class="account container">
-                                <div class="client">
-                                    <h2>Desktop client</h2>
-                                    <div class="row justify-content-center mx-auto col-lg-5 col-xl-4 text-center mt-3 mb-3">
-                                        <div class="input-group">
-                                            <select class="form-select version">
-                                                <option value="win">Windows</option>
-                                            </select>
-                                            <input class="btn btn-primary download" type="button" value="Download client">
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="program">
-                                    <h2>Startup</h2>
-                                    <div class="row justify-content-center">
-                                        <div class="mt-3 col-lg-5 mb-3 form-check">
-                                            <input class="btn btn-primary" type="checkbox" id="autolaunch">
-                                            <label class="form-check-label" for="autolaunch">
-                                                Start with the operationg system
-                                            </label>
-                                        </div>
-                                    </div>
-                                    <div class="row justify-content-center locker">
-                                        <div class="mt-3 col-lg-5 mb-3 form-check">
-                                            <input class="btn btn-primary" type="checkbox" id="autolock">
-                                            <label class="form-check-label" for="autolock">
-                                                Lock screen when change monitor
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <h2 class="mb-5">Users</h2>
-                                <h2 class="">Login</h2>
-                                <div class="row justify-content-center">
-                                    <div class="col-lg-4 mt-3">
-                                        <div class="mb-3 form-floating">
-                                            <input type="text" class="form-control" id="guestName" placeholder="user">
-                                            <label for="guestName">Guest name</label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="row justify-content-center">
-                                    <div class="mt-3 col-lg-4 mb-3 text-center">
-                                        <input class="btn btn-primary" type="button" value="Connect">
-                                    </div>
-                                </div>
-                                <div class="row justify-content-center">
-                                    <div class="col-lg-4 mt-3">
-                                        <div class="mb-3 form-floating">
-                                            <input type="text" class="form-control" id="guestName" placeholder="user">
-                                            <label for="guestName">Username</label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="row justify-content-center">
-                                    <div class="col-lg-4 mt-3">
-                                        <div class="mb-3 form-floating">
-                                            <input type="text" class="form-control" id="guestName" placeholder="user">
-                                            <label for="guestName">Password</label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="row justify-content-center">
-                                    <div class="mt-3 col-md-4 mb-3 text-center">
-                                        <input class="btn btn-primary" type="button" value="Login">
-                                    </div>
-                                </div>
-                                
-                                Teszt...<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>2
-                            </div>
-                            
-                        </div>
+                            <input class="code" name="text" type="text" placeholder="ID" value="1234-1234-1234" readonly>
+                        </fieldset>
                         
                     </div>
-                </div>
-            </div>
-
-
-            <div id="room" class="container-fluid flex-nowrap vh-100 d-none">
-                <div class="row">
-                    <ul class="nav nav-tabs" role="tablist">
-                        <li class="nav-item">
-                            <span class="nav-link active" role="button">
-                                <i class="bi bi-people"></i> Users
-                            </span>
-                        </li>
-                        <li class="nav-item">
-                            <span class="nav-link " role="button">
-                                <i class="bi bi-play-circle"></i> View
-                            </span>
-                        </li>
-                        <li class="nav-item">
-                            <span class="nav-link " role="button">
-                                <i class=" bi bi-broadcast"></i> Broadcast
-                            </span>
-                        </li>
-                        <li class="nav-item">
-                            <span class="nav-link " role="button">
-                                <i class="bi bi-gear"></i> Room settings
-                            </span>
-                        </li>
-                        <li class="nav-item">
-                            <span class="nav-link text-danger" role="button">
-                                <i class="bi bi-box-arrow-right"></i> Exit
-                            </span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-
-        <!--
-            <div class="row flex ">
-                <ul class="nav sticky-top bg-light index-sticky nav-tabs" id="myTab" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="room-users" data-bs-toggle="tab" data-bs-target="#room-users-content" aria-controls="room-users-content" aria-selected="true" type="button" role="tab">
-                            <i class="bi bi-people"></i> Users
-                        </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="room-view" data-bs-toggle="tab" data-bs-target="#room-view-content" aria-controls="contact" aria-selected="false" type="button" role="tab">
-                            <i class="bi bi-play-circle"></i> View
-                        </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="room-share" data-bs-toggle="tab" data-bs-target="#room-share-content" aria-controls="room-share-content" aria-selected="false" type="button" role="tab">
-                            <i class="bi bi-cast"></i> Share
-                        </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="room-settings" data-bs-toggle="tab" data-bs-target="#room-settings-content" aria-controls="room-settings-content" aria-selected="false" type="button" role="tab">
-                            <i class="bi bi-gear"></i> Room settings
-                        </button>
-                    </li>
+                    <div class="users">
+    
+                    </div>
+                    <p class="noUsers">No incoming connections</p>
                     
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link text-danger" id="room-exit" data-bs-toggle="tab" data-bs-target="#room-exit-content" aria-controls="room-exit-content" aria-selected="false" type="button" role="tab">
-                            <i class="bi bi-box-arrow-right"></i> Exit
-                        </button>
-                    </li>
-                </ul>
-                <div class="tab-content" id="myTabContent">
-                    <div class="tab-pane fade show active" id="room-users-content" aria-labelledby="room-users" role="tabpanel">1...<br><br><br><br><br><br><br><br><br><br><br><br><br><br>2</div>
-                    <div class="tab-pane fade" id="room-view-content" aria-labelledby="room-view" role="tabpanel">4...</div>
-                    <div class="tab-pane fade" id="room-share-content" aria-labelledby="room-share" role="tabpanel">2...</div>
-                    <div class="tab-pane fade" id="room-settings-content" aria-labelledby="room-settings" role="tabpanel">3...</div>
-                    
-                    <div class="tab-pane fade" id="room-exit-content" aria-labelledby="room-exit-content" role="tabpanel">5...<br><br><br><br><br><br><br><br><br><br><br><br><br><br>2</div>
                 </div>
-            </div>
+                
+                
+            </section>
 
+            
+        </main>
 
-
-
-            <div id="auth-select" class="container d-none">
-            <h2 class="mt-4 text-center pb-3">Welcome in <span class="fw-bold">Remote Desktop</span></h2>
-            <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-sm-6 mt-3">
-                        <div class="card">
-                            <h5 class="card-header">Guest login</h5>
-                            <div class="card-body">
-                                <h5 class="card-title">Do you want try it?</h5>
-                                <p class="card-text">Do a remote control in a room without registration.</p>
-                                <a class="btn btn-primary">Use as Guest</a>
-                            </div>
+        <!-- Control-->
+        <div id="control" class="">
+                <video class="video" muted="" autoplay="" loop="" src="https://storage.googleapis.com/cms-storage-bucket/029113ae2cbbcf9493fe.mp4" type="video/mp4" width="100%">
+                    <img src="https://storage.googleapis.com/cms-storage-bucket/a667e994fc2f3e85de36.png" alt="Fast">
+                </video>
+                
+                    
+                <div class="controlBtn">
+                    <div class="btn left">
+                        <div role="button" class="close">
+                            <span class="closeIcon">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-square-x"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14z" /><path d="M9 9l6 6m0 -6l-6 6" /></svg>
+                            </span>
                         </div>
                     </div>
-                    <div class="col-sm-6 mt-3">
-                        <div class="card">
-                            <h5 class="card-header">User account</h5>
-                            <div class="card-body">
-                                <h5 class="card-title">Do you have an account?</h5>
-                                <p class="card-text">Login or create account to an easier and safer remote control.</p>
-                                <a href="#" class="btn btn-primary">Login</a> or 
-                                <a href="#" class="btn btn-secondary">Register</a>
-                            </div>
+                    <div class="btn">
+                        <div role="button" class="clipboard">
+                            <span class="clipboardIconOn">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-clipboard"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" /><path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z" /></svg>
+                            </span>
+                            <span class="clipboardIconOff">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-clipboard-off"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5.575 5.597a2 2 0 0 0 -.575 1.403v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2m0 -4v-8a2 2 0 0 0 -2 -2h-2" /><path d="M9 5a2 2 0 0 1 2 -2h2a2 2 0 1 1 0 4h-2" /><path d="M3 3l18 18" /></svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="btn">
+                        <div role="button" class="keyboard">
+                            <span class="keyboardIcon">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-keyboard"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M2 6m0 2a2 2 0 0 1 2 -2h16a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-16a2 2 0 0 1 -2 -2z" /><path d="M6 10l0 .01" /><path d="M10 10l0 .01" /><path d="M14 10l0 .01" /><path d="M18 10l0 .01" /><path d="M6 14l0 .01" /><path d="M18 14l0 .01" /><path d="M10 14l4 .01" /></svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="btn">
+                        <div role="button" class="mouse">
+                            <span class="mouseIconOn">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-mouse"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 3m0 4a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v10a4 4 0 0 1 -4 4h-4a4 4 0 0 1 -4 -4z" /><path d="M12 7l0 4" /></svg>
+                            </span>
+                            <span class="mouseIconOff">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-mouse-off"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M7.733 3.704a3.982 3.982 0 0 1 2.267 -.704h4a4 4 0 0 1 4 4v7m-.1 3.895a4 4 0 0 1 -3.9 3.105h-4a4 4 0 0 1 -4 -4v-10c0 -.3 .033 -.593 .096 -.874" /><path d="M12 7v1" /><path d="M3 3l18 18" /></svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="btn">
+                        <div role="button" class="audio">
+                            <span class="audioIconOn">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-volume"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M15 8a5 5 0 0 1 0 8" /><path d="M17.7 5a9 9 0 0 1 0 14" /><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5" /></svg>
+                            </span>
+                            <span class="audioIconOff">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-volume-off"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M15 8a5 5 0 0 1 1.912 4.934m-1.377 2.602a5 5 0 0 1 -.535 .464" /><path d="M17.7 5a9 9 0 0 1 2.362 11.086m-1.676 2.299a9 9 0 0 1 -.686 .615" /><path d="M9.069 5.054l.431 -.554a.8 .8 0 0 1 1.5 .5v2m0 4v8a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l1.294 -1.664" /><path d="M3 3l18 18" /></svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="btn">
+                        <div role="button" class="lock">
+                            <span class="lockIconOn">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-lock"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z" /><path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" /><path d="M8 11v-4a4 4 0 1 1 8 0v4" /></svg>
+                            </span>
+                            <span class="lockIconOff">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-lock-open"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 11m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z" /><path d="M12 16m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 11v-5a4 4 0 0 1 8 0" /></svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="btn">
+                        <div role="button" class="screen">
+                            <span class="screenIcon">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-app-window"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M3 5m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z" /><path d="M6 8h.01" /><path d="M9 8h.01" /></svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="btn right">
+                        <div role="button" class="fullscreen">
+                            <span class="fullscreenIconOff">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-arrows-maximize"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M16 4l4 0l0 4" /><path d="M14 10l6 -6" /><path d="M8 20l-4 0l0 -4" /><path d="M4 20l6 -6" /><path d="M16 20l4 0l0 -4" /><path d="M14 14l6 6" /><path d="M8 4l-4 0l0 4" /><path d="M4 4l6 6" /></svg>
+                            </span>
+                            <span class="fullscreenIconOn">
+                                <svg  xmlns="http://www.w3.org/2000/svg"  width="24"  height="24"  viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round"  class="icon icon-tabler icons-tabler-outline icon-tabler-arrows-minimize"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 9l4 0l0 -4" /><path d="M3 3l6 6" /><path d="M5 15l4 0l0 4" /><path d="M3 21l6 -6" /><path d="M19 9l-4 0l0 -4" /><path d="M15 9l6 -6" /><path d="M19 15l-4 0l0 4" /><path d="M15 15l6 6" /></svg>
+                            </span>
                         </div>
                     </div>
                 </div>
-            </div>
         </div>
-
-
-        <div id="login-guest" class="container d-none">
-            <h2 class="mt-4 text-center">Guest</h2>
-
-            <div class="row justify-content-center">
-                <div class="col-sm-4 mt-3">
-                    <div class="mb-3 form-floating">
-                        <input type="text" class="form-control" id="guestName" placeholder="user">
-                        <label for="guestName">Name</label>
+        <dialog id="modal">
+            <article>
+                <h2>Select a screen settings</h2>
+                <div>
+                    Display: 
+                    <div class="line">
+                        <select name="screen">
+                            <option>Screen 1</option>
+                            <option>Screen 2</option>
+                        </select>
                     </div>
                 </div>
-            </div>
-            <div class="row justify-content-center">
-                <div class="col-sm-4 mt-3">
-                    <div class="mb-3 form-floating">
-                        <input type="text" class="form-control" id="roomID" placeholder="user">
-                        <label for="roomID">Room id</label>
+                <div>
+                    Framerate: 
+                    <div class="line">
+                        <select name="screen">
+                            <option>24</option>
+                            <option>30</option>
+                            <option>60</option>
+                        </select>
                     </div>
                 </div>
-            </div>
-            <div class="row justify-content-center">
-                <div class="mt-3 col-sm-4 mb-3 text-center">
-                    <input class="btn btn-primary" type="button" value="Join to room">
+                <div>
+                    Bitrate (Mbps): 
+                    <div class="line">
+                        <select name="screen">
+                            <option>5</option>
+                            <option>10</option>
+                            <option>15</option>
+                            <option>20</option>
+                            <option>25</option>
+                            <option>30</option>
+                            <option>40</option>
+                            <option>50</option>
+                        </select>
+                    </div>
                 </div>
-            </div>
-        </div>
-        -->
+                <footer>
+                    <button class="secondary cancel">Cancel</button>
+                    <button class="confirm">Confirm</button>
+                </footer>
+            </article>
+        </dialog>
     </body>
 </html>

@@ -153,18 +153,12 @@ const main = async function() {
     });
     
     
-    // Screen locker
-    let isNeedLock = true;
-    const lockerFn = async function() {
-        if (isNeedLock !== true) {
-            return;
-        }
-        if (os.platform() === "win32") {
-            cmd.exec("Rundll32.exe user32.dll,LockWorkStation");
-        }
+    // Screen change event
+    const screenChange = async function() {
+        winMain.webContents.send("api", "screenchange");
     };
-    screen.on("display-added", lockerFn);
-    screen.on("display-removed", lockerFn);
+    screen.on("display-added", screenChange);
+    screen.on("display-removed", screenChange);
     
     
     // External API
@@ -173,9 +167,7 @@ const main = async function() {
             return app.getPath("exe");
         } else if (handle === "path-app") {
             return app.getAppPath();
-        } else if (handle === "set-lock") {
-            isNeedLock = args[0];
-        } else if (handle === "sources") {
+        } else if (handle === "list-screens") {
             const sources = await desktopCapturer.getSources({
                 "types": ["window", "screen"]
             });
