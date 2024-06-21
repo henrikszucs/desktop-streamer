@@ -262,7 +262,7 @@ const HTTPServerStart = async function(conf) {
     const tmpPath = "../client/ui/tmp";
     const electronPath = "../client/electron";
 
-    process.stdout.write("\n    Building cache initial setup...    ");
+    process.stdout.write("\n    Building cache...    ");
     //Generate desktop client zips
     await generateClient(basePath, electronPath, tmpPath);
 

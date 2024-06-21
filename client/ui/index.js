@@ -1,4 +1,15 @@
 "use strict";
+let nutjs = null;
+
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    let bytes = new Uint8Array(buffer);
+    let len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+}
 
 window.addEventListener("load", async function() {
     // Main (load libs and call the next step)
@@ -13,7 +24,7 @@ window.addEventListener("load", async function() {
     let cmd = null;
     let fs = null;
     let path = null;
-    let nutjs = null;
+    
     let appAutoLaunch = null;
     const main = async function () {
 
@@ -40,6 +51,7 @@ window.addEventListener("load", async function() {
             path = require("node:path");
             // Nut.js import
             nutjs = require(path.join(pathApp, "ui/libs/nutjs/nut.js"));
+            console.log(nutjs);
             // AutoLaunch import
             const AutoLaunch = require(path.join(pathApp, "ui/libs/auto-launch.js"));
 
@@ -72,7 +84,7 @@ window.addEventListener("load", async function() {
         address = new URL(address);
     };
     await main();
-
+    
 
     // Download
     {
@@ -392,7 +404,10 @@ window.addEventListener("load", async function() {
                         timeoutID = -1;
                     });
                     communicator.addEventListener("send", function(event) {
-                        if (event.detail.data["method"] === "setScreen") {
+                        if (event.detail.data["method"] === "getClipboard") {
+
+                        }
+                        if (event.detail.data["method"] === "setClipboard") {
 
                         }
                         if (event.detail.data["method"] === "setKeyboard") {
@@ -402,6 +417,7 @@ window.addEventListener("load", async function() {
 
                         }
                     });
+                    let mediaConnection = null;
                     communicator.addEventListener("invoke", async function(event) {
                         if (event.detail.data["method"] === "isAvailable") {
                             if (allowConnect.checked && userList.has(dataConnection.peer) === false) {
@@ -422,16 +438,21 @@ window.addEventListener("load", async function() {
                             event.detail.communicator.reply(event.detail.id, screens);
                             return;
                         }
-                        if (event.detail.data["method"] === "getScreen") {
+                        if (event.detail.data["method"] === "screenGet") {
+                            const id = event.detail.data["id"];
+                            const frameRate = event.detail.data["frameRate"];
+                            const bitRate = event.detail.data["bitRate"] * 1000 * 1000;
                             let stream = null;
+
+                            // get screen
                             try {
                                 const constraints = {
                                     "video": {
                                         "mandatory": {
                                             "chromeMediaSource": "desktop",
-                                            "chromeMediaSourceId": event.detail.data["id"],
+                                            "chromeMediaSourceId": id,
                                             "minFrameRate": 1,
-                                            "maxFrameRate": event.detail.data["frameRate"]
+                                            "maxFrameRate": frameRate
                                         }
                                     },
                                     "audio": {
@@ -449,40 +470,82 @@ window.addEventListener("load", async function() {
                                 stream = null;
                             }
                             //console.log(stream);
-                            const mediaConnection = peer.call(dataConnection.peer, stream);
-                            console.log(mediaConnection);
-                            const videoSender = mediaConnection.peerConnection.getSenders().filter(s => s.track?.kind === "video")[0];
-                            console.log(mediaConnection.peerConnection.getSenders());
-                            const videoParams = videoSender.getParameters();
-                            if ("degradationPreference" in videoParams) {
-                                // So that the webrtc implementation doesn't alter the framerate - this is optional
-                                videoParams.degradationPreference = "maintain-framerate";
+
+                            // call
+                            if (stream !== null) {
+                                mediaConnection = peer.call(dataConnection.peer, stream);
+
+                                // set quality
+                                const videoSender = mediaConnection.peerConnection.getSenders().filter(s => s.track?.kind === "video")[0];
+                                console.log(mediaConnection.peerConnection.getSenders());
+                                const videoParams = videoSender.getParameters();
+                                if ("degradationPreference" in videoParams) {
+                                    // So that the webrtc implementation doesn't alter the framerate - this is optional
+                                    videoParams.degradationPreference = "maintain-framerate";
+                                }
+                                videoParams["encodings"][0]["adaptivePtime"] = true;
+                                videoParams["encodings"][0]["priority"] = "high";
+                                videoParams["encodings"][0]["networkPriority"] = "high";
+                                videoParams["encodings"][0]["maxFramerate"] = frameRate;
+                                videoParams["encodings"][0]["maxBitrate"] = bitRate
+                                await videoSender.setParameters(videoParams);
+                            }
+                            event.detail.communicator.reply(event.detail.id, stream!==null);
+                            return;
+                        }
+                        if (event.detail.data["method"] === "screenSet") {
+                            const id = event.detail.data["id"];
+                            const frameRate = event.detail.data["frameRate"];
+                            const bitRate = event.detail.data["bitRate"] * 1000 * 1000;
+                            let stream = null;
+
+                            // get screen
+                            try {
+                                const constraints = {
+                                    "video": {
+                                        "mandatory": {
+                                            "chromeMediaSource": "desktop",
+                                            "chromeMediaSourceId": id,
+                                            "minFrameRate": 1,
+                                            "maxFrameRate": frameRate
+                                        }
+                                    }
+                                };
+                                console.log(constraints);
+                                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                                //console.log(stream);
+                            } catch (error) {
+                                /* handle the error */
+                                console.log(error);
+                                stream = null;
                             }
 
-                            // Set a base encoding setup if there isn't one already
-                            console.log(videoParams.encodings);
-                            videoParams["encodings"][0]["priority"] = "high";
-                            videoParams["encodings"][0]["networkPriority"] = "high";
-                            videoParams["encodings"][0]["maxFramerate"] = event.detail.data["frameRate"];
-                            videoParams["encodings"][0]["maxBitrate"] = event.detail.data["bitRate"] // For a 50mbps stream; the value is in bps
-                            await videoSender.setParameters(videoParams);
-                            
+                            if (stream !== null) {
+                                // set quality
+                                const videoSender = mediaConnection.peerConnection.getSenders().filter(s => s.track?.kind === "video")[0];
+                                await videoSender.replaceTrack(stream.getVideoTracks()[0]);
+
+                                const videoParams = videoSender.getParameters();
+                                if ("degradationPreference" in videoParams) {
+                                    // So that the webrtc implementation doesn't alter the framerate - this is optional
+                                    videoParams.degradationPreference = "maintain-framerate";
+                                }
+                                videoParams["encodings"][0]["adaptivePtime"] = true;
+                                videoParams["encodings"][0]["priority"] = "high";
+                                videoParams["encodings"][0]["networkPriority"] = "high";
+                                videoParams["encodings"][0]["maxFramerate"] = frameRate;
+                                videoParams["encodings"][0]["maxBitrate"] = bitRate
+                                await videoSender.setParameters(videoParams);
+                            }
+
                             event.detail.communicator.reply(event.detail.id, stream!==null);
+                            return;
                         }
-                        if (event.detail.data["method"] === "getClipboard") {
-
-                        }
-                        if (event.detail.data["method"] === "setClipboard") {
-
-                        }
-                        
                     });
                     ipcRenderer.on("api", async function(event, ...arg) {
                         if (arg[0] === "screenchange") {
-                            const screens = await ipcRenderer.invoke("api", "list-screens");
                             communicator.send({
-                                "method": "screenChange",
-                                "screens": screens
+                                "method": "screenChange"
                             });
                         }
                     });
@@ -559,7 +622,7 @@ window.addEventListener("load", async function() {
             startJoin();
         });
         
-        let setScreen = null;
+
         const startJoin = function() {
             join.setAttribute("aria-busy", "true");
             joinCode.removeAttribute("aria-invalid");
@@ -581,44 +644,25 @@ window.addEventListener("load", async function() {
                     "method": "isAvailable"
                 });
                 console.log(isAvailable);
-                if (isAvailable) {
-                    join.setAttribute("aria-busy", "false");
-                    joinCode.removeAttribute("aria-invalid");
-                    main.classList.add("d-none");
-                    control.classList.remove("d-none");
-                } else {
+                if (isAvailable === false) {
                     join.setAttribute("aria-busy", "false");
                     joinCode.setAttribute("aria-invalid", "true");
                     dataConnection.close();
+                    return;
                 }
 
-                //screen manage
+                //screen initial
                 let screens = await communicator.invoke({
                     "method": "screenList"
                 });
                 console.log(screens);
-                communicator.addEventListener("send", function(event) {
-                    if (event.detail.data["method"] === "screenChange") {
-                        console.log(event.detail.data["screens"]);
-                    }
-                });
+                
 
-                //load screen
-                let mediaConnection = null;
+                //video UI
                 const video = control.querySelector(".video");
-                setScreen = async function(id, frameRate, bitRate) {
-                    if (id === null) {
-                        mediaConnection?.close();
-                        return;
-                    }
-                    const res = await communicator.invoke({
-                        "method": "getScreen",
-                        "id": id,
-                        "frameRate": frameRate,
-                        "bitRate": bitRate
-                    });
-                    return res;
-                };
+                let currenctId = screens[0].id;
+                let currenctFrameRate = 60;
+                let currenctBitRate = 15;
                 peer.on("call", function(mediaConnection) {
                     console.log(mediaConnection);
                     if (dataConnection.peer !== mediaConnection.peer) {
@@ -628,25 +672,138 @@ window.addEventListener("load", async function() {
                     mediaConnection.on("stream", function(stream) {
                         console.log(stream);
                         video.srcObject = stream;
+
+                        stream.addEventListener("addtrack",function() {
+                            console.log("addtrack")
+                        });
+                        stream.addEventListener("removetrack",function() {
+                            console.log("removetrack")
+                        });
+
+                        join.setAttribute("aria-busy", "false");
+                        joinCode.removeAttribute("aria-invalid");
+                        main.classList.add("d-none");
+                        control.classList.remove("d-none");
                     });
                     mediaConnection.on("close", function() {
-                        console.log("closed stream");
+                        dataConnection.close();
                     });
                     mediaConnection.on("error", function(error) {
                         console.log("error stream");
                     });
                     mediaConnection.answer();
+
+                    //close btn
+                    const close = control.querySelector(".close");
+                    close.addEventListener("click", function() {
+                        mediaConnection.close();
+                    });
+
+                    //audio btn
+                    let isAudio = true;
+                    const audio = control.querySelector(".audio");
+                    const audioIconOn = control.querySelector(".audioIconOn");
+                    const audioIconOff = control.querySelector(".audioIconOff");
+                    audio.addEventListener("click", function() {
+                        isAudio = !isAudio;
+                        audioRefresh();
+                    });
+                    const audioRefresh = function() {
+                        if (isAudio) {
+                            video.muted = false;
+                            audioIconOn.classList.remove("d-none");
+                            audioIconOff.classList.add("d-none");
+                        } else {
+                            video.muted = true;
+                            audioIconOn.classList.add("d-none");
+                            audioIconOff.classList.remove("d-none");
+                        }
+                    };
+                    audioRefresh();
+
+                    //screen btn
+                    const screen = control.querySelector(".screen");
+                    const modal = document.getElementById("modal");
+                    const display = modal.querySelector(".display");
+                    const frameRate = modal.querySelector(".frameRate");
+                    const bitRate = modal.querySelector(".bitRate");
+                    const modalConfirm = modal.querySelector(".confirm");
+                    const modalCancel= modal.querySelector(".cancel");
+                    screen.addEventListener("click", async function() {
+                        if (modal.open === false) {
+                            await screenRefresh();
+                            modal.show();
+                        }
+                    });
+                    modalConfirm.addEventListener("click", async function() {
+                        currenctId = display.value;
+                        currenctFrameRate = frameRate.value;
+                        currenctBitRate = bitRate.value;
+                        await communicator.invoke({
+                            "method": "screenSet",
+                            "id": currenctId,
+                            "frameRate": currenctFrameRate,
+                            "bitRate": currenctBitRate
+                        });
+                        modal.close();
+                    });
+                    modalCancel.addEventListener("click", function() {
+                        modal.close();
+                    });
+                    communicator.addEventListener("send", function(event) {
+                        if (event.detail.data["method"] === "screenChange") {
+                            screenRefresh();
+                        }
+                    });
+                    const screenRefresh = async function() {
+                        //get screens
+                        let screens = await communicator.invoke({
+                            "method": "screenList"
+                        });
+
+                        //update ui
+                        display.innerHTML = "";
+                        let isExist = false;
+                        let screenCount = 0;
+                        let WindowCount = 0;
+                        for (const screen of screens) {
+                            const option = document.createElement("option");
+                            if (screen["id"].split(":")[0] === "screen") {
+                                screenCount++;
+                                option.text = "Screen " + screenCount;
+                            } else {
+                                WindowCount++;
+                                option.text = "Window " + WindowCount;
+                            }
+                            option.value = screen["id"];
+                            display.add(option);
+                            if (isExist === false) {
+                                isExist = screen["id"] === currenctId;
+                            }
+                        }
+                        if (isExist) {
+                            display.value = currenctId;
+                        }
+                        
+                        frameRate.value = currenctFrameRate;
+                        bitRate.value = currenctBitRate;
+                    };
                 });
-                console.log(await setScreen(screens[0].id, 60, 24000000));
+                await communicator.invoke({
+                    "method": "screenGet",
+                    "id": currenctId,
+                    "frameRate": currenctFrameRate,
+                    "bitRate": currenctBitRate
+                });
+
+
+                
             });
         };
         
 
         //close
-        const close = control.querySelector(".close");
-        close.addEventListener("click", function() {
-
-        });
+        
 
 
         //clipboard
@@ -692,25 +849,7 @@ window.addEventListener("load", async function() {
         };
         mouseRefresh();
 
-        //audio
-        let isAudio = true;
-        const audio = control.querySelector(".audio");
-        const audioIconOn = control.querySelector(".audioIconOn");
-        const audioIconOff = control.querySelector(".audioIconOff");
-        audio.addEventListener("click", function() {
-            isAudio = !isAudio;
-            audioRefresh();
-        });
-        const audioRefresh = function() {
-            if (isAudio) {
-                audioIconOn.classList.remove("d-none");
-                audioIconOff.classList.add("d-none");
-            } else {
-                audioIconOn.classList.add("d-none");
-                audioIconOff.classList.remove("d-none");
-            }
-        };
-        audioRefresh();
+        
 
         //lock
         let isLock = false;
@@ -732,22 +871,7 @@ window.addEventListener("load", async function() {
         };
         lockRefresh();
 
-        //screen
-        const screen = control.querySelector(".screen");
-        const modal = document.getElementById("modal");
-        const modalConfirm = modal.querySelector(".confirm");
-        const modalCancel= modal.querySelector(".cancel");
-        screen.addEventListener("click", function() {
-            if (modal.open === false) {
-                modal.show();
-            }
-        });
-        modalConfirm.addEventListener("click", function() {
-            modal.close();
-        });
-        modalCancel.addEventListener("click", function() {
-            modal.close();
-        });
+        
 
 
         //fullscreen
