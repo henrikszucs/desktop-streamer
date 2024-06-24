@@ -1,7 +1,5 @@
 {
    "dependencies": {
-      "express": "^4.19.2",
-      "jszip": "^3.10.1",
-      "peer": "^1.0.2"
+      "jszip": "^3.10.1"
    }
 }

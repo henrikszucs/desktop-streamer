@@ -3,16 +3,13 @@
 const path = require("node:path");
 const process = require("node:process");
 const fs = require("node:fs/promises");
-const crypto = require("node:crypto");
-const url = require("node:url");
 const http = require("node:http");
 const https = require("node:https");
 
 const mime = require("./libs/mime.js");
 
 const JSZip = require("jszip");
-const express = require("express");
-const { ExpressPeerServer } = require("peer");
+const ws = require("ws");
 
 
 
@@ -49,7 +46,6 @@ const sortedIndex = function(array, value, func=function(el){return el}) {
     }
     return low;
 };
-
 
 
 // Global configuration parse
@@ -127,8 +123,6 @@ const initialSetup = async function(confPath) {
 
 
 // Static HTTP file server
-const sockets = new Map();
-let nextSocketId = 0;
 const getFileData = async function(src) {
     try {
         const data = await fs.readFile(src);
@@ -155,9 +149,22 @@ const getFileDataStream = async function(src) {
         const data = await fs.open(src);
         const date = new Date(stats.mtimeMs);
         const stream = data.createReadStream();
-        stream.on("end", function() {
-            data.close();
+
+        //close if end or inactive
+        let timeOut = -1;
+        stream.on("data", function() {
+            //console.log("read");
+            clearTimeout(timeOut);
+            timeOut = setTimeout(function() {
+                data?.close?.();
+            }, 10000);
         });
+        stream.on("end", function() {
+            //console.log("end");
+            clearTimeout(timeOut);
+            data?.close?.();
+        });
+        
         return {
             "lastModified": date.toUTCString(),
             "type": mime.getMIMEType(path.extname(src)),
@@ -264,48 +271,23 @@ const HTTPServerStart = async function(conf) {
 
     process.stdout.write("\n    Building cache...    ");
     //Generate desktop client zips
-    await generateClient(basePath, electronPath, tmpPath);
-
+    //await generateClient(basePath, electronPath, tmpPath);
     //Cache UI pages
     let fileCache = new Map();
     //fileCache = await generateCache(basePath, [tmpPath]);
     process.stdout.write("done\n");
-    
-    //peerjs
-    const peerjsPath = "peerjs";
-    const connectPeerjs = function(server, app) {
-        const peerServer = ExpressPeerServer(server, {
-            "debug": true,
-            "path": "/",
-            "generateClientId": function() {
-                let result = "";
-                const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-                const charactersLength = characters.length;
-                for (let i = 0; i < 6; i++) {
-                    result += characters[Math.floor(Math.random() * charactersLength)];
-                }
-                return result;
-            }
-        });
-        app.use("/" + peerjsPath, peerServer);
-    };
+
 
     // file listening function
-    const app = express();
-    app.all("*", async function(req, res, next) {
-        const filePath = req.path.slice(1);
-        if (filePath.startsWith(peerjsPath)) {
-            next();
-            return;
-        }
+    const requestHandle = async function(req, res) {
+        const filePath = req.url.slice(1);
 
         let fileData = await getFile(basePath, filePath, fileCache); // get requested
         if (typeof fileData === "undefined") {
             fileData = await getFile(basePath, "index.html", fileCache); // get default
         }
 
-        res.status(200);
-        res.set({
+        res.writeHead(200, {
             //"Content-Security-Policy": "default-src 'self'",
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Last-Modified": fileData["lastModified"],
@@ -316,68 +298,49 @@ const HTTPServerStart = async function(conf) {
         if (typeof fileData["stream"] !== "undefined") {
             fileData["stream"].pipe(res);
         } else {
-            res.send(fileData["buffer"]);
+            res.write(fileData["buffer"]);
             res.end(); //end the response
         }
-    });
+    };
 
     // redirect function
-    const appR = express();
-    appR.all("*", function(req, res) {
-        const myURL = req.hostname;
+    const redirectHandle = function(req, res) {
+        const myURL = req.headers.host.split(":")[0];
         const myPort = conf["port"] !== 443 ? ":" + conf["port"] : "";
         res.writeHead(302, {
-            "Location": "https://" + myURL + myPort + req.path
+            "Location": "https://" + myURL + myPort + req.url
         });
         res.end();
-    });
-
+    };
 
     //create HTTP or HTTPS server
     if (typeof conf["https"] !== "undefined") {
-        //normal server
         const options = {
             "key": conf["https"]["key"],
             "cert": conf["https"]["cert"]
         };
-
-        let server = https.createServer(options, app);
-        connectPeerjs(server, app);
-        server = server.listen(conf["port"]);
-        server.on("connection", function (socket) {
-            // Add a newly connected socket
-            const socketId = nextSocketId++;
-            sockets.set(socketId, socket);
-          
-            // Remove the socket when it closes
-            socket.on("close", function () {
-                sockets.delete(socketId);
-            });
-        });
+        const server = https.createServer(options, requestHandle).listen(conf["port"]);
         servers.push(server);
 
-        //redirect server
         if (typeof conf["https"]["redirectFrom"] === "number") {
-            const serverRedirect = http.createServer(options, appR).listen(conf["https"]["redirectFrom"]);
+            const serverRedirect = http.createServer(options, redirectHandle).listen(conf["https"]["redirectFrom"]);
             servers.push(serverRedirect);
         }
         
     } else {
-        //normal server
-        const server = http.createServer(requestHandle);
-        connectPeerjs(server, app);
-        servers.push(server.listen(conf["port"]));
+        const server = http.createServer(requestHandle).listen(conf["port"]);
+        servers.push(server);
     }
     return servers;
 };
 const HTTPServerStop = async function(servers) {
-    const it = sockets[Symbol.iterator]();
-    for (const [key, value] of it) {
-        value.destroy();
-    }
     for (const server of servers) {
         await new Promise(function(resolve) {
+            const timeOut = setTimeout(function() {
+                resolve(false);
+            }, 5000);
             server.close(function() {
+                clearTimeout(timeOut);
                 resolve(true);
             });
         });
@@ -385,14 +348,290 @@ const HTTPServerStop = async function(servers) {
 };
 
 
+// Runtime (in memory storage for websocket and for business logic)
+const Runtime = class {
+    clients = new Map();
+    constructor() {
+        
+    };
 
-// Close the server
+
+    // helper for communication
+    Communicator = class extends EventTarget {
+        senderFn = function(data) {ws.send(JSON.stringify(data));};
+        recieverFn = function(get) {ws.addEventListener("message", function(event) {get(JSON.parse(event.data));})};
+        processes = [];
+        isRed = false;
+        gcClear = 0;
+        gcClearLimit = 10;
+
+        FROM_MYSELF = 0;
+        FROM_OTHER = 1;
+        
+        // methods: invoke, send, reply (only in event),
+        // events: invoke, send
+        constructor(isRed, callback) {
+            super();
+
+            this.reset(isRed, callback);
+        }
+        reset(isRed=false, callback) {
+            this.FROM_MYSELF = (isRed ? 1 : 0);
+            this.FROM_OTHER = (isRed ? 0 : 1);
+
+            this.processes = [];
+            this.senderFn = callback["senderFn"];
+            this.recieverFn = callback["recieverFn"];
+
+            this.recieverFn(function(data) {
+                //handle error
+                if ((data instanceof Array) === false || data.length < 2) {
+                    console.log("Wrong format");
+                    this.senderFn([this.FROM_OTHER, -1, 400]);
+                } else {
+                    this.recieve(data);
+                }
+            }.bind(this));
+            
+        };
+        
+        send(msg={}) {
+            //send data, fire and forget
+            let data = [this.FROM_MYSELF, -1, msg];
+            this.senderFn(data);
+        };
+
+        gc() {
+            const lastEl = this.processes.length - 1;
+            let i = lastEl;
+            while(i >= 0 && this.processes[i] === null) {
+                i--;
+            }
+            this.processes.splice(i+1, lastEl-i);
+        };
+        async invoke(msg={}, timeout=5000) {
+            return new Promise((resolve, reject) => {
+                // run garbage collector
+                if (this.gcClear > this.gcClearLimit) {
+                    this.gcClear = 0;
+                    this.gc();
+                }
+                this.gcClear++;
+
+                //get unique id from stack
+                const id = this.processes.length;
+
+                //start timeout
+                const myTimeout = setTimeout(function() {
+                    reject(new Error("Timeout (" + id + ")"));
+                }, timeout);
+
+                //set callback function in stack
+                this.processes.push((data) => {
+                    this.processes[id] = null;
+                    clearTimeout(myTimeout);
+                    resolve(data);
+                });
+                
+                //send data
+                let data = [this.FROM_MYSELF, id, msg];
+                this.senderFn(data);
+            });
+        };
+        recieve(data) {
+            //process data
+            if (data[0] === this.FROM_MYSELF) {
+                //recieve response
+                if (data[1] < this.processes.length && this.processes[data[1]] !== null) {
+                    this.processes[data[1]](data[2]);
+                }
+
+            } else if (data[0] === this.FROM_OTHER) {
+                //recieve request
+                if (data[1] === -1) {
+                    // no need reply for this
+                    this.dispatchEvent(
+                        new CustomEvent("send", {"detail": {
+                            "data": data[2]
+                        }})
+                    );
+                } else {
+                    // need reply for this with id
+                    this.dispatchEvent(
+                        new CustomEvent("invoke", {"detail": {
+                            "reply": this.reply.bind(this),
+                            "id": data[1],
+                            "data": data[2]
+                        }})
+                    );
+                }
+                
+            }
+        };
+        reply(id, msg={}) {
+            //send data
+            let data = [this.FROM_OTHER, id, msg];
+            this.senderFn(data);
+        };
+    };
+
+
+    //
+    // clients functions
+    //
+    // client connect and handle API
+    async clientCreate(ws) {
+        let clientId;
+        do {
+            clientId = (Math.floor(Math.random() * 9999) + 1).toString();
+        } while (this.clients.has(clientId));
+        console.log("Client connected (" + clientId + ")");
+
+        const communicator = new this.Communicator(true, {
+            "senderFn": function(data) {
+                ws.send(JSON.stringify(data))
+            },
+            "recieverFn": function(get) {
+                ws.addEventListener("message", function(event) {
+                    let data = [];
+                    try {
+                        data = JSON.parse(event.data)
+                    } catch (error) {
+                        
+                    }
+                    get(data);
+                });
+            }
+        });
+        this.clients.set(clientId, communicator);
+
+        // listen error
+        ws.addListener("error", (err) => {
+            console.log("Error " + err);
+        });
+
+        // listen close
+        ws.addEventListener("close", () => {
+            console.log("Client disconnected (" + clientId + ")");
+            this.clients.delete(clientId);
+        });
+
+        //listen non-respond api
+        communicator.addEventListener("send", (event) => {
+            //forward ice change
+            if (event.detail.data["method"] === "iceSend") {
+                const client = this.clients.get(event.detail.data["id"]);
+                if (typeof client === "undefined") {
+                    return;  
+                }
+                const data = event.detail.data;
+                data["fromId"] = clientId;
+                client.send(data);
+                return;
+            }
+        });
+
+        //listen respond api
+        communicator.addEventListener("invoke", async (event) => {
+            //get own id
+            if (event.detail.data["method"] === "myId") {
+                event.detail.reply(event.detail.id, clientId);
+                return;
+            }
+            //call other with webrtc datachannel
+            if (event.detail.data["method"] === "call") {
+                const client = this.clients.get(event.detail.data["id"]);
+                if (typeof client === "undefined" || event.detail.data["id"] === clientId) {
+                    event.detail.reply(event.detail.id, {
+                        "isSuccess": false
+                    });
+                    return;
+                }
+                try {
+                    let res = await client.invoke({
+                        "method": "call",
+                        "fromId": clientId,
+                        "offer": event.detail.data["offer"]
+                    });
+                    event.detail.reply(event.detail.id, res);
+                } catch (error) {
+                    event.detail.reply(event.detail.id, {
+                        "isSuccess": false
+                    });
+                }
+                return;
+            }
+        });
+    };
+};
+
+
+// Websocket server
+const wsServerStart = async function(HTTPserver, runtime) {
+    const wsServer = new ws.WebSocketServer({
+        "server": HTTPserver
+    });
+    wsServer.addListener("connection", function(ws) {
+        if (isClosing) {
+            ws.terminate();
+        } else {
+            runtime.clientCreate(ws);
+        }
+    });
+    return wsServer;
+};
+const wsServerStop = async function(ws) {
+    return new Promise(function(resolve) {
+        let round = 0;
+        const close = function() {
+            if (round === 0) {
+                // First sweep, soft close
+                ws.clients.forEach(function (socket) {
+                    socket.close();
+                });
+            } else if (round < 20) {
+                // Check clients
+                let isAllClosed = true;
+                for (const socket of ws.clients) {
+                    if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                        isAllClosed = false;
+                        break;
+                    }
+                }
+                if (isAllClosed === true) {
+                    resolve(true);
+                    return;
+                }
+            } else {
+                // Last sweep, hard close for everyone who's left
+                ws.clients.forEach(function(socket) {
+                    if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                        socket.terminate();
+                    }
+                });
+                resolve(true);
+                return;
+            }
+            round++;
+            setTimeout(close, 500);
+        };
+        close();
+        
+    });
+};
+
+
+// Close the application
 let isClosing = false;
-const close = async function(HTTPservers) {
+const close = async function(HTTPservers, runtime, ws) {
     if (isClosing) {
         return;
     }
     isClosing = true;
+
+    process.stdout.write("Closing Websocket server...    ");
+    await wsServerStop(ws);
+    process.stdout.write("done\n");
 
     process.stdout.write("Closing servers...    ");
     await HTTPServerStop(HTTPservers);
@@ -415,8 +654,18 @@ const main = async function(args) {
     process.stdout.write("done\n");
     
     // Start HTTP server
-    process.stdout.write("Start servers...    ");
+    process.stdout.write("Start HTTP servers...    ");
     const HTTPservers = await HTTPServerStart(conf);
+    process.stdout.write("done\n");
+
+    // Create runtime
+    process.stdout.write("Create runtime...    ");
+    const runtime = new Runtime();
+    process.stdout.write("done\n");
+
+    // Start WS server
+    process.stdout.write("Start Websocket server...    ");
+    const ws = await wsServerStart(HTTPservers[0], runtime);
     process.stdout.write("done\n");
     
     // Cleanup
@@ -428,7 +677,7 @@ const main = async function(args) {
     });
     process.on("SIGINT", async function() {
         process.stdout.write("SIGINT signal received\n");
-        await close(HTTPservers);
+        await close(HTTPservers, runtime, ws);
         process.exit(0); 
     });
 };

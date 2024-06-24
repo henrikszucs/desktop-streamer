@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Remote Desktop</title>
+    </head>
+    <body>
+        <fieldset>
+            <legend>1st step - create offer</legend>
+            <input type="button" value="createOffer" id="createOfferBtn">
+            <input type="text" placeholder="offer" id="createOfferText">
+        </fieldset>
+        
+        <fieldset>
+            <legend>3rd step - approved offer</legend>
+            <input type="text" placeholder="offer" id="approvedOfferText">
+            <input type="button" value="approvedOffer" id="approvedOfferBtn">
+        </fieldset>
+    </body>
+    <script>
+        let peerConnection = null; //this will be the connection
+
+        //1st create offer
+        const createOfferBtn = document.getElementById("createOfferBtn");
+        const createOfferText = document.getElementById("createOfferText");
+        createOfferBtn.addEventListener("click", function() {
+            createOffer();
+        });
+        const createOffer = async function () {
+            const configuration = {
+                "iceServers": [
+                    {
+                        "urls": "stun:stun.l.google.com:19302"
+                    }
+                ]
+            };
+            const configuration2 = {
+                "iceServers": [
+                    {
+                        "urls": "turn:numb.viagenie.ca",
+                        "credential": "muazkh",
+                        "username": "webrtc@live.com"
+                    }
+                ]
+            };
+            peerConnection = new RTCPeerConnection(configuration);
+            const sendChannel = peerConnection.createDataChannel("sendDataChannel", {"ordered": false});
+            
+            peerConnection.addEventListener("icecandidate", function(event) {
+                console.log("icecandidate", event.candidate);
+            });
+            peerConnection.addEventListener("icegatheringstatechange", function(event) {
+                console.log("icegatheringstatechange", event.target.iceGatheringState);
+            });
+            peerConnection.addEventListener("connectionstatechange", event => {
+                console.log("connectionstatechange:", peerConnection.iceConnectionState);
+            });
+
+
+
+
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            createOfferText.value = JSON.stringify(offer);
+
+            
+        };
+
+        
+        //3rd wait for other offer
+        const approvedOfferText = document.getElementById("approvedOfferText");
+        const approvedOfferBtn = document.getElementById("approvedOfferBtn");
+        approvedOfferBtn.addEventListener("click", function() {
+            approvedOffer();
+        });
+        const approvedOffer = async function() {
+            const remoteDesc = new RTCSessionDescription(JSON.parse(approvedOfferText.value));
+            await peerConnection.setRemoteDescription(remoteDesc);
+        };
+        
+
+    </script>
+</html>

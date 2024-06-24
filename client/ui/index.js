@@ -11,6 +11,18 @@ function arrayBufferToBase64(buffer) {
     return window.btoa(binary);
 }
 
+const getWsAdress = function (url) {
+    let address = "";
+    if (url.protocol === "https:") {
+        address += "wss://";
+    } else {
+        address += "ws://";
+    }
+    address += url.host;
+    return address;
+};
+
+
 window.addEventListener("load", async function() {
     // Main (load libs and call the next step)
     const isDesktop = (typeof globalThis.require !== "undefined");
@@ -220,52 +232,47 @@ window.addEventListener("load", async function() {
 
         //startup connection
         const Communicator = class extends EventTarget {
-            ws = null;
+            senderFn = function(data) {ws.send(JSON.stringify(data));};
+            recieverFn = function(get) {ws.addEventListener("message", function(event) {get(JSON.parse(event.data));})};
             processes = [];
-            isServer = false;
+            isRed = false;
             gcClear = 0;
             gcClearLimit = 10;
     
             FROM_MYSELF = 0;
             FROM_OTHER = 1;
             
-            // methods: invoke, send, reply (for events),
+            // methods: invoke, send, reply (only in event),
             // events: invoke, send
-            constructor(ws, isServer) {
+            constructor(isRed, callback) {
                 super();
     
-                this.reset(ws, isServer);
+                this.reset(isRed, callback);
             }
-            reset(ws=this.ws, isServer=false) {
-                this.FROM_MYSELF = (isServer ? 1 : 0);
-                this.FROM_OTHER = (isServer ? 0 : 1);
+            reset(isRed=false, callback) {
+                this.FROM_MYSELF = (isRed ? 1 : 0);
+                this.FROM_OTHER = (isRed ? 0 : 1);
     
                 this.processes = [];
-                this.ws = ws;
-                this.ws.on("data", (data) =>  {
-                    //console.log("Message from other: ", data);
+                this.senderFn = callback["senderFn"];
+                this.recieverFn = callback["recieverFn"];
     
-                    // handle syntax errors
-                    try {
-                        if ((data instanceof Array) === false || data.length < 2) {
-                            throw new Error("Wrong format");
-                        }
-                    } catch (error) {
-                        console.log(error);
-                        this.ws.send([this.FROM_OTHER, -1, 400]);
-                        return;
+                this.recieverFn(function(data) {
+                    //handle error
+                    if ((data instanceof Array) === false || data.length < 2) {
+                        console.log("Wrong format");
+                        this.senderFn([this.FROM_OTHER, -1, 400]);
+                    } else {
+                        this.recieve(data);
                     }
-    
-                    // call recieve
-                    this.recieve(data);
-                });
+                }.bind(this));
                 
             };
             
             send(msg={}) {
                 //send data, fire and forget
                 let data = [this.FROM_MYSELF, -1, msg];
-                this.ws.send(data);
+                this.senderFn(data);
             };
     
             gc() {
@@ -302,7 +309,7 @@ window.addEventListener("load", async function() {
                     
                     //send data
                     let data = [this.FROM_MYSELF, id, msg];
-                    this.ws.send(data);
+                    this.senderFn(data);
                 });
             };
             recieve(data) {
@@ -310,7 +317,6 @@ window.addEventListener("load", async function() {
                 if (data[0] === this.FROM_MYSELF) {
                     //recieve response
                     if (data[1] < this.processes.length && this.processes[data[1]] !== null) {
-                        console.log(data[1]);
                         this.processes[data[1]](data[2]);
                     }
     
@@ -327,7 +333,7 @@ window.addEventListener("load", async function() {
                         // need reply for this with id
                         this.dispatchEvent(
                             new CustomEvent("invoke", {"detail": {
-                                "communicator": this,
+                                "reply": this.reply.bind(this),
                                 "id": data[1],
                                 "data": data[2]
                             }})
@@ -339,29 +345,345 @@ window.addEventListener("load", async function() {
             reply(id, msg={}) {
                 //send data
                 let data = [this.FROM_OTHER, id, msg];
-                this.ws.send(data);
+                this.senderFn(data);
             };
-        };    
-        const options = {
-            "host": address.hostname,
-            "port": address.port,
-            "path": "peerjs",
-            "config": {
-                "iceServers": [
-                    {
-                        "urls": "stun:stun.l.google.com:19302"
-                    },
-                    {
-                        "urls": "stun:stun4.l.google.com:19302"
-                    }
-                ],
-                "sdpSemantics": "unified-plan"
-            },
-            "debug": 2
         };
-        let peer = null;
-        const userList = new Set();
+
+        const webrtcServers = {
+            "iceServers": [
+                {
+                    "urls": "stun:stun.l.google.com:19302"
+                }
+            ]
+        };
+        const webrtcServers2 = {
+            "iceServers": [
+                {
+                    "urls": "turn:numb.viagenie.ca",
+                    "credential": "muazkh",
+                    "username": "webrtc@live.com"
+                }
+            ]
+        };
+
+
+        let isServerConnected = false;
+        let serverCommunicator = null;
+        let myId = "";
+        const userList = new Map();
         const createConnection = function() {
+            //create connection
+            const ws = new WebSocket(getWsAdress(address));
+
+            //create communicator
+            serverCommunicator = new Communicator(false, {
+                "senderFn": function(data) {
+                    ws.send(JSON.stringify(data));
+                },
+                "recieverFn": function(get) {
+                    ws.addEventListener("message", function(event) {
+                        let data = [];
+                        try {
+                            data = JSON.parse(event.data)
+                        } catch (error) {
+                            
+                        }
+                        get(data);
+                    });
+                }
+            });
+
+            //listen connection state
+            ws.addEventListener("error", () => {
+                console.log("disconnected");
+                isServerConnected = false;
+
+                status.innerText = "Error in connection, trying to connect...";
+                connect.classList.add("d-none");
+                share.classList.add("d-none");
+            });
+            ws.addEventListener("close", () => {
+                console.log("closed");
+                isServerConnected = false;
+                setTimeout(createConnection, 2000);
+
+                status.innerText = "Error in connection, trying to connect...";
+                connect.classList.add("d-none");
+                share.classList.add("d-none");
+            });
+
+            //fresh connection
+            ws.addEventListener("open", async function() {
+                console.log("connected");
+                isServerConnected = true;
+
+                //get ID
+                myId = await serverCommunicator.invoke({"method": "myId"});
+
+                //set UI
+                code.value = myId;
+                status.innerText = "Connected (ID: " + myId + ")";
+                connect.classList.remove("d-none");
+                if (isDesktop) {
+                    share.classList.remove("d-none");
+                }
+
+                //listen non-respond api
+                serverCommunicator.addEventListener("send", async function(event) {
+                    if (event.detail.data["method"] === "iceSend") {
+                        try {
+                            const peerConnection = userList.get(event.detail.data["fromId"]);
+                            console.log("iceSend", event.detail.data);
+                            await peerConnection.addIceCandidate(event.detail.data["iceCandidate"]);
+                        } catch (e) {
+                            console.error("Error adding received ice candidate", e);
+                        }
+                    }
+                });
+
+                //listen respond api
+                serverCommunicator.addEventListener("invoke", async function(event) {
+                    if (event.detail.data["method"] === "call") {
+                        // 2nd step - handle call
+                        const peerId = event.detail.data["fromId"];
+                        if (allowConnect.checked === false || userList.has(peerId)) {
+                            event.detail.reply(event.detail.id, {
+                                "isSuccess": false
+                            });
+                            return;
+                        }
+
+                        const peerEl = addUser(peerId, function() {
+                            userList.delete(peerId);
+                            peerConnection.close();
+                        })
+
+                        const peerConnection = new RTCPeerConnection(webrtcServers2);
+                        userList.set(peerId, peerConnection);
+
+                        peerConnection.addEventListener("icecandidate", function(event) {
+                            console.log("icecandidate", event.candidate);
+                            serverCommunicator.send({
+                                "method": "iceSend",
+                                "id": peerId,
+                                "iceCandidate": event.candidate
+                            });
+                        });
+                        peerConnection.addEventListener("connectionstatechange", function(event) {
+                            console.log("connectionstatechange:", peerConnection.connectionState);
+                            if (peerConnection.connectionState === "failed" || peerConnection.connectionState === "closed" || peerConnection.connectionState === "disconnected") {
+                                userList.delete(peerId);
+                                removeUser(peerEl);
+                            }
+                        });
+            
+                        //4th ready to communicate
+                        peerConnection.addEventListener("datachannel", function(event) {
+                            //console.log(event.channel);
+                            const peerDataChannel = event.channel;
+                            peerDataChannel.addEventListener("open", function() {
+                                const peerCommunicator = new Communicator(true, {
+                                    "senderFn": function(data) {
+                                        peerDataChannel.send(JSON.stringify(data));
+                                    },
+                                    "recieverFn": function(get) {
+                                        peerDataChannel.addEventListener("message", function(event) {
+                                            let data = [];
+                                            try {
+                                                data = JSON.parse(event.data);
+                                            } catch (error) {
+                                                console.log(error);
+                                            }
+                                            get(data);
+                                        });
+                                    }
+                                });
+
+                                let videoPeerConnection = null;
+                                //listen non-responding api
+                                peerCommunicator.addEventListener("send", async function(event) {
+                                    console.log(event.detail.data);
+                                    if (event.detail.data["method"] === "iceSend") {
+                                        try {
+                                            console.log("iceSend", event.detail.data);
+                                            await videoPeerConnection.addIceCandidate(event.detail.data["iceCandidate"]);
+                                        } catch (e) {
+                                            console.error("Error adding received ice candidate", e);
+                                        }
+                                    }
+                                });
+                                
+                                //listen responding api
+                                peerCommunicator.addEventListener("invoke", async function(event) {
+                                    //get screens
+                                    if (event.detail.data["method"] === "screenList") {
+                                        const screens = await ipcRenderer.invoke("api", "list-screens");
+                                        event.detail.reply(event.detail.id, screens);
+                                        return;
+                                    }
+                                    //get stream
+                                    if (event.detail.data["method"] === "videoGet") {
+                                        const screenId = event.detail.data["screenId"];
+                                        const frameRate = event.detail.data["frameRate"];
+                                        const bitRate = event.detail.data["bitRate"] * 1000 * 1000;
+
+                                        let stream = null;
+                                        try {
+                                            const constraints = {
+                                                "video": {
+                                                    "mandatory": {
+                                                        "chromeMediaSource": "desktop",
+                                                        "chromeMediaSourceId": screenId,
+                                                        "minFrameRate": frameRate,
+                                                        "maxFrameRate": frameRate
+                                                    }
+                                                },
+                                                "audio": {
+                                                    "mandatory": {
+                                                        "chromeMediaSource": "desktop"
+                                                    }
+                                                }
+                                            };
+                                            console.log(constraints);
+                                            stream = await navigator.mediaDevices.getUserMedia(constraints);
+                                        } catch (error) {
+                                            console.log(error);
+                                        }
+
+                                        if (stream === null) {
+                                            event.detail.reply(event.detail.id, {
+                                                "isSuccess": false
+                                            });
+                                            return;
+                                        }
+                                        event.detail.reply(event.detail.id, {
+                                            "isSuccess": true
+                                        });
+
+                                        //create connection
+                                        videoPeerConnection = new RTCPeerConnection(webrtcServers2);
+                                        //videoPeerConnection.createDataChannel("sendDataChannel", {"ordered": false});
+                                        videoPeerConnection.addEventListener("icecandidate", function(event) {
+                                            console.log("video icecandidate", event.candidate);
+                                            peerCommunicator.send({
+                                                "method": "iceSend",
+                                                "iceCandidate": event.candidate
+                                            });
+                                        });
+                                        videoPeerConnection.addEventListener("connectionstatechange", function(event) {
+                                            console.log("video connectionstatechange:", videoPeerConnection.connectionState);
+                                            if (videoPeerConnection.connectionState === "connected") {
+                                                
+                            
+                                            } else if (videoPeerConnection.connectionState === "failed" || videoPeerConnection.connectionState === "closed" || videoPeerConnection.connectionState === "disconnected") {
+                                                
+                                            }
+                                        });
+                                        videoPeerConnection.addEventListener("negotiationneeded ", function(event) {
+                                            console.log("video negotiationneeded:", event);
+                                        });
+
+                                        //add video stream
+                                        //console.log(RTCRtpSender.getCapabilities("video"));
+                                        const videoCodecs = [];
+                                        for (const codec of RTCRtpSender.getCapabilities("video")["codecs"]) {
+                                            if (codec["mimeType"] === "video/VP9" && codec["sdpFmtpLine"] === "profile-id=0") {
+                                                videoCodecs.push(codec);
+                                            }
+                                        }
+                                        const videoTransceiver = videoPeerConnection.addTransceiver("video", {
+                                            "direction": "sendonly",
+                                            "sendEncodings": videoCodecs,
+                                            "streams": [stream]
+                                        });
+                                        videoTransceiver.setCodecPreferences(videoCodecs);
+                                        const videoSender = videoTransceiver.sender;
+                                        const videoParams = videoSender.getParameters();
+                                        console.log(videoParams);
+                                        for (const encoding of videoParams["encodings"]) {
+                                            encoding["maxFramerate"] = frameRate;
+                                            encoding["maxBitrate"] = bitRate;
+                                            encoding["priority"] = "high";
+                                            encoding["networkPriority"] = "high";
+                                        }
+                                        videoSender.setParameters(videoParams);
+
+                                        //console.log(RTCRtpReceiver.getCapabilities("video"));
+                                        videoTransceiver.receiver.jitterBufferTarget = 0;
+                                        console.log(videoTransceiver);
+                                        
+                                        //add audio stream
+                                        //console.log(RTCRtpSender.getCapabilities("audio"));
+                                        const audioCodecs = [];
+                                        for (const codec of RTCRtpSender.getCapabilities("video")["codecs"]) {
+                                            if (codec["mimeType"] === "audio/opus") {
+                                                audioCodecs.push(codec);
+                                            }
+                                        }
+                                        const audioTransceiver = videoPeerConnection.addTransceiver("video", {
+                                            "direction": "sendonly",
+                                            "sendEncodings": audioCodecs,
+                                            "streams": [stream]
+                                        });
+                                        audioTransceiver.setCodecPreferences(audioCodecs);
+                                        const audioSender = audioTransceiver.sender;
+                                        const audioParams = audioSender.getParameters();
+                                        console.log(audioParams);
+                                        for (const encoding of audioParams["encodings"]) {
+                                            encoding["priority"] = "high";
+                                            encoding["networkPriority"] = "high";
+                                        }
+                                        audioSender.setParameters(audioParams);
+
+                                        //console.log(RTCRtpReceiver.getCapabilities("audio"));
+                                        audioTransceiver.receiver.jitterBufferTarget = 0;
+                                        console.log(audioTransceiver);
+
+                                        const offer = await videoPeerConnection.createOffer();
+                                        await videoPeerConnection.setLocalDescription(offer);
+                                        
+                                        try {
+                                            const res = await peerCommunicator.invoke({
+                                                "method": "videoOffer",
+                                                "offer": offer
+                                            });
+                                            const remoteDesc = new RTCSessionDescription(res["answer"]);
+                                            await videoPeerConnection.setRemoteDescription(remoteDesc);
+                                        } catch (error) {
+                                            console.log(error);
+                                            videoPeerConnection = null;
+                                        }
+                                        return;
+                                    }
+                                    
+                                    console.log(event.detail.data);
+                                });
+                            });
+                        });
+
+                        // 2nd step - handle call
+                        peerConnection.setRemoteDescription(new RTCSessionDescription(event.detail.data["offer"]));
+                        const answer = await peerConnection.createAnswer();
+
+                        event.detail.reply(event.detail.id, {
+                            "isSuccess": true,
+                            "answer": answer
+                        });
+                        await peerConnection.setLocalDescription(answer);
+
+                        return;
+                    }
+                });
+            });
+
+            
+
+
+            
+
+
+    
+            return;
             peer = new Peer(options);
             //general connection to server
             peer.on("open", function(id) {
@@ -370,7 +692,7 @@ window.addEventListener("load", async function() {
                 connect.classList.remove("d-none");
                 if (isDesktop) {
                     share.classList.remove("d-none");
-                } 
+                }
             });
             peer.on("error", function(error) {
                 if (error.type === "disconnected" || error.type === "network" || error.type === "server-error") {
@@ -404,16 +726,16 @@ window.addEventListener("load", async function() {
                         timeoutID = -1;
                     });
                     communicator.addEventListener("send", function(event) {
-                        if (event.detail.data["method"] === "getClipboard") {
-
-                        }
-                        if (event.detail.data["method"] === "setClipboard") {
+                        if (event.detail.data["method"] === "setMouse") {
 
                         }
                         if (event.detail.data["method"] === "setKeyboard") {
 
                         }
-                        if (event.detail.data["method"] === "setMouse") {
+                        if (event.detail.data["method"] === "getClipboard") {
+
+                        }
+                        if (event.detail.data["method"] === "setClipboard") {
 
                         }
                     });
@@ -451,7 +773,7 @@ window.addEventListener("load", async function() {
                                         "mandatory": {
                                             "chromeMediaSource": "desktop",
                                             "chromeMediaSourceId": id,
-                                            "minFrameRate": 1,
+                                            "minFrameRate": frameRate,
                                             "maxFrameRate": frameRate
                                         }
                                     },
@@ -477,18 +799,23 @@ window.addEventListener("load", async function() {
 
                                 // set quality
                                 const videoSender = mediaConnection.peerConnection.getSenders().filter(s => s.track?.kind === "video")[0];
-                                console.log(mediaConnection.peerConnection.getSenders());
                                 const videoParams = videoSender.getParameters();
                                 if ("degradationPreference" in videoParams) {
                                     // So that the webrtc implementation doesn't alter the framerate - this is optional
                                     videoParams.degradationPreference = "maintain-framerate";
                                 }
-                                videoParams["encodings"][0]["adaptivePtime"] = true;
                                 videoParams["encodings"][0]["priority"] = "high";
                                 videoParams["encodings"][0]["networkPriority"] = "high";
                                 videoParams["encodings"][0]["maxFramerate"] = frameRate;
                                 videoParams["encodings"][0]["maxBitrate"] = bitRate
                                 await videoSender.setParameters(videoParams);
+
+                                // set latency
+                                console.log(mediaConnection.peerConnection.getReceivers());
+                                for (const reciever of mediaConnection.peerConnection.getReceivers()) {
+                                    reciever.jitterBufferTarget = 20;
+                                }
+                                
                             }
                             event.detail.communicator.reply(event.detail.id, stream!==null);
                             return;
@@ -506,7 +833,7 @@ window.addEventListener("load", async function() {
                                         "mandatory": {
                                             "chromeMediaSource": "desktop",
                                             "chromeMediaSourceId": id,
-                                            "minFrameRate": 1,
+                                            "minFrameRate": frameRate,
                                             "maxFrameRate": frameRate
                                         }
                                     }
@@ -530,12 +857,18 @@ window.addEventListener("load", async function() {
                                     // So that the webrtc implementation doesn't alter the framerate - this is optional
                                     videoParams.degradationPreference = "maintain-framerate";
                                 }
-                                videoParams["encodings"][0]["adaptivePtime"] = true;
                                 videoParams["encodings"][0]["priority"] = "high";
                                 videoParams["encodings"][0]["networkPriority"] = "high";
                                 videoParams["encodings"][0]["maxFramerate"] = frameRate;
                                 videoParams["encodings"][0]["maxBitrate"] = bitRate
                                 await videoSender.setParameters(videoParams);
+
+                                // set latency
+                                console.log(mediaConnection.peerConnection.getReceivers());
+                                for (const reciever of mediaConnection.peerConnection.getReceivers()) {
+                                    reciever.jitterBufferTarget = 100;
+                                }
+                                
                             }
 
                             event.detail.communicator.reply(event.detail.id, stream!==null);
@@ -623,10 +956,148 @@ window.addEventListener("load", async function() {
         });
         
 
-        const startJoin = function() {
+        const startJoin = async function() {
             join.setAttribute("aria-busy", "true");
             joinCode.removeAttribute("aria-invalid");
+            const peerId = joinCode.value;
+
+            // 1st step - create connection and call
+            const peerConnection = new RTCPeerConnection(webrtcServers2);
+            const peerDataChannel = peerConnection.createDataChannel("sendDataChannel", {"ordered": false});
             
+
+            peerConnection.addEventListener("icecandidate", function(event) {
+                console.log("icecandidate", event.candidate);
+                serverCommunicator.send({
+                    "method": "iceSend",
+                    "id": peerId,
+                    "iceCandidate": event.candidate
+                });
+            });
+            peerConnection.addEventListener("connectionstatechange", function(event) {
+                console.log("connectionstatechange:", peerConnection.connectionState);
+                if (peerConnection.connectionState === "connected") {
+                    join.setAttribute("aria-busy", "false");
+                    joinCode.removeAttribute("aria-invalid");
+                    main.classList.add("d-none");
+                    control.classList.remove("d-none");
+
+                    
+
+                } else if (peerConnection.connectionState === "failed" || peerConnection.connectionState === "closed" || peerConnection.connectionState === "disconnected") {
+                    userList.delete(peerId);
+                    main.classList.remove("d-none");
+                    control.classList.add("d-none");
+                }
+            });
+
+            // 4th step ready to messaging
+            peerDataChannel.addEventListener("open", async function() {
+                const peerCommunicator = new Communicator(false, {
+                    "senderFn": function(data) {
+                        peerDataChannel.send(JSON.stringify(data));
+                    },
+                    "recieverFn": function(get) {
+                        peerDataChannel.addEventListener("message", function(event) {
+                            let data = [];
+                            try {
+                                data = JSON.parse(event.data);
+                            } catch (error) {
+                                console.log(error);  
+                            }
+                            get(data);
+                        });
+                    }
+                });
+
+                let videoPeerConnection = null;
+                peerCommunicator.addEventListener("send", async function(event) {
+                    if (event.detail.data["method"] === "iceSend") {
+                        try {
+                            console.log("iceSend", event.detail.data);
+                            await videoPeerConnection.addIceCandidate(event.detail.data["iceCandidate"]);
+                        } catch (e) {
+                            console.error("Error adding received ice candidate", e);
+                        }
+                    }
+                });
+                peerCommunicator.addEventListener("invoke", async function(event) {
+                    if (event.detail.data["method"] === "videoOffer") {
+                        videoPeerConnection.setRemoteDescription(new RTCSessionDescription(event.detail.data["offer"]));
+                        console.log(videoPeerConnection);
+                        const answer = await videoPeerConnection.createAnswer();
+
+                        event.detail.reply(event.detail.id, {
+                            "isSuccess": true,
+                            "answer": answer
+                        });
+                        await videoPeerConnection.setLocalDescription(answer);
+                    }
+                });
+                const setVideo = async function(screenId, frameRate, bitRate) {
+                    videoPeerConnection = new RTCPeerConnection(webrtcServers2);
+                    videoPeerConnection.addEventListener("icecandidate", function(event) {
+                        console.log("video icecandidate", event.candidate);
+                        peerCommunicator.send({
+                            "method": "iceSend",
+                            "iceCandidate": event.candidate
+                        });
+                    });
+                    videoPeerConnection.addEventListener("negotiationneeded ", function(event) {
+                        console.log("video negotiationneeded:", event);
+                    });
+                    videoPeerConnection.addEventListener("connectionstatechange", function(event) {
+                        console.log("video connectionstatechange:", videoPeerConnection.connectionState);
+                        if (videoPeerConnection.connectionState === "connected") {
+                            
+        
+                        } else if (videoPeerConnection.connectionState === "failed" || videoPeerConnection.connectionState === "closed" || videoPeerConnection.connectionState === "disconnected") {
+                            
+                        }
+                    });
+                    videoPeerConnection.addEventListener("track", function(event) {
+                        console.log("videoPeerConnectiontrack", event);
+                        event.receiver.jitterBufferTarget = 0;
+                        console.log(event.track);
+                    });
+                    
+                    const res = await peerCommunicator.invoke({
+                        "method": "videoGet",
+                        "screenId": screenId,
+                        "frameRate": frameRate,
+                        "bitRate": bitRate
+                    });
+                    return res["isSuccess"];
+                };
+                const screens = await peerCommunicator.invoke({
+                    "method": "screenList"
+                });
+                setVideo(screens[0]["id"], 60, 20);
+            });
+            
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            
+            const res = await serverCommunicator.invoke({
+                "method": "call",
+                "id": peerId,
+                "offer": offer
+            });
+
+            // 3rd step - accept answer if exitst
+            if (res["isSuccess"]) {
+                userList.set(peerId, peerConnection);
+                const remoteDesc = new RTCSessionDescription(res["answer"]);
+                await peerConnection.setRemoteDescription(remoteDesc);
+            } else {
+                join.setAttribute("aria-busy", "false");
+                joinCode.setAttribute("aria-invalid", "true");
+            }
+
+            
+
+            return;
             const dataConnection = peer.connect(joinCode.value, {"serialization": "json"});
             const communicator = new Communicator(dataConnection, false);
             dataConnection.on("open", async function() {
@@ -659,17 +1130,20 @@ window.addEventListener("load", async function() {
                 
 
                 //video UI
+                let isClosing = false;
                 const video = control.querySelector(".video");
                 let currenctId = screens[0].id;
                 let currenctFrameRate = 60;
                 let currenctBitRate = 15;
-                peer.on("call", function(mediaConnection) {
+                peer.on("call", async function(mediaConnection) {
                     console.log(mediaConnection);
                     if (dataConnection.peer !== mediaConnection.peer) {
                         mediaConnection.close();
                         return;
                     }
                     mediaConnection.on("stream", function(stream) {
+                        console.log(mediaConnection);
+
                         console.log(stream);
                         video.srcObject = stream;
 
@@ -686,7 +1160,9 @@ window.addEventListener("load", async function() {
                         control.classList.remove("d-none");
                     });
                     mediaConnection.on("close", function() {
-                        dataConnection.close();
+                        if (isClosing) {
+                            dataConnection.close();
+                        }
                     });
                     mediaConnection.on("error", function(error) {
                         console.log("error stream");
@@ -696,16 +1172,18 @@ window.addEventListener("load", async function() {
                     //close btn
                     const close = control.querySelector(".close");
                     close.addEventListener("click", function() {
+                        isClosing = true;
                         mediaConnection.close();
                     });
 
                     //audio btn
-                    let isAudio = true;
+                    let isAudio = (await IdbHelper.RowGet(db, "settings", [["audio", false]]))[0];
                     const audio = control.querySelector(".audio");
                     const audioIconOn = control.querySelector(".audioIconOn");
                     const audioIconOff = control.querySelector(".audioIconOff");
-                    audio.addEventListener("click", function() {
+                    audio.addEventListener("click", async function() {
                         isAudio = !isAudio;
+                        await IdbHelper.RowSet(db, "settings", [["audio", isAudio]]);
                         audioRefresh();
                     });
                     const audioRefresh = function() {
@@ -736,11 +1214,12 @@ window.addEventListener("load", async function() {
                         }
                     });
                     modalConfirm.addEventListener("click", async function() {
+                        mediaConnection.close();
                         currenctId = display.value;
                         currenctFrameRate = frameRate.value;
                         currenctBitRate = bitRate.value;
                         await communicator.invoke({
-                            "method": "screenSet",
+                            "method": "screenGet",
                             "id": currenctId,
                             "frameRate": currenctFrameRate,
                             "bitRate": currenctBitRate
@@ -750,8 +1229,18 @@ window.addEventListener("load", async function() {
                     modalCancel.addEventListener("click", function() {
                         modal.close();
                     });
-                    communicator.addEventListener("send", function(event) {
+                    communicator.addEventListener("send", async function(event) {
                         if (event.detail.data["method"] === "screenChange") {
+                            let screens = await communicator.invoke({
+                                "method": "screenList"
+                            });
+                            currenctId = screens[0].id;
+                            await communicator.invoke({
+                                "method": "screenGet",
+                                "id": currenctId,
+                                "frameRate": currenctFrameRate,
+                                "bitRate": currenctBitRate
+                            });
                             screenRefresh();
                         }
                     });
@@ -788,6 +1277,25 @@ window.addEventListener("load", async function() {
                         frameRate.value = currenctFrameRate;
                         bitRate.value = currenctBitRate;
                     };
+
+                    //fullscreen
+                    let isFullscreen = false;
+                    const fullscreen = control.querySelector(".fullscreen");
+                    /*const fullscreenIconOn = control.querySelector(".fullscreenIconOn");
+                    const fullscreenIconOff = control.querySelector(".fullscreenIconOff");*/
+                    fullscreen.addEventListener("click", function() {
+                        video.requestFullscreen();
+                    });
+                    /*const fullscreenRefresh = function() {
+                        if (isFullscreen) {
+                            fullscreenIconOn.classList.remove("d-none");
+                            fullscreenIconOff.classList.add("d-none");
+                        } else {
+                            fullscreenIconOn.classList.add("d-none");
+                            fullscreenIconOff.classList.remove("d-none");
+                        }
+                    };
+                    fullscreenRefresh();*/
                 });
                 await communicator.invoke({
                     "method": "screenGet",
@@ -802,8 +1310,30 @@ window.addEventListener("load", async function() {
         };
         
 
-        //close
-        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
         //clipboard
@@ -825,6 +1355,7 @@ window.addEventListener("load", async function() {
             }
         };
         clipboardRefresh();
+        
         
         //keyboard
         const keyboard = control.querySelector(".keyboard");
@@ -874,25 +1405,7 @@ window.addEventListener("load", async function() {
         
 
 
-        //fullscreen
-        let isFullscreen = false;
-        const fullscreen = control.querySelector(".fullscreen");
-        const fullscreenIconOn = control.querySelector(".fullscreenIconOn");
-        const fullscreenIconOff = control.querySelector(".fullscreenIconOff");
-        fullscreen.addEventListener("click", function() {
-            isFullscreen = !isFullscreen;
-            fullscreenRefresh();
-        });
-        const fullscreenRefresh = function() {
-            if (isFullscreen) {
-                fullscreenIconOn.classList.remove("d-none");
-                fullscreenIconOff.classList.add("d-none");
-            } else {
-                fullscreenIconOn.classList.add("d-none");
-                fullscreenIconOff.classList.remove("d-none");
-            }
-        };
-        fullscreenRefresh();
+        
 
     };
 

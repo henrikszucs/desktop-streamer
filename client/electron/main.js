@@ -91,6 +91,8 @@ const main = async function() {
             }
         }
     ]);
+    //for debug
+	app.commandLine.appendSwitch("ignore-certificate-errors");
     
     // Wait for load
     await app.whenReady();
