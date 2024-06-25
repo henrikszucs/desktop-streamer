@@ -24,6 +24,7 @@ const getWsAdress = function (url) {
 
 
 window.addEventListener("load", async function() {
+    console.log(RTCRtpSender.getCapabilities("video"));
     // Main (load libs and call the next step)
     const isDesktop = (typeof globalThis.require !== "undefined");
     let db = null;
@@ -349,19 +350,44 @@ window.addEventListener("load", async function() {
             };
         };
 
+        const ServerConnection = class extends EventTarget {
+            peerConnections = new Map();
+            constructor() {
+
+            }
+            reset() {
+                //close all peerconnections
+                this.peerConnections = new Map();
+            }
+        };
+
+        const PeerConnection = class extends EventTarget {
+            videoConnection = null;
+            constructor() {
+
+            }
+        };
+
+        const VideoConnection = class extends EventTarget {
+            constructor() {
+
+            }
+        };
+
+
         const webrtcServers = {
             "iceServers": [
                 {
-                    "urls": "stun:stun.l.google.com:19302"
+                    "urls": "turn:numb.viagenie.ca",
+                    "credential": "muazkh",
+                    "username": "webrtc@live.com"
                 }
             ]
         };
         const webrtcServers2 = {
             "iceServers": [
                 {
-                    "urls": "turn:numb.viagenie.ca",
-                    "credential": "muazkh",
-                    "username": "webrtc@live.com"
+                    "urls": "stun:stun.l.google.com:19302"
                 }
             ]
         };
@@ -515,6 +541,10 @@ window.addEventListener("load", async function() {
                                 
                                 //listen responding api
                                 peerCommunicator.addEventListener("invoke", async function(event) {
+                                    if (event.detail.data["method"] === "ping") {
+                                        event.detail.reply(event.detail.id);
+                                        return;
+                                    }
                                     //get screens
                                     if (event.detail.data["method"] === "screenList") {
                                         const screens = await ipcRenderer.invoke("api", "list-screens");
@@ -524,8 +554,8 @@ window.addEventListener("load", async function() {
                                     //get stream
                                     if (event.detail.data["method"] === "videoGet") {
                                         const screenId = event.detail.data["screenId"];
-                                        const frameRate = event.detail.data["frameRate"];
-                                        const bitRate = event.detail.data["bitRate"] * 1000 * 1000;
+                                        const frameRate = parseInt(event.detail.data["frameRate"]);
+                                        const bitRate = parseInt(event.detail.data["bitRate"]) * 1000 * 1000;
 
                                         let stream = null;
                                         try {
@@ -534,7 +564,7 @@ window.addEventListener("load", async function() {
                                                     "mandatory": {
                                                         "chromeMediaSource": "desktop",
                                                         "chromeMediaSourceId": screenId,
-                                                        "minFrameRate": frameRate,
+                                                        "minFrameRate": frameRate-4,
                                                         "maxFrameRate": frameRate
                                                     }
                                                 },
@@ -561,8 +591,11 @@ window.addEventListener("load", async function() {
                                         });
 
                                         //create connection
+                                        videoPeerConnection?.getTransceivers?.()?.forEach?.((transceiver) => {
+                                            transceiver.stop();
+                                        });
+                                        videoPeerConnection?.close?.();
                                         videoPeerConnection = new RTCPeerConnection(webrtcServers2);
-                                        //videoPeerConnection.createDataChannel("sendDataChannel", {"ordered": false});
                                         videoPeerConnection.addEventListener("icecandidate", function(event) {
                                             console.log("video icecandidate", event.candidate);
                                             peerCommunicator.send({
@@ -591,12 +624,12 @@ window.addEventListener("load", async function() {
                                                 videoCodecs.push(codec);
                                             }
                                         }
-                                        const videoTransceiver = videoPeerConnection.addTransceiver("video", {
+                                        const videoTransceiver = videoPeerConnection.addTransceiver(stream.getVideoTracks()[0], {
                                             "direction": "sendonly",
                                             "sendEncodings": videoCodecs,
                                             "streams": [stream]
                                         });
-                                        videoTransceiver.setCodecPreferences(videoCodecs);
+                                        //videoTransceiver.setCodecPreferences(videoCodecs);
                                         const videoSender = videoTransceiver.sender;
                                         const videoParams = videoSender.getParameters();
                                         console.log(videoParams);
@@ -609,8 +642,8 @@ window.addEventListener("load", async function() {
                                         videoSender.setParameters(videoParams);
 
                                         //console.log(RTCRtpReceiver.getCapabilities("video"));
-                                        videoTransceiver.receiver.jitterBufferTarget = 0;
-                                        console.log(videoTransceiver);
+                                        //videoTransceiver.receiver.jitterBufferTarget = 0;
+                                        //console.log(videoTransceiver);
                                         
                                         //add audio stream
                                         //console.log(RTCRtpSender.getCapabilities("audio"));
@@ -620,12 +653,12 @@ window.addEventListener("load", async function() {
                                                 audioCodecs.push(codec);
                                             }
                                         }
-                                        const audioTransceiver = videoPeerConnection.addTransceiver("video", {
+                                        const audioTransceiver = videoPeerConnection.addTransceiver(stream.getAudioTracks()[0], {
                                             "direction": "sendonly",
                                             "sendEncodings": audioCodecs,
                                             "streams": [stream]
                                         });
-                                        audioTransceiver.setCodecPreferences(audioCodecs);
+                                        //audioTransceiver.setCodecPreferences(audioCodecs);
                                         const audioSender = audioTransceiver.sender;
                                         const audioParams = audioSender.getParameters();
                                         console.log(audioParams);
@@ -637,7 +670,7 @@ window.addEventListener("load", async function() {
 
                                         //console.log(RTCRtpReceiver.getCapabilities("audio"));
                                         audioTransceiver.receiver.jitterBufferTarget = 0;
-                                        console.log(audioTransceiver);
+                                        //console.log(audioTransceiver);
 
                                         const offer = await videoPeerConnection.createOffer();
                                         await videoPeerConnection.setLocalDescription(offer);
@@ -658,7 +691,22 @@ window.addEventListener("load", async function() {
                                     
                                     console.log(event.detail.data);
                                 });
+
+                                peerDataChannel.addEventListener("close", function() {
+                                    //create connection
+                                    videoPeerConnection?.getTransceivers?.()?.forEach?.((transceiver) => {
+                                        transceiver.stop();
+                                    });
+                                    videoPeerConnection?.close?.();
+                                    peerDataChannel?.close();
+                                    peerConnection?.close();
+                                    userList.delete(peerId);
+                                    removeUser(peerEl);
+                                    console.log("datachanel closed");
+
+                                });
                             });
+                            
                         });
 
                         // 2nd step - handle call
@@ -673,215 +721,6 @@ window.addEventListener("load", async function() {
 
                         return;
                     }
-                });
-            });
-
-            
-
-
-            
-
-
-    
-            return;
-            peer = new Peer(options);
-            //general connection to server
-            peer.on("open", function(id) {
-                code.value = id;
-                status.innerText = "Connected (ID: " + id + ")";
-                connect.classList.remove("d-none");
-                if (isDesktop) {
-                    share.classList.remove("d-none");
-                }
-            });
-            peer.on("error", function(error) {
-                if (error.type === "disconnected" || error.type === "network" || error.type === "server-error") {
-                    //network problem
-                    status.innerText = "Error in connection";
-                    connect.classList.add("d-none");
-                    share.classList.add("d-none");
-                    setTimeout(function() {
-                        createConnection();
-                    }, 3000)
-                } else if (error.type === "peer-unavailable") {
-                    //join code problem
-                    join.setAttribute("aria-busy", "false");
-                    joinCode.setAttribute("aria-invalid", "true");
-                }
-            });
-
-            //reciever
-            peer.on("connection", function(dataConnection) {
-                const communicator = new Communicator(dataConnection, true);
-                let userEl = null;
-
-                dataConnection.on("open", function() {
-                    let timeoutID = setTimeout(function() {
-                        dataConnection.close();
-                    }, 5000);
-                    dataConnection.on("close", function() {
-                        userList.delete(dataConnection.peer);
-                        removeUser(userEl);
-                        clearTimeout(timeoutID);
-                        timeoutID = -1;
-                    });
-                    communicator.addEventListener("send", function(event) {
-                        if (event.detail.data["method"] === "setMouse") {
-
-                        }
-                        if (event.detail.data["method"] === "setKeyboard") {
-
-                        }
-                        if (event.detail.data["method"] === "getClipboard") {
-
-                        }
-                        if (event.detail.data["method"] === "setClipboard") {
-
-                        }
-                    });
-                    let mediaConnection = null;
-                    communicator.addEventListener("invoke", async function(event) {
-                        if (event.detail.data["method"] === "isAvailable") {
-                            if (allowConnect.checked && userList.has(dataConnection.peer) === false) {
-                                userList.add(dataConnection.peer);
-                                userEl = addUser(dataConnection.peer, function() {
-                                    dataConnection.close();
-                                });
-                                clearTimeout(timeoutID);
-                                timeoutID = -1;
-                                event.detail.communicator.reply(event.detail.id, true);
-                            } else {
-                                event.detail.communicator.reply(event.detail.id, false);
-                            }
-                            return;
-                        }
-                        if (event.detail.data["method"] === "screenList") {
-                            const screens = await ipcRenderer.invoke("api", "list-screens");
-                            event.detail.communicator.reply(event.detail.id, screens);
-                            return;
-                        }
-                        if (event.detail.data["method"] === "screenGet") {
-                            const id = event.detail.data["id"];
-                            const frameRate = event.detail.data["frameRate"];
-                            const bitRate = event.detail.data["bitRate"] * 1000 * 1000;
-                            let stream = null;
-
-                            // get screen
-                            try {
-                                const constraints = {
-                                    "video": {
-                                        "mandatory": {
-                                            "chromeMediaSource": "desktop",
-                                            "chromeMediaSourceId": id,
-                                            "minFrameRate": frameRate,
-                                            "maxFrameRate": frameRate
-                                        }
-                                    },
-                                    "audio": {
-                                        "mandatory": {
-                                            "chromeMediaSource": "desktop"
-                                        }
-                                    }
-                                };
-                                console.log(constraints);
-                                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                                //console.log(stream);
-                            } catch (error) {
-                                /* handle the error */
-                                console.log(error);
-                                stream = null;
-                            }
-                            //console.log(stream);
-
-                            // call
-                            if (stream !== null) {
-                                mediaConnection = peer.call(dataConnection.peer, stream);
-
-                                // set quality
-                                const videoSender = mediaConnection.peerConnection.getSenders().filter(s => s.track?.kind === "video")[0];
-                                const videoParams = videoSender.getParameters();
-                                if ("degradationPreference" in videoParams) {
-                                    // So that the webrtc implementation doesn't alter the framerate - this is optional
-                                    videoParams.degradationPreference = "maintain-framerate";
-                                }
-                                videoParams["encodings"][0]["priority"] = "high";
-                                videoParams["encodings"][0]["networkPriority"] = "high";
-                                videoParams["encodings"][0]["maxFramerate"] = frameRate;
-                                videoParams["encodings"][0]["maxBitrate"] = bitRate
-                                await videoSender.setParameters(videoParams);
-
-                                // set latency
-                                console.log(mediaConnection.peerConnection.getReceivers());
-                                for (const reciever of mediaConnection.peerConnection.getReceivers()) {
-                                    reciever.jitterBufferTarget = 20;
-                                }
-                                
-                            }
-                            event.detail.communicator.reply(event.detail.id, stream!==null);
-                            return;
-                        }
-                        if (event.detail.data["method"] === "screenSet") {
-                            const id = event.detail.data["id"];
-                            const frameRate = event.detail.data["frameRate"];
-                            const bitRate = event.detail.data["bitRate"] * 1000 * 1000;
-                            let stream = null;
-
-                            // get screen
-                            try {
-                                const constraints = {
-                                    "video": {
-                                        "mandatory": {
-                                            "chromeMediaSource": "desktop",
-                                            "chromeMediaSourceId": id,
-                                            "minFrameRate": frameRate,
-                                            "maxFrameRate": frameRate
-                                        }
-                                    }
-                                };
-                                console.log(constraints);
-                                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                                //console.log(stream);
-                            } catch (error) {
-                                /* handle the error */
-                                console.log(error);
-                                stream = null;
-                            }
-
-                            if (stream !== null) {
-                                // set quality
-                                const videoSender = mediaConnection.peerConnection.getSenders().filter(s => s.track?.kind === "video")[0];
-                                await videoSender.replaceTrack(stream.getVideoTracks()[0]);
-
-                                const videoParams = videoSender.getParameters();
-                                if ("degradationPreference" in videoParams) {
-                                    // So that the webrtc implementation doesn't alter the framerate - this is optional
-                                    videoParams.degradationPreference = "maintain-framerate";
-                                }
-                                videoParams["encodings"][0]["priority"] = "high";
-                                videoParams["encodings"][0]["networkPriority"] = "high";
-                                videoParams["encodings"][0]["maxFramerate"] = frameRate;
-                                videoParams["encodings"][0]["maxBitrate"] = bitRate
-                                await videoSender.setParameters(videoParams);
-
-                                // set latency
-                                console.log(mediaConnection.peerConnection.getReceivers());
-                                for (const reciever of mediaConnection.peerConnection.getReceivers()) {
-                                    reciever.jitterBufferTarget = 100;
-                                }
-                                
-                            }
-
-                            event.detail.communicator.reply(event.detail.id, stream!==null);
-                            return;
-                        }
-                    });
-                    ipcRenderer.on("api", async function(event, ...arg) {
-                        if (arg[0] === "screenchange") {
-                            communicator.send({
-                                "method": "screenChange"
-                            });
-                        }
-                    });
                 });
             });
         };
@@ -955,6 +794,15 @@ window.addEventListener("load", async function() {
             startJoin();
         });
         
+        
+        let currenctScreenId = "";
+        let currenctFrameRate = 60;
+        let currenctBitRate = 20;
+        let listScreens = null;
+        let setVideo = null;
+        let closeVideo = null;
+        let ping = null;
+        const video = control.querySelector(".video");
 
         const startJoin = async function() {
             join.setAttribute("aria-busy", "true");
@@ -1011,6 +859,7 @@ window.addEventListener("load", async function() {
                 });
 
                 let videoPeerConnection = null;
+                let stream = new MediaStream();
                 peerCommunicator.addEventListener("send", async function(event) {
                     if (event.detail.data["method"] === "iceSend") {
                         try {
@@ -1034,7 +883,17 @@ window.addEventListener("load", async function() {
                         await videoPeerConnection.setLocalDescription(answer);
                     }
                 });
-                const setVideo = async function(screenId, frameRate, bitRate) {
+                listScreens = async function() {
+                    return await peerCommunicator.invoke({
+                        "method": "screenList"
+                    });
+                };
+                setVideo = async function(screenId, frameRate, bitRate) {
+                    videoPeerConnection?.getTransceivers?.()?.forEach?.((transceiver) => {
+                        transceiver.stop();
+                    });
+                    videoPeerConnection?.close?.();
+                    stream = new MediaStream();
                     videoPeerConnection = new RTCPeerConnection(webrtcServers2);
                     videoPeerConnection.addEventListener("icecandidate", function(event) {
                         console.log("video icecandidate", event.candidate);
@@ -1049,16 +908,22 @@ window.addEventListener("load", async function() {
                     videoPeerConnection.addEventListener("connectionstatechange", function(event) {
                         console.log("video connectionstatechange:", videoPeerConnection.connectionState);
                         if (videoPeerConnection.connectionState === "connected") {
-                            
+                            console.log(videoPeerConnection.getTransceivers())
+                            console.log(stream);
+                            console.log(stream.getTracks());
+                            video.srcObject = stream;
         
                         } else if (videoPeerConnection.connectionState === "failed" || videoPeerConnection.connectionState === "closed" || videoPeerConnection.connectionState === "disconnected") {
                             
                         }
                     });
+                    addEventListener("signalingstatechange", (event) => {
+                        console.log("signalingstatechange", pc.signalingState);
+                    });
                     videoPeerConnection.addEventListener("track", function(event) {
                         console.log("videoPeerConnectiontrack", event);
                         event.receiver.jitterBufferTarget = 0;
-                        console.log(event.track);
+                        stream.addTrack(event.track);
                     });
                     
                     const res = await peerCommunicator.invoke({
@@ -1069,10 +934,26 @@ window.addEventListener("load", async function() {
                     });
                     return res["isSuccess"];
                 };
-                const screens = await peerCommunicator.invoke({
-                    "method": "screenList"
-                });
-                setVideo(screens[0]["id"], 60, 20);
+                closeVideo = function() {
+                    const tracks = stream.getTracks();
+                    tracks.forEach(track => {
+                        track.stop();
+                        stream.removeTrack(track);
+                    });
+                    video.srcObject = null;
+                    videoPeerConnection?.getTransceivers?.()?.forEach?.((transceiver) => {
+                        transceiver.stop();
+                    });
+                    videoPeerConnection?.close?.();
+                    peerDataChannel?.close();
+                    peerConnection?.close();
+                    userList.delete(peerId);
+                };
+                ping = async function() {
+                    await peerCommunicator.invoke({"method": "ping"});
+                };
+                currenctScreenId = (await listScreens())[0]["id"];
+                //setVideo(currenctScreenId, currenctFrameRate, currenctBitRate);
             });
             
 
@@ -1094,271 +975,106 @@ window.addEventListener("load", async function() {
                 join.setAttribute("aria-busy", "false");
                 joinCode.setAttribute("aria-invalid", "true");
             }
-
-            
-
-            return;
-            const dataConnection = peer.connect(joinCode.value, {"serialization": "json"});
-            const communicator = new Communicator(dataConnection, false);
-            dataConnection.on("open", async function() {
-                dataConnection.on("close", function() {
-                    console.log("closed connection");
-                    main.classList.remove("d-none");
-                    control.classList.add("d-none");
-                });
-                dataConnection.on("error", function(err) {
-                    console.log(err);
-                });
-
-                //startup checkup
-                const isAvailable = await communicator.invoke({
-                    "method": "isAvailable"
-                });
-                console.log(isAvailable);
-                if (isAvailable === false) {
-                    join.setAttribute("aria-busy", "false");
-                    joinCode.setAttribute("aria-invalid", "true");
-                    dataConnection.close();
-                    return;
-                }
-
-                //screen initial
-                let screens = await communicator.invoke({
-                    "method": "screenList"
-                });
-                console.log(screens);
-                
-
-                //video UI
-                let isClosing = false;
-                const video = control.querySelector(".video");
-                let currenctId = screens[0].id;
-                let currenctFrameRate = 60;
-                let currenctBitRate = 15;
-                peer.on("call", async function(mediaConnection) {
-                    console.log(mediaConnection);
-                    if (dataConnection.peer !== mediaConnection.peer) {
-                        mediaConnection.close();
-                        return;
-                    }
-                    mediaConnection.on("stream", function(stream) {
-                        console.log(mediaConnection);
-
-                        console.log(stream);
-                        video.srcObject = stream;
-
-                        stream.addEventListener("addtrack",function() {
-                            console.log("addtrack")
-                        });
-                        stream.addEventListener("removetrack",function() {
-                            console.log("removetrack")
-                        });
-
-                        join.setAttribute("aria-busy", "false");
-                        joinCode.removeAttribute("aria-invalid");
-                        main.classList.add("d-none");
-                        control.classList.remove("d-none");
-                    });
-                    mediaConnection.on("close", function() {
-                        if (isClosing) {
-                            dataConnection.close();
-                        }
-                    });
-                    mediaConnection.on("error", function(error) {
-                        console.log("error stream");
-                    });
-                    mediaConnection.answer();
-
-                    //close btn
-                    const close = control.querySelector(".close");
-                    close.addEventListener("click", function() {
-                        isClosing = true;
-                        mediaConnection.close();
-                    });
-
-                    //audio btn
-                    let isAudio = (await IdbHelper.RowGet(db, "settings", [["audio", false]]))[0];
-                    const audio = control.querySelector(".audio");
-                    const audioIconOn = control.querySelector(".audioIconOn");
-                    const audioIconOff = control.querySelector(".audioIconOff");
-                    audio.addEventListener("click", async function() {
-                        isAudio = !isAudio;
-                        await IdbHelper.RowSet(db, "settings", [["audio", isAudio]]);
-                        audioRefresh();
-                    });
-                    const audioRefresh = function() {
-                        if (isAudio) {
-                            video.muted = false;
-                            audioIconOn.classList.remove("d-none");
-                            audioIconOff.classList.add("d-none");
-                        } else {
-                            video.muted = true;
-                            audioIconOn.classList.add("d-none");
-                            audioIconOff.classList.remove("d-none");
-                        }
-                    };
-                    audioRefresh();
-
-                    //screen btn
-                    const screen = control.querySelector(".screen");
-                    const modal = document.getElementById("modal");
-                    const display = modal.querySelector(".display");
-                    const frameRate = modal.querySelector(".frameRate");
-                    const bitRate = modal.querySelector(".bitRate");
-                    const modalConfirm = modal.querySelector(".confirm");
-                    const modalCancel= modal.querySelector(".cancel");
-                    screen.addEventListener("click", async function() {
-                        if (modal.open === false) {
-                            await screenRefresh();
-                            modal.show();
-                        }
-                    });
-                    modalConfirm.addEventListener("click", async function() {
-                        mediaConnection.close();
-                        currenctId = display.value;
-                        currenctFrameRate = frameRate.value;
-                        currenctBitRate = bitRate.value;
-                        await communicator.invoke({
-                            "method": "screenGet",
-                            "id": currenctId,
-                            "frameRate": currenctFrameRate,
-                            "bitRate": currenctBitRate
-                        });
-                        modal.close();
-                    });
-                    modalCancel.addEventListener("click", function() {
-                        modal.close();
-                    });
-                    communicator.addEventListener("send", async function(event) {
-                        if (event.detail.data["method"] === "screenChange") {
-                            let screens = await communicator.invoke({
-                                "method": "screenList"
-                            });
-                            currenctId = screens[0].id;
-                            await communicator.invoke({
-                                "method": "screenGet",
-                                "id": currenctId,
-                                "frameRate": currenctFrameRate,
-                                "bitRate": currenctBitRate
-                            });
-                            screenRefresh();
-                        }
-                    });
-                    const screenRefresh = async function() {
-                        //get screens
-                        let screens = await communicator.invoke({
-                            "method": "screenList"
-                        });
-
-                        //update ui
-                        display.innerHTML = "";
-                        let isExist = false;
-                        let screenCount = 0;
-                        let WindowCount = 0;
-                        for (const screen of screens) {
-                            const option = document.createElement("option");
-                            if (screen["id"].split(":")[0] === "screen") {
-                                screenCount++;
-                                option.text = "Screen " + screenCount;
-                            } else {
-                                WindowCount++;
-                                option.text = "Window " + WindowCount;
-                            }
-                            option.value = screen["id"];
-                            display.add(option);
-                            if (isExist === false) {
-                                isExist = screen["id"] === currenctId;
-                            }
-                        }
-                        if (isExist) {
-                            display.value = currenctId;
-                        }
-                        
-                        frameRate.value = currenctFrameRate;
-                        bitRate.value = currenctBitRate;
-                    };
-
-                    //fullscreen
-                    let isFullscreen = false;
-                    const fullscreen = control.querySelector(".fullscreen");
-                    /*const fullscreenIconOn = control.querySelector(".fullscreenIconOn");
-                    const fullscreenIconOff = control.querySelector(".fullscreenIconOff");*/
-                    fullscreen.addEventListener("click", function() {
-                        video.requestFullscreen();
-                    });
-                    /*const fullscreenRefresh = function() {
-                        if (isFullscreen) {
-                            fullscreenIconOn.classList.remove("d-none");
-                            fullscreenIconOff.classList.add("d-none");
-                        } else {
-                            fullscreenIconOn.classList.add("d-none");
-                            fullscreenIconOff.classList.remove("d-none");
-                        }
-                    };
-                    fullscreenRefresh();*/
-                });
-                await communicator.invoke({
-                    "method": "screenGet",
-                    "id": currenctId,
-                    "frameRate": currenctFrameRate,
-                    "bitRate": currenctBitRate
-                });
-
-
-                
-            });
         };
         
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        //clipboard
-        let isClipboard = true;
-        const clipboard = control.querySelector(".clipboard");
-        const clipboardIconOff = control.querySelector(".clipboardIconOff");
-        const clipboardIconOn = control.querySelector(".clipboardIconOn");
-        clipboard.addEventListener("click", function() {
-            isClipboard = !isClipboard;
-            clipboardRefresh();
+        //close btn
+        const close = control.querySelector(".close");
+        close.addEventListener("click", function() {
+            closeVideo?.();
+            main.classList.remove("d-none");
+            control.classList.add("d-none");
         });
-        const clipboardRefresh = function() {
-            if (isClipboard) {
-                clipboardIconOn.classList.remove("d-none");
-                clipboardIconOff.classList.add("d-none");
+
+
+        //audio btn
+        let isAudio = (await IdbHelper.RowGet(db, "settings", [["audio", false]]))[0];
+        const audio = control.querySelector(".audio");
+        const audioIconOn = control.querySelector(".audioIconOn");
+        const audioIconOff = control.querySelector(".audioIconOff");
+        audio.addEventListener("click", async function() {
+            isAudio = !isAudio;
+            await IdbHelper.RowSet(db, "settings", [["audio", isAudio]]);
+            audioRefresh();
+        });
+        const audioRefresh = function() {
+            if (isAudio) {
+                video.muted = false;
+                audioIconOn.classList.remove("d-none");
+                audioIconOff.classList.add("d-none");
             } else {
-                clipboardIconOn.classList.add("d-none");
-                clipboardIconOff.classList.remove("d-none");
+                video.muted = true;
+                audioIconOn.classList.add("d-none");
+                audioIconOff.classList.remove("d-none");
             }
         };
-        clipboardRefresh();
-        
-        
-        //keyboard
-        const keyboard = control.querySelector(".keyboard");
+        audioRefresh();
+
+
+        //fullscreen
+        const fullscreen = control.querySelector(".fullscreen");
+        fullscreen.addEventListener("click", function() {
+            video.requestFullscreen();
+        });
+
+
+        //screen btn
+        const screen = control.querySelector(".screen");
+        const modal = document.getElementById("modal");
+        const display = modal.querySelector(".display");
+        const frameRate = modal.querySelector(".frameRate");
+        const bitRate = modal.querySelector(".bitRate");
+        const modalConfirm = modal.querySelector(".confirm");
+        const modalCancel= modal.querySelector(".cancel");
+        screen.addEventListener("click", async function() {
+            if (modal.open === false) {
+                await screenRefresh();
+                modal.show();
+            }
+        });
+        modalConfirm.addEventListener("click", async function() {
+            currenctScreenId = display.value;
+            currenctFrameRate = frameRate.value;
+            currenctBitRate = bitRate.value;
+            await setVideo(currenctScreenId, currenctFrameRate, currenctBitRate);
+            modal.close();
+        });
+        modalCancel.addEventListener("click", function() {
+            modal.close();
+        });
+        const screenRefresh = async function() {
+            //get screens
+            let screens = await listScreens();
+
+            //update ui
+            display.innerHTML = "";
+            let isExist = false;
+            let screenCount = 0;
+            let WindowCount = 0;
+            for (const screen of screens) {
+                const option = document.createElement("option");
+                if (screen["id"].split(":")[0] === "screen") {
+                    screenCount++;
+                    option.text = "Screen " + screenCount;
+                } else {
+                    WindowCount++;
+                    option.text = "Window " + WindowCount;
+                }
+                option.value = screen["id"];
+                display.add(option);
+                if (isExist === false) {
+                    isExist = screen["id"] === currenctScreenId;
+                }
+            }
+            if (isExist) {
+                display.value = currenctScreenId;
+            }
+            
+            frameRate.value = currenctFrameRate;
+            bitRate.value = currenctBitRate;
+        };
+
+
 
         //mouse
         let isMouse = true;
@@ -1380,7 +1096,7 @@ window.addEventListener("load", async function() {
         };
         mouseRefresh();
 
-        
+
 
         //lock
         let isLock = false;
@@ -1401,6 +1117,51 @@ window.addEventListener("load", async function() {
             }
         };
         lockRefresh();
+
+
+
+        //clipboard
+        let isClipboard = true;
+        const clipboard = control.querySelector(".clipboard");
+        const clipboardIconOff = control.querySelector(".clipboardIconOff");
+        const clipboardIconOn = control.querySelector(".clipboardIconOn");
+        clipboard.addEventListener("click", function() {
+            isClipboard = !isClipboard;
+            clipboardRefresh();
+        });
+        const clipboardRefresh = async function() {
+            const start = Date.now();
+            await ping?.();
+            console.log(Date.now() - start);
+            if (isClipboard) {
+                clipboardIconOn.classList.remove("d-none");
+                clipboardIconOff.classList.add("d-none");
+            } else {
+                clipboardIconOn.classList.add("d-none");
+                clipboardIconOff.classList.remove("d-none");
+            }
+        };
+        clipboardRefresh();
+
+
+
+
+
+
+
+
+
+
+
+
+        return;
+        
+        
+        
+        //keyboard
+        const keyboard = control.querySelector(".keyboard");
+
+        
 
         
 
