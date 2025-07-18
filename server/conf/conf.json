@@ -1,8 +1,0 @@
-{
-    "port": 8888,
-    "https":{
-        "key": "server.key",
-        "cert": "server.crt",
-        "redirectFrom": 8887
-    }
-}

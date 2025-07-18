@@ -1,0 +1,27 @@
+{
+    "http": {
+        "port": 443,
+        "key": "server.key",
+        "cert": "server.crt",
+        "redirect": 80,
+        "cache": {
+            "size": 524288000,
+            "expire": 120000
+        },
+        "remote": "localhost:444"
+    },
+    "ws": {
+        "port": 444,
+        "key": "server.key",
+        "cert": "server.crt",
+        "sql": {
+            "host": "localhost",
+            "port": 3306,
+            "user": "",
+            "pass": ""
+        },
+        "login": {
+            "allowGuests": true
+        }
+    } 
+}

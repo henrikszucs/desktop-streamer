@@ -3,30 +3,59 @@ Remote Desktop application to reach computers.
 
 
 ## Install and run server
+### Basic run
 ```
 cd path/to/server
 npm install
-node server.js --configuration=path/to/conf.json
+npm run server
 ```
+
+### Custom configuration
+```
+cd path/to/server
+npm install
+npm run compile
+npm run server -- --configuration=./conf.json
+npm run clean
+```
+
 
 ## Server configuration
 server configuration file path: server/conf/conf.json
 
 ```
 {
-    "port": 443,                //port of the server
-    "wsport": 444,              //websocket port
-    "https": {
-        "key": "server.key",    //private key path (optional)
-        "cert": "server.crt",   //private key path (optional)
-        "redirectFrom": 80      //HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port (optional)
-    }
+    "http": {
+        "port": 443,                //port of the server
+        "key": "server.key",		//private key path
+        "cert": "server.crt",		//private cert path
+        "redirect": 80,				//(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
+        "cache": {
+            "size": 524288000, 		//max cache size in bytes
+            "expire": 120000 		//miliseconds to expire
+        }
+
+        "remote": "localhost:444"	//(optional) remote websocket server, it will ignore local ws creation
+    },
+    "ws": {
+        "port": 444,
+        "key": "server.key",		//private key path
+        "cert": "server.crt",		//private cert path
+        "sql": {
+            "host": "localhost",
+            "port": 3306,
+            "user": "",
+            "pass": ""
+        }
+        "login": {
+            "allowGuests": true
+        }
+    } 
 }
 ```
 
-## Client
-clients files in client/desktop/resources/app
-
-clients configuration file path: client/desktop/resources/app/ui/conf.js
-
-Share client/desktop/resources folder with platform executable files (current win32 is default)
+## Folders
+./dev - developer documents
+./src - source of the program
+./conf - configuration files
+./tmp - temporary folder for generated files

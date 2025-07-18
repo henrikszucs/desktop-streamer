@@ -1,0 +1,45 @@
+{
+    "name": "desktop-streamer",
+    "version": "0.0.1",
+    "description": "Free and open source screen sharing application for work, movies and gaming.",
+    "scripts": {
+        "compile": "node ./src/compile.js",
+        "server": "node ./src/server.js"
+    },
+    "type": "module",
+    "homepage": "https://github.com/henrikszucs/desktop-streamer",
+    "author": {
+        "name": "Henrik Szűcs",
+        "email": "info@example.com",
+        "url": "https://github.com/henrikszucs"
+    },
+    "bugs": {
+        "url": "https://github.com/henrikszucs/desktop-streamer/issues"
+    },
+    "keywords": [
+        "desktop",
+        "stream",
+        "remote",
+        "screen",
+        "share"
+    ],
+    "license": "",
+    "dependencies": {
+        "jszip": "^3.10.1",
+        "ws": "^8.18.0",
+        "easy-mime": "^0.0.1",
+        "easy-communicator": "^1.0.0"
+    },
+    "engines": {
+        "node": ">=10.15.3"
+    },
+    "os": [
+        "darwin",
+        "linux",
+        "win32"
+    ],
+    "cpu": [
+        "x64",
+        "arm64"
+    ]
+}
