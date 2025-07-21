@@ -3,8 +3,8 @@
     "version": "0.0.1",
     "description": "Free and open source screen sharing application for work, movies and gaming.",
     "scripts": {
-        "compile": "node ./src/compile.js",
-        "server": "node ./src/server.js"
+        "server": "node ./src/server.js",
+        "uninstall": "node ./src/uninstall.js"
     },
     "type": "module",
     "homepage": "https://github.com/henrikszucs/desktop-streamer",
