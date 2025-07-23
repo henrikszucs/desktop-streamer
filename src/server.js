@@ -42,6 +42,21 @@ const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     return undefined;
 };
 
+// check if dir is empty
+const isDirEmpty = async function(dirPath) {
+    try {
+        const dirIter = await fs.opendir(dirPath);
+        const {value, done} = await dirIter[Symbol.asyncIterator]().next();
+        if (!done) {
+            await dirIter.close();
+            return true;
+        }
+        return false;
+    } catch (error) {
+        return undefined;
+    }
+};
+
 // this will join path if relative
 const setAbsolute = function(src, origin) {
     if (path.isAbsolute(src) === false) {
@@ -49,6 +64,7 @@ const setAbsolute = function(src, origin) {
     }
     return path.resolve(src);
 };
+
 
 // proceed the conf file fields
 const processConf = async function(confPath) {
@@ -233,9 +249,120 @@ const processConf = async function(confPath) {
     return confOut;
 };
 
+// comlile the desktop clients
+const compileClients = async function(conf, complieFlag) {
+    // secure compile path
+    const compilePath = "./tmp";
+    let isCompiled = false;
+    try {
+        await fs.access(compilePath, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (error) {
+        // create compile path if not exists
+        try {
+            await fs.mkdir(compilePath, { recursive: true });
+        } catch (error) {
+            throw new Error("Cannot create compile path: " + compilePath + " - " + error.message);
+        }
+    }
+
+    // check existing compiled files
+    isCompiled = await isDirEmpty(compilePath);
+
+    // exit if compile is not requested and already compiled
+    if (complieFlag === false && isCompiled) {
+        return false;
+    }
+
+    //remove old compiled files
+    for (const file of await fs.readdir(compilePath)) {
+        await fs.rm(path.join(compilePath, file), { recursive: true, force: true });
+    }
+
+    // read electron dist
+    const electronDistPath = path.join(process.cwd(), "src", "client", "electron", "dist");
+    const dists = [];
+    try {
+        const elements = await fs.readdir(electronDistPath);
+        for (const element of elements) {
+            const elementPath = path.join(electronDistPath, element);
+            const isDir = (await fs.stat(elementPath)).isDirectory();
+            if (isDir && element.split("-").length === 2) {
+                dists.push([elementPath, element]);
+            }
+        }
+    }
+    catch (error) {
+        console.error("Cannot read electron dist path: " + electronDistPath + " - " + error.message);
+        return false;
+    }
+    if (dists.length === 0) {
+        console.error("No electron dist found in: " + electronDistPath);
+        return false;
+    }
+
+    // go through the dists
+    const commonPath = path.join(process.cwd(), "src", "client", "electron", "common");
+    for (const [distPath, distName] of dists) {
+        const system = distName.split("-")[0];
+        const arch = distName.split("-")[1];
+        process.stdout.write("\n    Compiling " + distName + "...    ");
+
+        // create the zips
+        const zip = new JSZip();
+
+        // go through dist files
+        const distFiles = await fs.readdir(distPath, {"recursive": true});
+        for (const file of distFiles) {
+            const filePath = path.join(distPath, file);
+            const isDir = (await fs.stat(filePath)).isDirectory();
+            if (isDir) {
+                zip.folder(file);
+            } else {
+                const fileContents = await fs.readFile(filePath);
+                zip.file(file, fileContents);
+            }
+        }
+        
+        // go through common files
+        const commonFiles = await fs.readdir(commonPath, {"recursive": true});
+        let commonDest = path.join("resources", "app");
+        if (system === "macos") {
+            commonDest = path.join("Electron.app", "Contents", "Resources", "app");
+        }
+        for (const file of commonFiles) {
+            const filePath = path.join(commonPath, file);
+            const isDir = (await fs.stat(filePath)).isDirectory();
+            if (isDir) {
+                zip.folder(path.join(commonDest, file));
+            } else {
+                const fileContents = await fs.readFile(filePath);
+                zip.file(path.join(commonDest, file), fileContents);
+            }
+        }
+
+        const buff = await zip.generateAsync({type : "uint8array"});
+        const zipFileName =  system + "-" + arch + ".zip";
+        const zipFilePath = path.join(compilePath, zipFileName);
+        try {
+            await fs.writeFile(zipFilePath, buff);
+        } catch (error) {
+            process.stdout.write("error\n");
+            continue;
+        }
+        process.stdout.write("done\n");
+    }
+
+    
+    
+
+
+    return true;
+    
+};
+
 // create HTTP backend
 const createHttpServer = function(conf) {
-
+    
 };
 
 // create WebSocket backend
@@ -262,28 +389,12 @@ const main = async function(args) {
 
     // Compile the clients
     process.stdout.write("Compiling clients...    ");
-    const compilePath = "./tmp";
-    let isCompiled = false;
-    try {
-        await fs.access(compilePath, fs.constants.R_OK | fs.constants.W_OK);
-        const dirIter = await fs.opendir(compilePath);
-        const {value, done} = await dirIter[Symbol.asyncIterator]().next();
-        if (!done) {
-            await dirIter.close();
-            isCompiled = true;
-        }
-    } catch (error) {}
-    if (complieFlag || isCompiled === false) {
-        //remove old compiled files
-        for (const file of await fs.readdir(compilePath)) {
-            await fs.rm(path.join(compilePath, file), { recursive: true, force: true });
-        }
-        const zip = new JSZip();
+    const isDone = await compileClients(conf, complieFlag);
+    if (isDone) {
         process.stdout.write("done\n");
     } else {
-        process.stdout.write("skip\n");
+        process.stdout.write("skipped\n");
     }
-
 
 
     // Start HTTP server
