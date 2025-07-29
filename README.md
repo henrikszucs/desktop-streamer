@@ -48,9 +48,9 @@ server configuration file path: server/conf/conf.json
         "key": "server.key",		//private key path
         "cert": "server.crt",		//private cert path
         "redirect": 80,				//(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
-        "cache": {                  //(optional) cache HTTP server data into memory
+        "cache": {                  //(optional) cache HTTP server data into memory (delete to load directly from disk)
             "size": 524288000, 		//max cache size in bytes
-            "expire": 120000 		//miliseconds to expire
+            "sizeLimit": 10485760   //max file size that can cached (ignore too big files)
         },
         "downloadOnly": false,      //web ui show only download options
         "remote": {                 //(optional) remote websocket server, it will ignore local ws creation
@@ -65,8 +65,8 @@ server configuration file path: server/conf/conf.json
         "sql": {                    //MySQL server connection
             "host": "localhost",
             "port": 3306,
-            "user": "",
-            "pass": ""
+            "user": "root",
+            "pass": "root"
         }
         "features": {               //backend features
             "guestLogin": false,
@@ -77,7 +77,8 @@ server configuration file path: server/conf/conf.json
 ```
 
 ## Folders
-./dev - developer documents
+./dev - developer documents and helper temporary or useful mini scripts
 ./src - source of the program
+./src/client/electron/dist - ElectronJS builds (large and not saved)
 ./conf - configuration files
 ./tmp - temporary folder for generated files

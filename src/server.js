@@ -19,6 +19,33 @@ import Mime from "easy-mime";
 import Communicator from "easy-communicator";
 import { type } from "node:os";
 
+
+//
+// Helper functions
+//
+
+// binary search in array [isFound, index]
+const binarySearch = function(arr, x, getVal=function(el) {return el}) {   
+    let start = 0;
+    let end = arr.length - 1;
+    let mid;
+    while (start <= end) {
+        mid = Math.floor((start + end) / 2);
+        const val = getVal(arr[mid]);
+        if (val === x) {
+        	return [true, mid];
+        }
+  
+        if (val < x) {
+            start = mid + 1;
+        } else {
+            end = mid - 1;
+        }
+    }
+    return [false, start];
+};
+
+
 // search in parameters
 const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     for (let i = 0, length=args.length; i < length; i++) {
@@ -65,6 +92,9 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
+//
+// Logic
+//
 
 // proceed the conf file fields
 const processConf = async function(confPath) {
@@ -94,6 +124,7 @@ const processConf = async function(confPath) {
         if (typeof confIn["http"]["domain"] !== "string" || confIn["http"]["domain"].length === 0) {
             throw new Error("Invalid HTTP domain: " + confIn["http"]["domain"]);
         }
+        confOut["http"]["domain"] = confIn["http"]["domain"];
 
         // check port
         if (typeof confIn["http"]["port"] !== "number" || confIn["http"]["port"] < 1 || confIn["http"]["port"] > 65535) {
@@ -143,11 +174,14 @@ const processConf = async function(confPath) {
                 throw new Error("Invalid HTTP cache size: " + confIn["http"]["cache"]["size"]);
             }
             confOut["http"]["cache"]["size"] = confIn["http"]["cache"]["size"];
-            // check expire
-            if (typeof confIn["http"]["cache"]["expire"] !== "number" || confIn["http"]["cache"]["expire"] < 0) {
-                throw new Error("Invalid HTTP cache expire: " + confIn["http"]["cache"]["expire"]);
+            // check sizeLimit
+            if (typeof confIn["http"]["cache"]["sizeLimit"] !== "number" || confIn["http"]["cache"]["sizeLimit"] < 0) {
+                throw new Error("Invalid HTTP cache sizeLimit: " + confIn["http"]["cache"]["sizeLimit"]);
             }
-            confOut["http"]["cache"]["expire"] = confIn["http"]["cache"]["expire"];
+            if (confIn["http"]["cache"]["sizeLimit"] > confIn["http"]["cache"]["size"]) {
+                throw new Error("HTTP cache sizeLimit cannot be greater than cache size!");
+            }
+            confOut["http"]["cache"]["sizeLimit"] = confIn["http"]["cache"]["sizeLimit"];
         }
 
         // check remote (optional)
@@ -177,17 +211,19 @@ const processConf = async function(confPath) {
         }
         confOut["ws"]["port"] = confIn["ws"]["port"];
 
-        // check key
-        if (typeof confIn["ws"]["key"] !== "string") {
-            throw new Error("Invalid WS key path: " + confIn["ws"]["key"]);
-        }
-        try {
-            const keyPath = setAbsolute(confIn["ws"]["key"], path.dirname(confPath));
-            confOut["ws"]["key"] = await fs.readFile(keyPath, {
-                "encoding": "utf8"
-            });
-        } catch (error) {
-            throw new Error("Invalid WS key path: " + confIn["ws"]["key"] + " - " + error.message);
+        // check key (only if no using HTTP server)
+        if (confOut["ws"]["port"] !== confIn?.["http"]?.["port"]) {
+            if (typeof confIn["ws"]["key"] !== "string") {
+                throw new Error("Invalid WS key path: " + confIn["ws"]["key"]);
+            }
+            try {
+                const keyPath = setAbsolute(confIn["ws"]["key"], path.dirname(confPath));
+                confOut["ws"]["key"] = await fs.readFile(keyPath, {
+                    "encoding": "utf8"
+                });
+            } catch (error) {
+                throw new Error("Invalid WS key path: " + confIn["ws"]["key"] + " - " + error.message);
+            }
         }
 
         // check cert
@@ -250,7 +286,12 @@ const processConf = async function(confPath) {
 };
 
 // comlile the desktop clients
-const compileClients = async function(conf, complieFlag) {
+const compileClients = async function(conf) {
+    // check conf
+    if (typeof conf["http"] !== "object") {
+        throw new Error("HTTP configuration is required for client compilation!");
+    }
+
     // secure compile path
     const compilePath = "./tmp";
     let isCompiled = false;
@@ -269,7 +310,7 @@ const compileClients = async function(conf, complieFlag) {
     isCompiled = await isDirEmpty(compilePath);
 
     // exit if compile is not requested and already compiled
-    if (complieFlag === false && isCompiled) {
+    if (conf["flags"]["compile"] === false && isCompiled) {
         return false;
     }
 
@@ -299,6 +340,24 @@ const compileClients = async function(conf, complieFlag) {
         console.error("No electron dist found in: " + electronDistPath);
         return false;
     }
+
+    // generate conf script
+    const confData = {
+        "http": {
+            "domain": conf["http"]["domain"],
+            "port": conf["http"]["port"]
+        },
+        "ws": {}
+    };
+    if (typeof conf["http"]["remote"] === "object") {
+        confData["ws"]["domain"] = conf["http"]["remote"]["host"];
+        confData["ws"]["port"] = conf["http"]["remote"]["port"];
+    } else {
+        confData["ws"]["domain"] = conf["http"]["domain"];
+        confData["ws"]["port"] = conf["ws"]["port"];
+    }
+    let confScript = "\"use strict\";";
+    confScript += "\n" + "globalThis.desktopStreamerConf = " + JSON.stringify(confData) + ";";
 
     // go through the dists
     const commonPath = path.join(process.cwd(), "src", "client", "electron", "common");
@@ -340,7 +399,11 @@ const compileClients = async function(conf, complieFlag) {
             }
         }
 
-        const buff = await zip.generateAsync({type : "uint8array"});
+        // add conf file
+        zip.file(path.join(commonDest, "conf.js"), confScript);
+
+        // save the zip file
+        const buff = await zip.generateAsync({"type" : "uint8array"});
         const zipFileName =  system + "-" + arch + ".zip";
         const zipFilePath = path.join(compilePath, zipFileName);
         try {
@@ -351,27 +414,397 @@ const compileClients = async function(conf, complieFlag) {
         }
         process.stdout.write("done\n");
     }
-
-    
-    
-
-
     return true;
     
 };
 
-// create HTTP backend
-const createHttpServer = function(conf) {
-    
+// create HTTP/WS servers
+const Server = class {
+    httpBasePath = "./src/client/web";
+    httpDownloadPath = "./tmp";
+    httpServer = null;
+    httpCache = new Map();
+    httpCacheByOrder = [];
+    httpCacheSize = 0;
+    httpCacheSizeLimit = 0;
+    httpCacheUpdate = 1000;
+    httpCacheUpdateLength = 5;
+    httpCacheUpdateId = -1;
+    httpCacheReloadId = -1;
+    httpRedirect = null;
+
+    wsServer = null;
+    wsHttpServer = null;
+    isClosing = false;
+    constructor() {
+
+    };
+
+    async getFileData(src) {
+        try {
+            const data = await fs.readFile(src);
+            const stats = await fs.stat(src);
+            const date = new Date(stats.mtimeMs);
+            return {
+                "lastModified": date.toUTCString(),
+                "type": Mime.getMIMEType(path.extname(src)),
+                "size": stats.size,
+                "etag": path.basename(src) + String(stats.size),
+                "buffer": data
+            };
+        } catch (error) {
+            return undefined;
+        }
+        
+    };
+    async getFileDataStream(src) {
+        try {
+            const stats = await fs.stat(src);
+            if (stats.isFile() === false) {
+                return undefined;
+            }
+
+            const data = await fs.open(src);
+            const date = new Date(stats.mtimeMs);
+            const stream = data.createReadStream();
+
+            //close if end or inactive
+            let timeOut = -1;
+            stream.on("data", function() {
+                //console.log("read");
+                clearTimeout(timeOut);
+                timeOut = setTimeout(function() {
+                    data?.close?.();
+                }, 10000);
+            });
+            stream.on("end", function() {
+                //console.log("end");
+                clearTimeout(timeOut);
+                data?.close?.();
+            });
+            
+            return {
+                "lastModified": date.toUTCString(),
+                "type": Mime.getMIMEType(path.extname(src)),
+                "size": stats.size,
+                "etag": path.basename(src) + String(stats.size),
+                "stream": stream
+            };
+        } catch (error) {
+            console.log(error);
+            return undefined;
+        }
+    };
+
+    async start(conf) {
+        process.stdout.write("Starting HTTP server...    ");
+        // Start HTTP server
+        if (typeof conf["http"] === "object") {
+            const basePaths = [this.httpBasePath, this.httpDownloadPath];
+
+            // create configuration file
+            const files = await fs.readdir(this.httpDownloadPath);
+            const confData = {
+                "http": {
+                    "clients": [...files],
+                    "downloadOnly": conf["http"]["downloadOnly"] || false
+                }
+            };
+            let confScript = "\"use strict\";";
+            confScript += "\n" + "globalThis.desktopStreamerConf = " + JSON.stringify(confData) + ";";
+            await fs.writeFile(path.join(this.httpBasePath, "conf.js"), confScript);
+
+            // create HTTP server request handler
+            let requestHandle = null;
+            if (typeof conf["http"]["cache"] !== "object") {
+                requestHandle = async (req, res) => {
+                    const filePath = req.url.slice(1);          // remove start slash
+
+                    // get requested file
+                    let fileData;
+                    for (const basePath of basePaths) {
+                        const fullPath = path.join(basePath, filePath);
+                        fileData = await this.getFileDataStream(fullPath); 
+                        if (typeof fileData !== "undefined") {
+                            break; // found
+                        }
+                    }
+                    // get default file if not found
+                    if (typeof fileData === "undefined") {
+                        fileData = await this.getFileDataStream(path.join(basePaths[0], "index.html")); 
+                    }
+                    res.writeHead(200, {
+                        //"Content-Security-Policy": "default-src 'self'",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Last-Modified": fileData["lastModified"],
+                        "Content-Length": fileData["size"],
+                        "Content-Type": fileData["type"],
+                        "ETag": fileData["etag"]
+                    });
+                    fileData["stream"].pipe(res);
+                };
+            } else {
+                // build cache
+                this.httpCache = new Map();
+                for (const basePath of basePaths.reverse()) {
+                    const files = await fs.readdir(basePath, {"recursive": true});
+                    for (const file of files) {
+                        const src = path.join(basePath, file);
+                        const stats = await fs.stat(src);
+                        const date = new Date(stats.mtimeMs);
+                        this.httpCache.set(file, {
+                            "path": src,
+                            "lastModified": date.toUTCString(),
+                            "type": Mime.getMIMEType(path.extname(src)),
+                            "size": stats.size,
+                            "etag": path.basename(src) + String(stats.size),
+                            "accesses": new Array(this.httpCacheUpdateLength*2).fill(0),
+                            "accessed": 0,
+                        });
+                    }
+                }
+
+                // update access stats periodically
+                this.httpCacheSize = conf["http"]["cache"]["size"];
+                clearInterval(this.httpCacheUpdateId);
+                this.httpCacheUpdateId = setInterval(() => {
+                    const it = this.httpCache.entries();
+                    for (const [key, fileData] of it) {
+                        fileData["accessed"] -= fileData["accesses"].pop();
+                        fileData["accesses"].unshift(0);
+                    }
+                }, this.httpCacheUpdate);
+
+                // reload cache periodically
+                clearInterval(this.httpCacheReloadId);
+                this.httpCacheReloadId = setInterval(async () => {
+                    // fill with priority order small -> high (smaller is better)
+                    const priorityOrder = [];
+                    const it = this.httpCache.entries();
+                    for (const [key, val] of it) {
+                        if (typeof val["size"] > this.httpCacheSizeLimit) {
+                            continue; // skip too big files
+                        }
+                        const el = {
+                            "file": key,
+                            "priority": -(val["accessed"] / Math.max(val["size"], 1))
+                        };
+                        const [isFound, i] = binarySearch(priorityOrder, el["priority"], function(el) {return el["priority"]});
+                        priorityOrder.splice(i, 0, el);
+                    }
+
+                    // search for last cached file
+                    const length = priorityOrder.length;
+                    let currentSize = 0;
+                    let currentIndex = 0;
+                    while (currentIndex < length && currentSize < this.httpCacheSize && priorityOrder[currentIndex]["priority"] < 0) {
+                        currentSize += this.httpCache.get(priorityOrder[currentIndex]["file"])["size"];
+                        currentIndex++;
+                    }
+                    //console.log(currentSize);
+                    //console.log(currentIndex);
+                    
+                    // remove unused files
+                    for (let i = currentIndex; i < length; i++) {
+                        const fileData = this.httpCache.get(priorityOrder[i]["file"]);
+                        delete fileData["buffer"]; // remove buffer to save memory
+                    }
+
+                    // add files to cache
+                    for (let i = 0; i < currentIndex; i++) {
+                        const fileData = this.httpCache.get(priorityOrder[i]["file"]);
+                        if (typeof fileData["buffer"] === "undefined") {
+                            fileData["buffer"] = (await this.getFileData(fileData["path"]))["buffer"];
+                        }
+                    }
+
+                    //console.log(priorityOrder);
+                    //console.log(this.httpCache.get("index.html"));
+                }, this.httpCacheUpdate * this.httpCacheUpdateLength);
+
+                requestHandle = async (req, res) => {
+                    let filePath = req.url.slice(1);          // remove start slash
+
+                    // check file in file set cache
+                    if (this.httpCache.has(filePath) === false) {
+                        filePath = "index.html"; 
+                    }
+
+                    // check existence of file
+                    let fileData = this.httpCache.get(filePath);
+                    if (typeof fileData === "undefined") {
+                        fileData = this.httpCache.get("index.html");
+                    }
+
+                    // add access to statistics
+                    fileData["accesses"][0] += 1;
+                    fileData["accessed"] += 1;
+
+                    // check if file is in memory cache
+                    res.writeHead(200, {
+                        //"Content-Security-Policy": "default-src 'self'",
+                        "Last-Modified": fileData["lastModified"],
+                        "Content-Length": fileData["size"],
+                        "Content-Type": fileData["type"]
+                    });
+                    if (typeof fileData["buffer"] !== "undefined") {
+                        res.write(fileData["buffer"]);
+                        res.end(); //end the response
+                    } else {
+                        const file = await this.getFileDataStream(fileData["path"]);
+                       file["stream"].pipe(res);
+                    }
+                };
+            }
+            this.httpServer = https.createServer({
+                "key": conf["http"]["key"],
+                "cert": conf["http"]["cert"]
+            }, requestHandle);
+            this.httpServer.listen(conf["http"]["port"]);
+            process.stdout.write("\n    Available: https://" + conf["http"]["domain"] + (conf["http"]["port"] !== 443 ? ":" + conf["http"]["port"] : "") + "\n");
+
+            // create redirect server
+            if (typeof conf["http"]["redirect"] !== "undefined") {
+                const redirectHandle = function(req, res) {
+                    const myURL = req.headers.host.split(":")[0];
+                    const myPort = conf["http"]["port"] !== 443 ? ":" + conf["http"]["port"] : "";
+                    res.writeHead(302, {
+                        "Location": "https://" + myURL + myPort + req.url
+                    });
+                    res.end();
+                };
+                this.httpRedirect = http.createServer(redirectHandle);
+                this.httpRedirect.listen(conf["http"]["redirect"]);
+                process.stdout.write("    Redirect: http://" + conf["http"]["domain"] + (conf["http"]["redirect"] !== 80 ? ":" + conf["http"]["port"] : "") + "\n");
+            }
+            process.stdout.write("done\n");
+
+        } else {
+            process.stdout.write("skipped\n");
+        }
+
+        // Start WebSocket server
+        process.stdout.write("Starting WS server...    ");
+        if (typeof conf["ws"] === "object") {
+            if (conf["ws"]["port"] === conf?.["http"]?.["port"]) {
+                this.wsServer = new WebSocketServer({
+                    "server": this.httpServer
+                });
+            } else {
+                this.wsHttpServer = https.createServer({
+                    "key": conf["ws"]["key"],
+                    "cert": conf["ws"]["cert"]
+                });
+                this.wsServer = new WebSocketServer({
+                    "server": this.wsHttpServer
+                });
+            }
+            this.wsServer.addListener("connection", (ws) => {
+                if (isClosing) {
+                    ws.terminate();
+                } else {
+                    //to do: add connection handler
+                }
+            });
+            process.stdout.write("done\n");
+        } else {
+            process.stdout.write("skipped\n");
+        }
+
+    };
+    async stop() {
+        this.isClosing = true;
+        
+        process.stdout.write("\n    Closing WS server....    ");
+        if (this.wsServer !== null) {
+            await new Promise((resolve) => {
+                let round = 0;
+                const close = () => {
+                    if (round === 0) {
+                        // First sweep, soft close
+                        this.wsServer.clients.forEach(function (socket) {
+                            socket.close();
+                        });
+                    } else if (round < 20) {
+                        // Check clients
+                        let isAllClosed = true;
+                        for (const socket of this.wsServer.clients) {
+                            if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                                isAllClosed = false;
+                                break;
+                            }
+                        }
+                        if (isAllClosed === true) {
+                            resolve(true);
+                            return;
+                        }
+                    } else {
+                        // Last sweep, hard close for everyone who's left
+                        this.wsServer.clients.forEach(function(socket) {
+                            if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                                socket.terminate();
+                            }
+                        });
+                        resolve(true);
+                        return;
+                    }
+                    round++;
+                    setTimeout(close, 500);
+                };
+                close();
+                
+            });
+
+            if (this.wsHttpServer !== null) {
+                await new Promise((resolve) => {
+                    const timeOut = setTimeout(function() {
+                        resolve(false);
+                    }, 5000);
+                    this.httpRedirect.close(function() {
+                        clearTimeout(timeOut);
+                        resolve(true);
+                    });
+                });
+            }
+            process.stdout.write("done\n");
+        } else {
+            process.stdout.write("skipped\n");
+        }
+
+
+        process.stdout.write("\n    Closing HTTP server....    ");
+        if (this.httpServer !== null) {
+            await new Promise((resolve) => {
+                const timeOut = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.httpRedirect.close(function() {
+                    clearTimeout(timeOut);
+                    resolve(true);
+                });
+            });
+            await new Promise((resolve) => {
+                const timeOut = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.httpServer.close(function() {
+                    clearTimeout(timeOut);
+                    resolve(true);
+                });
+            });
+            process.stdout.write("done\n");
+        } else {
+            process.stdout.write("skipped\n");
+        }
+
+        
+    };
 };
 
-// create WebSocket backend
-const createWebSocketServer = function(conf) {
 
-};
-
-
-// main function
+//
+// Main
+//
 const main = async function(args) {
     // Read CLI options
     process.stdout.write("Reading arguments...    ");
@@ -381,30 +814,47 @@ const main = async function(args) {
     process.stdout.write("done\n");
 
     
-    // Process the configuration
+    // Process the configuration and parameters
     process.stdout.write("Load the configuration...    ");
     const conf = await processConf(confPath);
+    conf["flags"] = {};
+    conf["flags"]["compile"] = complieFlag;
+    conf["flags"]["exit"] = exitFlag;
     process.stdout.write("done\n");
 
 
     // Compile the clients
     process.stdout.write("Compiling clients...    ");
-    const isDone = await compileClients(conf, complieFlag);
+    const isDone = await compileClients(conf);
     if (isDone) {
         process.stdout.write("done\n");
     } else {
         process.stdout.write("skipped\n");
     }
 
-
-    // Start HTTP server
-    
-
-
-    // Start WebSocket server
-
+    // Start HTTP/WS server
+    const server = new Server();
+    await server.start(conf);
 
     // Cleanup
-    
+    const close = async function() {
+        process.stdout.write("Exiting....    ");
+        await server.stop();
+        process.stdout.write("done\n");
+        process.exit(0); 
+    };
+    process.stdout.write("Press CTRL+C to stop servers\n");
+    process.on("SIGTERM", async function() {
+        process.stdout.write("SIGTERM signal received\n");
+        await close();
+    });
+    process.on("SIGINT", async function() {
+        process.stdout.write("SIGINT signal received\n");
+        await close();
+    });
+    if (conf["flags"]["exit"]) {
+        process.stdout.write("--exit flag received\n");
+        await close();
+    }
 };
 main(process.argv);

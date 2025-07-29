@@ -5,10 +5,6 @@
         "key": "server.key",
         "cert": "server.crt",
         "redirect": 80,
-        "cache": {
-            "size": 524288000,
-            "expire": 120000
-        },
         "downloadOnly": false
     },
     "ws": {
