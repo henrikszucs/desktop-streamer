@@ -424,7 +424,6 @@ const Server = class {
     httpDownloadPath = "./tmp";
     httpServer = null;
     httpCache = new Map();
-    httpCacheByOrder = [];
     httpCacheSize = 0;
     httpCacheSizeLimit = 0;
     httpCacheUpdate = 1000;
@@ -717,6 +716,7 @@ const Server = class {
         
         process.stdout.write("\n    Closing WS server....    ");
         if (this.wsServer !== null) {
+            // close WS server and its connections
             await new Promise((resolve) => {
                 let round = 0;
                 const close = () => {
@@ -755,6 +755,7 @@ const Server = class {
                 
             });
 
+            // close WS HTTP server if exists
             if (this.wsHttpServer !== null) {
                 await new Promise((resolve) => {
                     const timeOut = setTimeout(function() {
@@ -771,18 +772,22 @@ const Server = class {
             process.stdout.write("skipped\n");
         }
 
-
         process.stdout.write("\n    Closing HTTP server....    ");
         if (this.httpServer !== null) {
-            await new Promise((resolve) => {
-                const timeOut = setTimeout(function() {
-                    resolve(false);
-                }, 5000);
-                this.httpRedirect.close(function() {
-                    clearTimeout(timeOut);
-                    resolve(true);
+            // close redirect server if exists
+            if (this.httpRedirect !== null) {
+                await new Promise((resolve) => {
+                    const timeOut = setTimeout(function() {
+                        resolve(false);
+                    }, 5000);
+                    this.httpRedirect.close(function() {
+                        clearTimeout(timeOut);
+                        resolve(true);
+                    });
                 });
-            });
+            }
+            
+            // close HTTP server
             await new Promise((resolve) => {
                 const timeOut = setTimeout(function() {
                     resolve(false);
@@ -797,7 +802,9 @@ const Server = class {
             process.stdout.write("skipped\n");
         }
 
-        
+        // clear cache
+        this.httpCache.clear();
+
     };
 };
 

@@ -3,6 +3,10 @@ Remote Desktop application to reach computers.
 
 
 ## Server usage
+
+> [!CAUTION]
+> Always replace the default certificate and password. The default settings only for testing purposes.
+
 ### Basic run
 ```
 cd path/to/server
