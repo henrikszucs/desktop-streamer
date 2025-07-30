@@ -9,20 +9,18 @@ Remote Desktop application to reach computers.
 
 ### Basic run
 ```
-cd path/to/server
 npm install
 npm run server
 ```
 
 ### Uninstall
 ```
-cd path/to/server
 npm run uninstall
 ```
 
 ### Custom configuration
 ```
-npm run server -- --configuration=./conf.json --compile --exit
+npm run server -- --configuration=./conf.json
 ```
 
 ### Force compile
@@ -81,8 +79,11 @@ server configuration file path: server/conf/conf.json
 ```
 
 ## Folders
-./dev - developer documents and helper temporary or useful mini scripts
-./src - source of the program
-./src/client/electron/dist - ElectronJS builds (large and not saved)
-./conf - configuration files
-./tmp - temporary folder for generated files
+
+.
+├── dev/ - developer documents and helper temporary or useful mini scripts
+├── src/ - source of the program
+│   ├── client/electron - ElectronJS deps (large file and not saved)
+│   └── client/web - web UI files
+├── conf - configuration files
+└── tmp - temporary folder for generated files
