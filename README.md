@@ -79,7 +79,7 @@ server configuration file path: server/conf/conf.json
 ```
 
 ## Folders
-
+```md
 .
 ├── dev/ - developer documents and helper temporary or useful mini scripts
 ├── src/ - source of the program
@@ -87,3 +87,4 @@ server configuration file path: server/conf/conf.json
 │   └── client/web - web UI files
 ├── conf - configuration files
 └── tmp - temporary folder for generated files
+```
