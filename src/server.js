@@ -95,6 +95,7 @@ const setAbsolute = function(src, origin) {
 //
 // Logic
 //
+const serverScriptPath = import.meta.dirname;
 
 // proceed the conf file fields
 const processConf = async function(confPath) {
@@ -320,7 +321,7 @@ const compileClients = async function(conf) {
     }
 
     // read electron dist
-    const electronDistPath = path.join(process.cwd(), "src", "client", "electron", "dist");
+    const electronDistPath = path.join(serverScriptPath, "client", "electron", "dist");
     const dists = [];
     try {
         const elements = await fs.readdir(electronDistPath);
@@ -360,7 +361,7 @@ const compileClients = async function(conf) {
     confScript += "\n" + "globalThis.desktopStreamerConf = " + JSON.stringify(confData) + ";";
 
     // go through the dists
-    const commonPath = path.join(process.cwd(), "src", "client", "electron", "common");
+    const commonPath = path.join(serverScriptPath, "client", "electron", "common");
     for (const [distPath, distName] of dists) {
         const system = distName.split("-")[0];
         const arch = distName.split("-")[1];
@@ -490,7 +491,6 @@ const Server = class {
                 "stream": stream
             };
         } catch (error) {
-            console.log(error);
             return undefined;
         }
     };

@@ -1,23 +1,129 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta name="description" content="A simple web interface for controlling your desktop streaming application.">
-        <meta name="keywords" content="desktop, streamer, web interface, control panel">
-        <meta name="author" content="Your Name">
+        <meta charset="UTF-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <meta name="description" content="A simple web interface for controlling your desktop remotly."/>
+        <meta name="keywords" content="desktop, streamer, remote, access"/>
         <title>Desktop Streamer</title>
-        <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+        <link href="./icons/icon.svg" rel="icon"  type="image/svg+xml"/>
 
-        <link rel="stylesheet" href="libs/beercss/beer.min.css" />
-        <script src="libs/beercss/beer.min.js" type="module" async></script>
+        <link href="/libs/beercss/beer.min.css" rel="stylesheet"/>
+        <script src="/libs/beercss/beer.min.js" type="module" async></script>
+        <script src="/libs/beercss/material-dynamic-colors.min.js" type="module" async></script>
     
-        <script src="conf.js" type="module" async></script>
-        <link rel="stylesheet" href="index.css">
-        <script src="index.js" type="module" async></script>
+        <script src="/conf.js" type="module" async></script>
+        <link href="/index.css" rel="stylesheet"/>
+        <script src="/index.js" type="module" async></script>
     </head>
     <body>
-        <h1>Welcome to Desktop Streamer</h1>
-        <p>This is a simple web interface for controlling your desktop streaming application.</p>
+            <!-- Menus - Left -->
+            <nav class="left m l scroll max">
+                <header>
+                    <button class="circle extra transparent">
+                        <i>menu</i>
+                    </button>
+                    <button class="primary-container square round extend">
+                        <i>join</i>
+                        <span>Join</span>
+                    </button>
+                </header>
+                <a class="active">
+                    <i>view_cozy</i>
+                    <div>Clients</div>
+                </a>
+                <a >
+                    <i>share</i>
+                    <div>Shares</div>
+                </a>
+            </nav>
+
+            <!-- Menus - Top -->
+            <nav class="top surface">
+                <button>
+                    <i>download</i>
+                    <span>Download client</span>
+                </button>
+                <div class="max"></div>
+                <div class="max l">
+                    <div class="field large prefix round fill active">
+                        <i class="front">search</i>
+                        <input />
+                        <menu class="min">
+                            <li>
+                                <div class="field large prefix">
+                                    <i class="front">arrow_back</i>
+                                    <input>
+                                </div>
+                            </li>
+                            <li>
+                                <i>history</i>
+                                <div>Item 1</div>
+                            </li>
+                            <li>
+                                <i>history</i>
+                                <div>Item 2</div>
+                            </li>
+                            <li>
+                                <i>history</i>
+                                <div>Item 3</div>
+                            </li>
+                        </menu>
+                    </div>
+
+                </div>
+                <div class="max"></div>
+                <button class="circle large transparent m s">
+                    <i>search</i>
+                </button>
+                
+
+                <button class="circle large transparent">
+                    <i>settings</i>
+                </button>
+
+                
+                <button class="circle large transparent">
+                    <img class="responsive" src="/icons/icon.svg" height="32">
+                </button>
+                        
+            </nav>
+
+
+            <!-- Menus - Bottom -->
+            
+
+
+            <!-- Welcome Section -->
+            <main class="surface-container round padding bottom-margin">
+                <h3>Welcome to [Your App Name]!</h3>
+                <p class="opacity">Simple and secure screen sharing — no install needed.</p>
+
+                <div class="row center-align wrap gap padding-top">
+                <button class="primary large" onclick="shareScreen()">Share My Screen</button>
+                <button class="large" onclick="joinScreen()">Join a Screen</button>
+                </div>
+
+                <div class="divider margin-top margin-bottom"></div>
+
+                <p>
+                Already have an account?
+                <a href="/login">Log In</a> &nbsp;|&nbsp;
+                New? <a href="/signup">Sign Up</a>
+                </p>
+
+                <p class="margin-top">
+                Or try as a guest →
+                <a href="/guest" class="bold">Continue as Guest</a>
+                </p>
+
+                <p class="small-text opacity padding-top">
+                Available for Windows, macOS & Linux
+                </p>
+                <button class="text small" onclick="window.location.href='https://yourapp.com/download'">
+                Download for Desktop
+                </button>
+            </main>
+
     </body>
 </html>
