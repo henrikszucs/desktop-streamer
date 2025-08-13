@@ -6,124 +6,399 @@
         <meta name="description" content="A simple web interface for controlling your desktop remotly."/>
         <meta name="keywords" content="desktop, streamer, remote, access"/>
         <title>Desktop Streamer</title>
-        <link href="./icons/icon.svg" rel="icon"  type="image/svg+xml"/>
+        <link href="/icons/icon.svg" rel="icon"  type="image/svg+xml"/>
 
         <link href="/libs/beercss/beer.min.css" rel="stylesheet"/>
         <script src="/libs/beercss/beer.min.js" type="module" async></script>
         <script src="/libs/beercss/material-dynamic-colors.min.js" type="module" async></script>
     
-        <script src="/conf.js" type="module" async></script>
         <link href="/index.css" rel="stylesheet"/>
         <script src="/index.js" type="module" async></script>
     </head>
     <body>
-            <!-- Menus - Left -->
-            <nav class="left m l scroll max">
-                <header>
-                    <button class="circle extra transparent">
-                        <i>menu</i>
-                    </button>
-                    <button class="primary-container square round extend">
-                        <i>join</i>
-                        <span>Join</span>
-                    </button>
-                </header>
-                <a class="active">
-                    <i>view_cozy</i>
-                    <div>Clients</div>
-                </a>
-                <a >
-                    <i>share</i>
-                    <div>Shares</div>
-                </a>
-            </nav>
+        
+        <!-- Menus -->
+        <nav class="top surface" id="nav-top">
+            <button id="btn-download">
+                <i>download</i>
+                <span>Download client</span>
+            </button>
+            <button class="hide" id="btn-upload">
+                <i>download</i>
+                <span>Update available</span>
+            </button>
+            <div class="max"></div>
+            <div class="max l">
+                <div class="field large prefix round fill active wide-search">
+                    <i class="front" id="input-search-finish">search</i>
+                    <input placeholder="Search text" id="input-search"/>
+                    <menu class="min" id="input-search-menu">
+                        <li>
+                            <div class="field large prefix">
+                                <i class="front">arrow_back</i>
+                                <input placeholder="Search text" id="input-search-true"/>
+                            </div>
+                        </li>
+                        <li>
+                            <i>history</i>
+                            <div>Item 1</div>
+                        </li>
+                        <li>
+                            <i>history</i>
+                            <div>Item 2</div>
+                        </li>
+                        <li>
+                            <i>history</i>
+                            <div>Item 3</div>
+                        </li>
+                    </menu>
+                </div>
+            </div>
+            <div class="max"></div>
+            <button class="circle large transparent m s" id="btn-search">
+                <i>search</i>
+            </button>
+            <button class="circle large transparent" id="btn-settings">
+                <i>settings</i>
+            </button>
+            <button class="circle large transparent">
+                <img class="responsive" src="/icons/guest.svg" height="32" id="btn-user">
+                <menu class="border left no-wrap" id="btn-user-menu-login">
+                    <li>
+                        <div class="min">
+                            <i>login</i>
+                        </div>
+                        <div class="min">
+                            Log in
+                        </div>
+                    </li>
+                </menu>
+                <menu class="border left no-wrap hide" id="btn-user-menu">
+                    <li>
+                        Welcome user
+                    </li>
+                    <li>
+                        <div class="min">
+                            <i>settings</i>
+                        </div>
+                        <div class="min">
+                            Account settings
+                        </div>
+                    </li>
+                    <li>
+                        <div class="min">
+                            <i>logout</i>
+                        </div>
+                        <div class="min">
+                            Sign out
+                        </div>
+                    </li>
+                </menu>
+            </button>
+        </nav>
 
-            <!-- Menus - Top -->
-            <nav class="top surface">
-                <button>
-                    <i>download</i>
-                    <span>Download client</span>
+        <nav class="left m l scroll max" id="nav-left">
+            <header>
+                <button class="circle extra transparent" id="btn-menu">
+                    <i>menu</i>
                 </button>
+                <button class="primary-container square round extend" id="btn-add">
+                    <i>add</i>
+                    <span>Join</span>
+                </button>
+            </header>
+            <a id="btn-clients">
+                <i>view_cozy</i>
+                <div>Clients</div>
+            </a>
+            <a id="btn-shares">
+                <i>share</i>
+                <div>Shares</div>
+            </a>
+        </nav>
+
+        <nav class="bottom s" id="nav-bottom">
+            <a id="btn-clients-2">
+                <i>view_cozy</i>
+                <div>Clients</div>
+            </a>
+            <a class="button square round extra fill" id="btn-add-2"><i>add</i></a>
+            <a id="btn-shares-2">
+                <i>share</i>
+                <div>Shares</div>
+            </a>
+        </nav>
+
+        <nav class="top surface hide" id="nav-room">
+            <button class="circle extra transparent" id="btn-menu">
+                <i>menu</i>
+            </button>
+            <div class="max"></div>
+        </nav>
+
+
+
+        <!-- Dialogs -->
+        <div class="overlay blur active" id="dialog-overlay"></div>
+
+        <dialog class="active" id="dialog-loading">
+            <h5>Loading...</h5>
+            <br>
+            <div>The application is loading please wait...</div>
+            <br>
+            <progress></progress>
+        </dialog>
+
+        <dialog class="top transparent" id="dialog-search">
+            <div class="field large prefix round fill active">
+                <i class="front" id="input-search-2-finish">search</i>
+                <input placeholder="Search text" id="input-search-2"/>
+                <menu class="min" id="input-search-2-menu">
+                    <li>
+                        <div class="field large prefix">
+                            <i class="front" >arrow_back</i>
+                            <input placeholder="Search text" id="input-search-2-true"/>
+                        </div>
+                    </li>
+                    <li>
+                        <i>history</i>
+                        <div>Item 1</div>
+                    </li>
+                    <li>
+                        <i>history</i>
+                        <div>Item 2</div>
+                    </li>
+                    <li>
+                        <i>history</i>
+                        <div>Item 3</div>
+                    </li>
+                </menu>
+            </div>
+
+        </dialog>
+
+        <dialog class="multicolumn-dialog" id="dialog-settings">
+            <nav>
+                <h5>Settings</h5>
                 <div class="max"></div>
-                <div class="max l">
-                    <div class="field large prefix round fill active">
-                        <i class="front">search</i>
-                        <input />
-                        <menu class="min">
-                            <li>
-                                <div class="field large prefix">
-                                    <i class="front">arrow_back</i>
-                                    <input>
-                                </div>
-                            </li>
-                            <li>
-                                <i>history</i>
-                                <div>Item 1</div>
-                            </li>
-                            <li>
-                                <i>history</i>
-                                <div>Item 2</div>
-                            </li>
-                            <li>
-                                <i>history</i>
-                                <div>Item 3</div>
-                            </li>
-                        </menu>
+                <button class="circle transparent" id="btn-settings-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <div>
+                    <button class="primary small-margin">
+                        <i>palette</i>
+                        <span class="l m">Apperance</span>
+                    </button>
+                    <br>
+                    <button class="fill small-margin">
+                        <i>speaker</i>
+                        <span class="l m">Audio</span>
+                    </button>
+                    <br>
+                    <button class="fill small-margin">
+                        <i>videocam</i>
+                        <span class="l m">Video</span>
+                    </button>
+                    <br>
+                    <button class="fill small-margin">
+                        <i>monitor</i>
+                        <span class="l m">Screen</span>
+                    </button>
+                    <br>
+                    <button class="fill small-margin">
+                        <i>joystick</i>
+                        <span class="l m">Control</span>
+                    </button>
+                    <br>
+                    <button class="fill small-margin">
+                        <i>info</i>
+                        <span class="l m">About</span>
+                    </button>
+                </div>
+                <!-- Apperance settings -->
+                <div>
+                    <h5 class="small-margin">Apperance settings</h5>
+                    <div class="small-margin">
+                        <fieldset>
+                            <legend>Theme color</legend>
+                            <nav class="wrap">
+                                <button class="chip circle small">
+                                <i>dark_mode</i></button>
+                                <button class="chip circle">
+                                <i>palette</i>
+                                <input type="color">
+                                </button>
+                                <button class="circle small red"></button>
+                                <button class="circle small pink"></button>
+                                <button class="circle small purple"></button>
+                                <button class="circle small indigo"></button>
+                                <button class="circle small blue"></button>
+                                <button class="circle small green"></button>
+                                <button class="circle small yellow"></button>
+                                <button class="circle small orange"></button>
+                            </nav>
+                        </fieldset>
+                        <fieldset>
+                            <legend>Language</legend>
+                            <div class="field suffix border round">
+                                <select>
+                                    <option>English</option>
+                                    <option>Magyar</option>
+                                </select>
+                                <i>arrow_drop_down</i>
+                            </div>
+                        </fieldset>
                     </div>
-
                 </div>
+                <!-- Audio settings -->
+            </div>
+        </dialog>
+
+        <dialog class="multicolumn-dialog" id="dialog-account-settings">
+            <nav>
+                <h5>Account settings</h5>
                 <div class="max"></div>
-                <button class="circle large transparent m s">
-                    <i>search</i>
+                <button class="circle transparent">
+                <i>close</i>
                 </button>
-                
-
-                <button class="circle large transparent">
-                    <i>settings</i>
-                </button>
-
-                
-                <button class="circle large transparent">
-                    <img class="responsive" src="/icons/icon.svg" height="32">
-                </button>
-                        
             </nav>
-
-
-            <!-- Menus - Bottom -->
-            
-
-
-            <!-- Welcome Section -->
-            <main class="surface-container round padding bottom-margin">
-                <h3>Welcome to [Your App Name]!</h3>
-                <p class="opacity">Simple and secure screen sharing — no install needed.</p>
-
-                <div class="row center-align wrap gap padding-top">
-                <button class="primary large" onclick="shareScreen()">Share My Screen</button>
-                <button class="large" onclick="joinScreen()">Join a Screen</button>
+            <div class="no-border">
+                <div>
+                    <button class="fill small-margin">
+                        <i>info</i>
+                        <span class="l m">Information</span>
+                    </button>
+                    <br>
+                    <button class="primary small-margin">
+                        <i>lock</i>
+                        <span class="l m">Security</span>
+                    </button>
                 </div>
+                <!-- Apperance settings -->
+                <div>
+                    <h5 class="small-margin">Apperance settings</h5>
+                    <div class="small-margin">
+                        <fieldset>
+                            <legend>Theme color</legend>
+                            <nav class="wrap">
+                                <button class="chip circle small">
+                                <i>dark_mode</i></button>
+                                <button class="chip circle">
+                                <i>palette</i>
+                                <input type="color">
+                                </button>
+                                <button class="circle small red"></button>
+                                <button class="circle small pink"></button>
+                                <button class="circle small purple"></button>
+                                <button class="circle small indigo"></button>
+                                <button class="circle small blue"></button>
+                                <button class="circle small green"></button>
+                                <button class="circle small yellow"></button>
+                                <button class="circle small orange"></button>
+                            </nav>
+                        </fieldset>
+                        <fieldset>
+                            <legend>Language</legend>
+                            <div class="field suffix border round">
+                                <select>
+                                    <option>English</option>
+                                    <option>Magyar</option>
+                                </select>
+                                <i>arrow_drop_down</i>
+                            </div>
+                        </fieldset>
+                    </div>
+                </div>
+                <!-- Audio settings -->
+            </div>
+        </dialog>
 
+
+        <!-- Main surface -->
+        <main class="surface-container round padding bottom-margin center-align">
+            <!-- Welcome screen -->
+            <div class="hide" id="screen-welcome">
+                <h3>Welcome in Desktop Streamer app!</h3>
+                <p>Simple and secure screen sharing — no install needed.</p>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="primary large">Share My Screen</button>
+                    <button class="large">Join a Screen</button>
+                </div>
                 <div class="divider margin-top margin-bottom"></div>
-
                 <p>
-                Already have an account?
-                <a href="/login">Log In</a> &nbsp;|&nbsp;
-                New? <a href="/signup">Sign Up</a>
+                    Already have an account?
+                    <a href="/login">Log In</a> &nbsp;|&nbsp;
+                    New? <a href="/signup">Sign Up</a>
                 </p>
-
                 <p class="margin-top">
-                Or try as a guest →
-                <a href="/guest" class="bold">Continue as Guest</a>
+                    Or try as a guest →
+                    <a href="/guest" class="bold">Continue as Guest</a>
                 </p>
-
                 <p class="small-text opacity padding-top">
-                Available for Windows, macOS & Linux
+                    Available for Windows, macOS & Linux
                 </p>
                 <button class="text small" onclick="window.location.href='https://yourapp.com/download'">
                 Download for Desktop
                 </button>
-            </main>
+            </div>
+
+            <!-- Download page -->
+            <div class="hide" id="screen-download">
+                <h3>Download Desktop Streamer</h3>
+                <h6 class="small">Get the Desktop Streamer client program for your computer to full remote control.</h6>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="small-round extra" id="download-windows">
+                        <img class="responsive" src="/icons/windows.svg">
+                        Windows
+                    </button>
+                    <button class="small-round extra border" id="download-macos">
+                        <img class="responsive" src="/icons/macos.svg">
+                        macOS
+                    </button>
+                    <button class="small-round extra border" id="download-linux">
+                        <img class="responsive" src="/icons/linux.svg">
+                        Linux
+                    </button>
+                </div>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="small-round extra" id="download-x64">
+                        x64
+                    </button>
+                    <button class="small-round extra border" id="download-x86">
+                        x86
+                    </button>
+                    <button class="small-round extra border" id="download-arm64">
+                        arm64
+                    </button>
+                    <button class="small-round extra border" id="download-arm32">
+                        arm32
+                    </button>
+                </div>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="small-round extra" id="download-finish">
+                        <i>download</i>
+                        Download
+                    </button>
+                </div>
+            </div>
+
+            <!-- Clients page -->
+            <div class="hide" id="screen-clients">
+                <h3>My Clients</h3>
+            </div>
+
+            <!-- My shares page -->
+            <div class="hide" id="screen-shares">
+                <h3>My Shares</h3>
+            </div>
+
+            <!-- Room page -->
+            <div class="hide" id="screen-room">
+                <h3>Room</h3>
+            </div>
+        </main>
 
     </body>
 </html>

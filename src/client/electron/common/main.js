@@ -22,7 +22,7 @@ const createMainWindow = function(url) {
     const win = new BrowserWindow({
         "width": 800,
         "height": 600,
-        "icon": path.join(app.getAppPath(), "ui/icons/icon-32.png"),
+        "icon": path.join(app.getAppPath(), "icons/icon-32.png"),
         "webPreferences": {
             "partition": partition,
             "contextIsolation": false,
@@ -106,12 +106,12 @@ const main = async function() {
         }
         // NB, this does not check for paths that escape the bundle, e.g.
         // app://bundle/../../secret_file.txt
-        const pathFull = url.pathToFileURL(path.join(app.getAppPath(), "ui", pathname)).toString();
+        const pathFull = url.pathToFileURL(path.join(app.getAppPath(), pathname)).toString();
         return net.fetch(pathFull);
     });
     
     // Main window create "local://local.local/"
-    winMain = createMainWindow("https://localhost:8888");
+    winMain = createMainWindow("https://localhost");
     app.on("activate", function() {
         if (BrowserWindow.getAllWindows().length === 0) {
             winMain = createMainWindow();
@@ -120,7 +120,7 @@ const main = async function() {
     });
     
     // Tray
-    const tray = new Tray(path.join(app.getAppPath(), "ui/icons/icon-32.png"));
+    const tray = new Tray(path.join(app.getAppPath(), "icons/icon-32.png"));
     tray.on("click", function() {
         if (winMain) {
             winMain.show();

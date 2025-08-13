@@ -54,7 +54,6 @@ server configuration file path: server/conf/conf.json
             "size": 524288000, 		//max cache size in bytes
             "sizeLimit": 10485760   //max file size that can cached (ignore too big files)
         },
-        "downloadOnly": false,      //web ui show only download options
         "remote": {                 //(optional) remote websocket server, it will ignore local ws creation
             "host": "localhost",
             "port": 444

@@ -4,8 +4,7 @@
         "port": 443,
         "key": "server.key",
         "cert": "server.crt",
-        "redirect": 80,
-        "downloadOnly": false
+        "redirect": 80
     },
     "ws": {
         "port": 444,

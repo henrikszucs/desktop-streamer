@@ -9,16 +9,18 @@ import process from "node:process";
 import fs from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
+import buffer from "node:buffer";
 
-// third-party dependencies
+// third-party dependenciess
 import JSZip from "jszip";
 import { WebSocketServer } from "ws";
 
 // first-party dependencies
 import Mime from "easy-mime";
 import Communicator from "easy-communicator";
-import { type } from "node:os";
 
+const CLIENT_VERSION = "0.1.0";
+const MIN_CLIENT_VERSION = CLIENT_VERSION;
 
 //
 // Helper functions
@@ -44,7 +46,6 @@ const binarySearch = function(arr, x, getVal=function(el) {return el}) {
     }
     return [false, start];
 };
-
 
 // search in parameters
 const getArg = function(args, argName, isKeyValue=false, isInline=false) {
@@ -99,7 +100,6 @@ const serverScriptPath = import.meta.dirname;
 
 // proceed the conf file fields
 const processConf = async function(confPath) {
-    confPath = setAbsolute(confPath, process.cwd());
     //console.log(confPath);
 
     // load conf file (required)
@@ -209,6 +209,9 @@ const processConf = async function(confPath) {
         // check port
         if (typeof confIn["ws"]["port"] !== "number" || confIn["ws"]["port"] < 1 || confIn["ws"]["port"] > 65535) {
             throw new Error("Invalid WS port: " + confIn["ws"]["port"]);
+        }
+        if (confIn["ws"]["port"] === confOut?.["http"]?.["redirect"]) {
+            throw new Error("WS port cannot be the same as HTTP redirect port!");
         }
         confOut["ws"]["port"] = confIn["ws"]["port"];
 
@@ -346,7 +349,8 @@ const compileClients = async function(conf) {
     const confData = {
         "http": {
             "domain": conf["http"]["domain"],
-            "port": conf["http"]["port"]
+            "port": conf["http"]["port"],
+            "version": CLIENT_VERSION
         },
         "ws": {}
     };
@@ -358,7 +362,11 @@ const compileClients = async function(conf) {
         confData["ws"]["port"] = conf["ws"]["port"];
     }
     let confScript = "\"use strict\";";
-    confScript += "\n" + "globalThis.desktopStreamerConf = " + JSON.stringify(confData) + ";";
+    confScript += "\n" + "export default " + JSON.stringify(confData) + ";";
+
+    // read web files
+    const webPath = path.join(serverScriptPath, "client", "web");
+    const webFiles = await fs.readdir(webPath, {"recursive": true});
 
     // go through the dists
     const commonPath = path.join(serverScriptPath, "client", "electron", "common");
@@ -388,6 +396,16 @@ const compileClients = async function(conf) {
         let commonDest = path.join("resources", "app");
         if (system === "macos") {
             commonDest = path.join("Electron.app", "Contents", "Resources", "app");
+        }
+        for (const file of webFiles) {
+            const filePath = path.join(webPath, file);
+            const isDir = (await fs.stat(filePath)).isDirectory();
+            if (isDir) {
+                zip.folder(path.join(commonDest, file));
+            } else {
+                const fileContents = await fs.readFile(filePath);
+                zip.file(path.join(commonDest, file), fileContents);
+            }
         }
         for (const file of commonFiles) {
             const filePath = path.join(commonPath, file);
@@ -435,6 +453,8 @@ const Server = class {
 
     wsServer = null;
     wsHttpServer = null;
+    clients = new Map();
+
     isClosing = false;
     constructor() {
 
@@ -447,7 +467,7 @@ const Server = class {
             const date = new Date(stats.mtimeMs);
             return {
                 "lastModified": date.toUTCString(),
-                "type": Mime.getMIMEType(path.extname(src)),
+                "type": Mime.getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
                 "etag": path.basename(src) + String(stats.size),
                 "buffer": data
@@ -485,7 +505,7 @@ const Server = class {
             
             return {
                 "lastModified": date.toUTCString(),
-                "type": Mime.getMIMEType(path.extname(src)),
+                "type": Mime.getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
                 "etag": path.basename(src) + String(stats.size),
                 "stream": stream
@@ -506,12 +526,21 @@ const Server = class {
             const confData = {
                 "http": {
                     "clients": [...files],
-                    "downloadOnly": conf["http"]["downloadOnly"] || false
-                }
+                    "version": CLIENT_VERSION
+                },
+                "ws": {}
             };
+            if (typeof conf["http"]["remote"] === "object") {
+                confData["ws"]["domain"] = conf["http"]["remote"]["host"];
+                confData["ws"]["port"] = conf["http"]["remote"]["port"];
+            } else {
+                confData["ws"]["domain"] = conf["http"]["domain"];
+                confData["ws"]["port"] = conf["ws"]["port"];
+            }
             let confScript = "\"use strict\";";
-            confScript += "\n" + "globalThis.desktopStreamerConf = " + JSON.stringify(confData) + ";";
+            confScript += "\n" + "export default " + JSON.stringify(confData) + ";";
             await fs.writeFile(path.join(this.httpBasePath, "conf.js"), confScript);
+            await fs.writeFile(path.join(this.httpBasePath, "version"), CLIENT_VERSION);
 
             // create HTTP server request handler
             let requestHandle = null;
@@ -693,22 +722,89 @@ const Server = class {
                 this.wsHttpServer = https.createServer({
                     "key": conf["ws"]["key"],
                     "cert": conf["ws"]["cert"]
+                }, function (req, res) {
+                    res.writeHead(200, {
+                        //"Content-Security-Policy": "default-src 'self'",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Content-Length": 0,
+                        "Content-Type": "text/plain"
+                    });
+                    res.write("");
+                    res.end();
                 });
+                this.wsHttpServer.listen(conf["ws"]["port"]);
                 this.wsServer = new WebSocketServer({
                     "server": this.wsHttpServer
                 });
+                
             }
             this.wsServer.addListener("connection", (ws) => {
-                if (isClosing) {
+                if (this.isClosing) {
                     ws.terminate();
                 } else {
-                    //to do: add connection handler
+                    this.clientConnect(ws);
                 }
             });
             process.stdout.write("done\n");
         } else {
             process.stdout.write("skipped\n");
         }
+
+    };
+    async clientConnect(ws) {
+        let clientId;
+        do {
+            clientId = (Math.floor(Math.random() * 9999) + 1).toString().padStart(4, "0");
+        } while (this.clients.has(clientId));
+        
+        // create communicator
+        const com = new Communicator({
+            "sender": async function(data, transfer, message) {
+                if ((data instanceof ArrayBuffer) === false) {
+                    data = JSON.stringify(data);
+                }
+                ws.send(data);
+            },
+            "interactTimeout": 3000,
+            "timeout": 5000,
+            "packetSize": 1000,
+            "packetTimeout": 1000,
+            "packetRetry": Infinity,
+            "sendThreads": 16
+        });
+        ws.addEventListener("message", function(event) {
+            let data = event.data;
+            try {
+                if (buffer.isUtf8(data)) {
+                    data = data.toString("utf8");
+                    data = JSON.parse(data);
+                } else {
+                    data = new Uint8Array(data);
+                    data = data.buffer;
+                }
+            } catch (error) {
+                console.log(error);
+                return;
+            }
+            com.receive(data);
+
+        });
+        await com.sideSync();
+        await com.timeSync();
+        this.clients.set(clientId, com);
+        console.log("Client connected (" + clientId + ")");
+
+        // listen error
+        ws.addEventListener("error", (event) => {
+            console.log("Error " + event.error);
+        });
+
+        // listen close
+        ws.addEventListener("close", () => {
+            console.log("Client disconnected (" + clientId + ")");
+            this.clients.delete(clientId);
+        });
+
 
     };
     async stop() {
@@ -815,7 +911,7 @@ const Server = class {
 const main = async function(args) {
     // Read CLI options
     process.stdout.write("Reading arguments...    ");
-    const confPath = getArg(process.argv, "--configuration", true, true) || getArg(process.argv, "-c", true, false) || "./conf/conf.json";
+    const confPath = path.resolve(getArg(process.argv, "--configuration", true, true) || getArg(process.argv, "-c", true, false) || "./conf/conf.json");
     const complieFlag = getArg(process.argv, "--compile", false) || false;
     const exitFlag = getArg(process.argv, "--exit", false) || false;
     process.stdout.write("done\n");
