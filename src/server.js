@@ -431,8 +431,9 @@ const compileClients = async function(conf) {
             process.stdout.write("error\n");
             continue;
         }
-        process.stdout.write("done\n");
+        process.stdout.write("done");
     }
+    process.stdout.write("\n");
     return true;
     
 };

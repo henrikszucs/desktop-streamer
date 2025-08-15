@@ -2,3 +2,4 @@
 node_modules
 tmp
 src/client/electron/dist
+conf

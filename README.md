@@ -68,7 +68,32 @@ server configuration file path: server/conf/conf.json
             "port": 3306,
             "user": "root",
             "pass": "root"
-        }
+        },
+        "smpt": [                   //email sending
+            {
+                "host": "",
+                "port": 567,
+                "user": ""
+                "limit": 720,
+                "maxReply": 1,
+                "auth": {
+                    "type": "OAuth2",
+                    "service": "gmail",
+                    "clientId": "12345678",
+                    "clientSecret": "12345678",
+                    "refreshToken": "12345678"
+                },
+                "auth": {
+                    "type": "appPass",
+                    "service": "gmail",
+                    "password": "12345678"
+                },
+                "auth": {
+                    "type": "legacy",
+                    "password": "12345678"
+                }
+            }
+        ],
         "features": {               //backend features
             "guestLogin": false,
             "register": true
