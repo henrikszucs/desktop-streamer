@@ -111,6 +111,35 @@ const server = new Server("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["po
 
 // UI classes
 
+const EmptyDialog = class {
+    constructor() {
+        // get important elements
+    };
+    open = () => {
+        // open dialog
+    };
+    close = () => {
+        // close dialog
+    };
+};
+
+const LoadingDialog = class {
+    constructor() {
+        this.overlay = document.getElementById("dialog-overlay");
+        this.loading = document.getElementById("dialog-loading");
+    };
+    open = () => {
+        this.loading.classList.add("active");
+        this.overlay.classList.add("blur");
+        this.overlay.classList.add("active");
+    };
+    close = () => {
+        this.loading.classList.remove("active");
+        this.overlay.classList.remove("blur");
+        this.overlay.classList.remove("active");
+    };
+};
+
 const SearchDialog = class extends EventTarget {
     constructor() {
         super();
@@ -190,8 +219,68 @@ const SearchDialog = class extends EventTarget {
 };
 
 const SettingsDialog = class {
+    constructor() {
+        // get important elements
+        this.overlay = document.getElementById("dialog-overlay");
+        this.settingsBtn = document.getElementById("btn-settings");
+        this.settingsDialog = document.getElementById("dialog-settings");
+        this.settingsClose = document.getElementById("btn-settings-close");
+        
 
-}
+        // set event listeners
+        this.settingsClose.addEventListener("click", () => {
+            this.close();
+        });
+
+    };
+    open = () => {
+        this.overlay.classList.add("active");
+        this.settingsDialog.classList.add("active");
+        this.overlay.addEventListener("click", this.close);
+    };
+    close = () => {
+        this.overlay.classList.remove("active");
+        this.settingsDialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.close);
+    };
+};
+
+const AccountDialog = class {
+    constructor() {
+        // get important elements
+        this.overlay = document.getElementById("dialog-overlay");
+        this.accountDialog = document.getElementById("dialog-account");
+        this.accountClose = document.getElementById("btn-account-close");
+
+        // set event listeners
+        this.accountClose.addEventListener("click", () => {
+            this.close();
+        });
+    };
+    open = () => {
+        this.overlay.classList.add("active");
+        this.accountDialog.classList.add("active");
+        this.overlay.addEventListener("click", this.close);
+    };
+    close = () => {
+        this.overlay.classList.remove("active");
+        this.accountDialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.close);
+    };
+};
+
+const WelcomeScreen = class {
+    constructor() {
+        // get important elements
+        this.welcomeScreen = document.getElementById("screen-welcome");
+    };
+    open = () => {
+        this.welcomeScreen.classList.remove("hide");
+    };
+    close = () => {
+        this.welcomeScreen.classList.add("hide");
+    };
+};
 
 const DownloadScreen = class {
     constructor(clientList) {
@@ -210,7 +299,6 @@ const DownloadScreen = class {
         }
 
         // get important elements
-        this.overlay = document.getElementById("dialog-overlay");
         this.downloadBtn = document.getElementById("btn-download");
         this.downloadScreen = document.getElementById("screen-download");
         this.downloadWindows = document.getElementById("download-win32");
@@ -400,74 +488,194 @@ const DownloadScreen = class {
     };
 };
 
+const LoginScreen = class {
+    constructor() {
+        // get important elements
+        this.loginScreen = document.getElementById("screen-login");
+    };
+    open = () => {
+        // open login screen
+        this.loginScreen.classList.remove("hide");
+    };
+    close = () => {
+        // close login screen
+        this.loginScreen.classList.add("hide");
+    };
+};
+
+const RegisterScreen = class {
+    constructor() {
+        // get important elements
+        this.registerScreen = document.getElementById("screen-register");
+    };
+    open = () => {
+        this.registerScreen.classList.remove("hide");
+    };
+    close = () => {
+        this.registerScreen.classList.add("hide");
+    };
+};
+
+const PasswordResetScreen = class {
+    constructor() {
+        // get important elements
+        this.passwordResetScreen = document.getElementById("screen-password");
+    };
+    open = () => {
+        this.passwordResetScreen.classList.remove("hide");
+    };
+    close = () => {
+        this.passwordResetScreen.classList.add("hide");
+    };
+};
+
+const SharesScreen = class {
+    constructor() {
+        // get important elements
+        this.sharesScreen = document.getElementById("screen-shares");
+    };
+    open = () => {
+        this.sharesScreen.classList.remove("hide");
+    };
+    close = () => {
+        this.sharesScreen.classList.add("hide");
+    };
+};
+
+const RoomsScreen = class {
+    constructor() {
+        // get important elements
+        this.roomsScreen = document.getElementById("screen-rooms");
+    };
+    open = () => {
+        this.roomsScreen.classList.remove("hide");
+    };
+    close = () => {
+        this.roomsScreen.classList.add("hide");
+    };
+};
+
+const RoomScreen = class {
+    constructor() {
+        // get important elements
+        this.roomScreen = document.getElementById("screen-room");
+        this.navTop = document.getElementById("nav-top");
+        this.navBottom = document.getElementById("nav-bottom");
+        this.navLeft = document.getElementById("nav-left");
+        this.navRoom = document.getElementById("nav-room");
+    };
+    open = () => {
+        this.roomScreen.classList.remove("hide");
+        this.navRoom.classList.remove("hide");
+        this.navTop.classList.add("hide");
+        this.navBottom.classList.add("hide");
+        this.navLeft.classList.add("hide");
+    };
+    close = () => {
+        this.roomScreen.classList.add("hide");
+        this.navRoom.classList.add("hide");
+        this.navTop.classList.remove("hide");
+        this.navBottom.classList.remove("hide");
+        this.navLeft.classList.remove("hide");
+        
+    };
+};
+
+
 // Main logic
 const main = async function() {
     const val = await Promise.all([confLoad, domReady]);
     conf["local"] = val[0];
     console.log(conf);
-    
-    // get important elements
-    let openedDialog = null;
+
+    // Dialog and screen management
+    const emptyDialog = new EmptyDialog();
+    let openedDialog = emptyDialog;
     let openedScreen = null;
+    const switchScreen = function(newScreen) {
+        switchDialog(emptyDialog);
+        openedScreen.close();
+        openedScreen = downloadScreen;
+        openedScreen.open();
+    };
+    const switchDialog = function(newDialog) {
+        openedDialog.close();
+        openedDialog = newDialog;
+        openedDialog.open();
+    };
     
-    // search dialog
+    
+    
+    // Search dialog
     const searchDialog = new SearchDialog();
     document.getElementById("btn-search").addEventListener("click", () => {
         openedDialog?.close();
         openedDialog = searchDialog;
-        searchDialog.open();
+        openedDialog.open();
     });
     searchDialog.addEventListener("search", (event) => {
         const value = event.detail.value;
         console.log("Search for:", value);
     });
 
-    // download screen
+    // Settings dialog
+    const settingsDialog = new SettingsDialog();
+    settingsDialog.settingsBtn.addEventListener("click", () => {
+        switchDialog(settingsDialog);
+    });
+
+    // Account dialog
+    const accountDialog = new AccountDialog();
+
+    // Welcome screen
+    const welcomeScreen = new WelcomeScreen();
+
+    // Download screen
     const downloadScreen = new DownloadScreen(conf["http"]["clients"]);
     downloadScreen.downloadBtn.addEventListener("click", () => {
         window.history.pushState({}, "", "/" + "downloads");
         loadPath();
     });
 
-    const overlay = document.getElementById("dialog-overlay");
-    const loading = document.getElementById("dialog-loading");
+    // Login screen
+    const loginScreen = new LoginScreen();
 
-    const navTop = document.getElementById("nav-top");
-    const navBottom = document.getElementById("nav-bottom");
-    const navLeft = document.getElementById("nav-left");
+    // Register screen
+    const registerScreen = new RegisterScreen();
+
+    // Password reset screen
+    const passwordResetScreen = new PasswordResetScreen();
+
+    // Shares screen
+    const sharesScreen = new SharesScreen();
+
+    // Rooms screen
+    const roomsScreen = new RoomsScreen();
+
+    // Room screen
+    const roomScreen = new RoomScreen();
 
     
 
 
-
-
-    const settingsBtn = document.getElementById("btn-settings");
-    const settingsDialog = document.getElementById("dialog-settings");
-    const settingsClose = document.getElementById("btn-settings-close");
-
     
-    
-
-    const menuBtn = document.getElementById("btn-menu");
-    const welcomeScreen = document.getElementById("screen-welcome");
 
     const addBtn = document.getElementById("btn-add");
     const addBtn2 = document.getElementById("btn-add-2");
 
-    const clientsBtn = document.getElementById("btn-clients");
-    const clientsBtn2 = document.getElementById("btn-clients-2");
-    const clientsScreen = document.getElementById("screen-clients");
+    const roomsBtn = document.getElementById("btn-clients");
+    const roomsBtn2 = document.getElementById("btn-clients-2");
 
     const sharesBtn = document.getElementById("btn-shares");
     const sharesBtn2 = document.getElementById("btn-shares-2");
-    const sharesScreen = document.getElementById("screen-shares");
-
-    const roomScreen = document.getElementById("screen-room");
     
 
 
 
+    
+    
     // Side menu toggle
+    const menuBtn = document.getElementById("btn-menu");
     if (sizeS < width) {
         if (width < sizeM) {
             menuBtn.parentElement.parentElement.classList.remove("max");
@@ -479,32 +687,8 @@ const main = async function() {
         event.target.parentElement.parentElement.classList.toggle("max");
     });
 
-
-    // Settings
-    const settingsDialogMethods = (function() {
-        return {
-            "show": function() {
-                overlay.classList.add("active");
-                settingsDialog.classList.add("active");
-                overlay.addEventListener("click", settingsDialogMethods.hide);
-            },
-            "hide": function() {
-                overlay.classList.remove("active");
-                settingsDialog.classList.remove("active");
-                overlay.removeEventListener("click", settingsDialogMethods.hide);
-            }
-        };
-    })();
-    settingsBtn.addEventListener("click", function (event) {
-        settingsDialogMethods.show();
-    });
-    settingsClose.addEventListener("click", function (event) {
-        settingsDialogMethods.hide();
-    });
-
-
-
-    // load the given URL path
+    
+    // Load the given URL path
     const loadPath = function() {
         let path = window.location.pathname || "/";
         path = path.slice(1);
@@ -524,10 +708,7 @@ const main = async function() {
 
         // load screens
         if (path[0] === "downloads") {
-            openedDialog?.close();
-            openedScreen?.close();
-            openedScreen = downloadScreen;
-            openedScreen.open();
+            switchScreen(downloadScreen);
         } else {
 
         }
@@ -538,25 +719,12 @@ const main = async function() {
     
 
     // Loading
-    let loadingDialog = (function() {
-        return {
-            "show": function() {
-                loading.classList.add("active");
-                overlay.classList.add("blur");
-                overlay.classList.add("active");
-            },
-            "hide": function() {
-                loading.classList.remove("active");
-                overlay.classList.remove("blur");
-                overlay.classList.remove("active");
-            }
-        };
-    })();
+    let loadingDialog = new LoadingDialog();
     if (server.isOnline) {
-        loadingDialog.hide();
+        loadingDialog.close();
     }
-    server.addEventListener("online", loadingDialog.hide);
-    server.addEventListener("offline", loadingDialog.show);
+    server.addEventListener("online", loadingDialog.close);
+    server.addEventListener("offline", loadingDialog.open);
 };
 main();
 

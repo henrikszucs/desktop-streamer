@@ -14,6 +14,8 @@ import buffer from "node:buffer";
 // third-party dependenciess
 import JSZip from "jszip";
 import { WebSocketServer } from "ws";
+import knex from "knex";
+import nodemailer from "nodemailer";
 
 // first-party dependencies
 import Mime from "easy-mime";
@@ -117,6 +119,7 @@ const processConf = async function(confPath) {
         throw new Error("Invalid configuration file: " + error.message);
     }
     
+
     // check HTTP settings
     if (typeof confIn["http"] === "object") {
         confOut["http"] = {};
@@ -215,19 +218,17 @@ const processConf = async function(confPath) {
         }
         confOut["ws"]["port"] = confIn["ws"]["port"];
 
-        // check key (only if no using HTTP server)
-        if (confOut["ws"]["port"] !== confIn?.["http"]?.["port"]) {
-            if (typeof confIn["ws"]["key"] !== "string") {
-                throw new Error("Invalid WS key path: " + confIn["ws"]["key"]);
-            }
-            try {
-                const keyPath = setAbsolute(confIn["ws"]["key"], path.dirname(confPath));
-                confOut["ws"]["key"] = await fs.readFile(keyPath, {
-                    "encoding": "utf8"
-                });
-            } catch (error) {
-                throw new Error("Invalid WS key path: " + confIn["ws"]["key"] + " - " + error.message);
-            }
+        // check key
+        if (typeof confIn["ws"]["key"] !== "string") {
+            throw new Error("Invalid WS key path: " + confIn["ws"]["key"]);
+        }
+        try {
+            const keyPath = setAbsolute(confIn["ws"]["key"], path.dirname(confPath));
+            confOut["ws"]["key"] = await fs.readFile(keyPath, {
+                "encoding": "utf8"
+            });
+        } catch (error) {
+            throw new Error("Invalid WS key path: " + confIn["ws"]["key"] + " - " + error.message);
         }
 
         // check cert
@@ -243,35 +244,173 @@ const processConf = async function(confPath) {
             throw new Error("Invalid WS cert path: " + confIn["ws"]["cert"] + " - " + error.message);
         }
 
-        // check SQL
-        if (typeof confIn["ws"]["sql"] !== "object") {
-            throw new Error("Invalid WS SQL configuration: " + confIn["ws"]["sql"]);
+        // check Database
+        if (typeof confIn["ws"]["database"] !== "object") {
+            throw new Error("Invalid WS Database configuration: " + confIn["ws"]["database"]);
         }
-        confOut["ws"]["sql"] = {};
+        confOut["ws"]["database"] = {};
 
-        // check SQL host
-        if (typeof confIn["ws"]["sql"]["host"] !== "string" || confIn["ws"]["sql"]["host"].length === 0) {
-            throw new Error("Invalid WS SQL host: " + confIn["ws"]["sql"]["host"]);
+        // check Database type
+        if (typeof confIn["ws"]["database"]["type"] !== "string" || ["mysql"].includes(confIn["ws"]["database"]["type"]) === false) {
+            throw new Error("Invalid WS Database type: " + confIn["ws"]["database"]["type"]);
         }
-        confOut["ws"]["sql"]["host"] = confIn["ws"]["sql"]["host"];
+        confOut["ws"]["database"]["type"] = confIn["ws"]["database"]["type"];
 
-        // check SQL port
-        if (typeof confIn["ws"]["sql"]["port"] !== "number" || confIn["ws"]["sql"]["port"] < 1 || confIn["ws"]["sql"]["port"] > 65535) {
-            throw new Error("Invalid WS SQL port: " + confIn["ws"]["sql"]["port"]);
+        // check Database host
+        if (typeof confIn["ws"]["database"]["host"] !== "string" || confIn["ws"]["database"]["host"].length === 0) {
+            throw new Error("Invalid WS Database host: " + confIn["ws"]["database"]["host"]);
         }
-        confOut["ws"]["sql"]["port"] = confIn["ws"]["sql"]["port"];
+        confOut["ws"]["database"]["host"] = confIn["ws"]["database"]["host"];
 
-        // check SQL user
-        if (typeof confIn["ws"]["sql"]["user"] !== "string") {
-            throw new Error("Invalid WS SQL user: " + confIn["ws"]["sql"]["user"]);
+        // check Database port
+        if (typeof confIn["ws"]["database"]["port"] !== "number" || confIn["ws"]["database"]["port"] < 1 || confIn["ws"]["database"]["port"] > 65535) {
+            throw new Error("Invalid WS Database port: " + confIn["ws"]["database"]["port"]);
         }
-        confOut["ws"]["sql"]["user"] = confIn["ws"]["sql"]["user"];
+        confOut["ws"]["database"]["port"] = confIn["ws"]["database"]["port"];
 
-        // check SQL password
-        if (typeof confIn["ws"]["sql"]["pass"] !== "string") {
-            throw new Error("Invalid WS SQL password: " + confIn["ws"]["sql"]["pass"]);
+        // check Database user
+        if (typeof confIn["ws"]["database"]["user"] !== "string") {
+            throw new Error("Invalid WS Database user: " + confIn["ws"]["database"]["user"]);
         }
-        confOut["ws"]["sql"]["pass"] = confIn["ws"]["sql"]["pass"];
+        confOut["ws"]["database"]["user"] = confIn["ws"]["database"]["user"];
+
+        // check Database password
+        if (typeof confIn["ws"]["database"]["pass"] !== "string") {
+            throw new Error("Invalid WS Database password: " + confIn["ws"]["database"]["pass"]);
+        }
+        confOut["ws"]["database"]["pass"] = confIn["ws"]["database"]["pass"];
+
+        // check Database database
+        if (typeof confIn["ws"]["database"]["db"] !== "string") {
+            throw new Error("Invalid WS Database name: " + confIn["ws"]["database"]["db"]);
+        }
+        confOut["ws"]["database"]["db"] = confIn["ws"]["database"]["db"];
+
+        // check SMTP settings
+        if (typeof confIn["ws"]["smtp"] !== "object" && confIn["ws"]["smtp"] instanceof Array === false) {
+            throw new Error("Invalid WS SMTP configuration: " + confIn["ws"]["smtp"]);
+        }
+        if (confIn["ws"]["smtp"].length === 0) {
+            throw new Error("Invalid WS SMTP configuration: At least one WS SMTP configuration must be provided!");
+        }
+        confOut["ws"]["smtp"] = [];
+
+        // check each SMTP emails
+        for (const smtp of confIn["ws"]["smtp"]) {
+            if (typeof smtp !== "object") {
+                throw new Error("Invalid WS SMTP configuration: " + smtp);
+            }
+            const smtpOut = {};
+
+            // check SMTP host
+            if (typeof smtp["host"] !== "string" || smtp["host"].length === 0) {
+                throw new Error("Invalid WS SMTP host: " + smtp["host"]);
+            }
+            smtpOut["host"] = smtp["host"];
+
+            // check SMTP port
+            if (typeof smtp["port"] !== "number" || smtp["port"] < 1 || smtp["port"] > 65535) {
+                throw new Error("Invalid WS SMTP port: " + smtp["port"]);
+            }
+            smtpOut["port"] = smtp["port"];
+
+            // check SMTP user
+            if (typeof smtp["user"] !== "string") {
+                throw new Error("Invalid WS SMTP user: " + smtp["user"]);
+            }
+            smtpOut["user"] = smtp["user"];
+
+            // check send limit per hour
+            if (typeof smtp["limit"] !== "number" || smtp["limit"] < 1) {
+                throw new Error("Invalid WS SMTP limitPerHour: " + smtp["limit"]);
+            }
+            smtpOut["limit"] = smtp["limit"];
+
+            // check authentication
+            if (typeof smtp["auth"] !== "object") {
+                throw new Error("Invalid WS SMTP auth configuration: " + smtp["auth"]);
+            }
+            smtpOut["auth"] = {};
+
+            // check auth type
+            if (smtp["auth"]["type"] === "password") {
+                // check password
+                if (typeof smtp["auth"]["pass"] !== "string" || smtp["auth"]["pass"].length === 0) {
+                    throw new Error("Invalid WS SMTP auth password: " + smtp["auth"]["pass"]);
+                }
+                smtpOut["auth"]["type"] = "password";
+                smtpOut["auth"]["pass"] = smtp["auth"]["pass"];
+
+            } else if (smtp["auth"]["type"] === "OAuth2") {
+                // check clientId
+                if (typeof smtp["auth"]["clientId"] !== "string" || smtp["auth"]["clientId"].length === 0) {
+                    throw new Error("Invalid WS SMTP auth clientId: " + smtp["auth"]["clientId"]);
+                }
+                smtpOut["auth"]["clientId"] = smtp["auth"]["clientId"];
+
+                // check clientSecret
+                if (typeof smtp["auth"]["clientSecret"] !== "string" || smtp["auth"]["clientSecret"].length === 0) {
+                    throw new Error("Invalid WS SMTP auth clientSecret: " + smtp["auth"]["clientSecret"]);
+                }
+                smtpOut["auth"]["clientSecret"] = smtp["auth"]["clientSecret"];
+
+                // check refreshToken
+                if (typeof smtp["auth"]["refreshToken"] !== "string" || smtp["auth"]["refreshToken"].length === 0) {
+                    throw new Error("Invalid WS SMTP auth refreshToken: " + smtp["auth"]["refreshToken"]);
+                }
+                smtpOut["auth"]["refreshToken"] = smtp["auth"]["refreshToken"];
+            } else {
+                throw new Error("Invalid WS SMTP auth type: " + smtp["auth"]["type"]);
+            }
+            confOut["ws"]["smtp"].push(smtpOut);
+        }
+
+        // check auth
+        if (typeof confIn["ws"]["auth"] !== "object") {
+            throw new Error("Invalid WS auth configuration: " + confIn["ws"]["auth"]);
+        }
+        confOut["ws"]["auth"] = {};
+
+        // check each auth method
+        for (const type in confIn["ws"]["auth"]) {
+            const auth = confIn["ws"]["auth"];
+            if (type === "guest") {
+                confOut["ws"]["auth"][type] = {};
+            } else if (type === "local") {
+                if (typeof auth[type] !== "object") {
+                    throw new Error("Invalid WS local auth configuration: " + auth[type]);
+                }
+                confOut["ws"]["auth"][type] = {};
+                // check allowCodeLogin
+                if (typeof auth[type]["allowCodeLogin"] !== "boolean") {
+                    throw new Error("Invalid WS local auth allowCodeLogin: " + auth[type]["allowCodeLogin"]);
+                }
+                confOut["ws"]["auth"][type]["allowCodeLogin"] = auth[type]["allowCodeLogin"];
+                // check allowRegister
+                if (typeof auth[type]["allowRegister"] !== "boolean") {
+                    throw new Error("Invalid WS local auth allowRegister: " + auth[type]["allowRegister"]);
+                }
+                confOut["ws"]["auth"][type]["allowRegister"] = auth[type]["allowRegister"];
+            } else if (type === "google") {
+                if (typeof auth[type] !== "object") {
+                    throw new Error("Invalid WS google auth configuration: " + auth[type]);
+                }
+                confOut["ws"]["auth"][type] = {};
+                // check clientId
+                if (typeof auth[type]["clientId"] !== "string" || auth[type]["clientId"].length === 0) {
+                    throw new Error("Invalid WS google auth clientId: " + auth[type]["clientId"]);
+                }
+                confOut["ws"]["auth"][type]["clientId"] = auth[type]["clientId"];
+                // check clientSecret
+                if (typeof auth[type]["clientSecret"] !== "string" || auth[type]["clientSecret"].length === 0) {
+                    throw new Error("Invalid WS google auth clientSecret: " + auth[type]["clientSecret"]);
+                }
+                confOut["ws"]["auth"][type]["clientSecret"] = auth[type]["clientSecret"];
+            } else {
+                throw new Error("Invalid WS auth type: " + type);
+            }
+        }
+
     }
 
 
@@ -715,6 +854,68 @@ const Server = class {
         // Start WebSocket server
         process.stdout.write("Starting WS server...    ");
         if (typeof conf["ws"] === "object") {
+            // Connect SMTP
+            for (const smtp of conf["ws"]["smtp"]) {
+                if (smtp["auth"]["type"] === "password") {
+                    const transporter = nodemailer.createTransport({
+                        "host": smtp["host"],
+                        "port": smtp["port"],
+                        "secure": true,
+                        "auth": {
+                            "user": smtp["user"],
+                            "pass": smtp["auth"]["pass"]
+                        }
+                    });
+                    const res = await transporter.verify();
+                    if (res === false) {
+                        throw new Error("Cannot authenticate WS SMTP with provided configuration: " + JSON.stringify(smtp));
+                    }
+                } else if (smtp["auth"]["type"] !== "OAuth2") {
+                    const transporter = nodemailer.createTransport({
+                        "host": smtp["host"],
+                        "port": smtp["port"],
+                        "secure": true,
+                        "auth": {
+                            "type": "OAuth2",
+                            "user": smtp["user"],
+                            "clientId": smtp["auth"]["clientId"],
+                            "clientSecret": smtp["auth"]["clientSecret"],
+                            "refreshToken": smtp["auth"]["refreshToken"]
+                        }
+                    });
+                    const res = await transporter.verify();
+                    if (res === false) {
+                        throw new Error("Cannot authenticate WS SMTP with provided configuration: " + JSON.stringify(smtp));
+                    }
+                }
+            }
+
+            // Database connect
+            try {
+                this.db = knex({
+                    "client": conf["ws"]["database"]["type"],
+                    "connection": {
+                        "host": conf["ws"]["database"]["host"],
+                        "port": conf["ws"]["database"]["port"],
+                        "user": conf["ws"]["database"]["user"],
+                        "password": conf["ws"]["database"]["pass"],
+                        "database": conf["ws"]["database"]["db"]
+                    },
+                });
+            } catch (error) {
+                throw new Error("Cannot connect to WS Database with provided configuration: " + error.message);
+            }
+
+            // Create db schema
+            if (await this.db.schema.hasTable("users") === false) {
+                await this.db.schema.createTable("users", function (table) {
+                    table.increments();
+                    table.string("name");
+                    table.timestamps();
+                });
+            }
+
+            // start WS server
             if (conf["ws"]["port"] === conf?.["http"]?.["port"]) {
                 this.wsServer = new WebSocketServer({
                     "server": this.httpServer
@@ -737,7 +938,6 @@ const Server = class {
                 this.wsServer = new WebSocketServer({
                     "server": this.wsHttpServer
                 });
-                
             }
             this.wsServer.addListener("connection", (ws) => {
                 if (this.isClosing) {
@@ -794,6 +994,16 @@ const Server = class {
         await com.timeSync();
         this.clients.set(clientId, com);
         console.log("Client connected (" + clientId + ")");
+
+        // listen messages
+        com.onIncoming(async function(messageObj) {
+            await messageObj.wait();
+            console.log(messageObj);
+
+            // config check
+
+            
+        });
 
         // listen error
         ws.addEventListener("error", (event) => {

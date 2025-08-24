@@ -63,40 +63,42 @@ server configuration file path: server/conf/conf.json
         "port": 444,
         "key": "server.key",		//private key path
         "cert": "server.crt",		//private cert path
-        "sql": {                    //MySQL server connection
+        "database": {                    //MySQL server connection
+            "type": "mysql",        // "local" create local mysql server
             "host": "localhost",
             "port": 3306,
             "user": "root",
-            "pass": "root"
+            "pass": "root",
+            "db": "desktop_streamer"
         },
-        "smpt": [                   //email sending
+        "smtp": [                   //email sending connections
             {
                 "host": "",
                 "port": 567,
-                "user": ""
+                "user": "",
                 "limit": 720,
-                "maxReply": 1,
+                "auth": {
+                    "type": "password",
+                    "password": "12345678"
+                },
                 "auth": {
                     "type": "OAuth2",
-                    "service": "gmail",
                     "clientId": "12345678",
                     "clientSecret": "12345678",
                     "refreshToken": "12345678"
-                },
-                "auth": {
-                    "type": "appPass",
-                    "service": "gmail",
-                    "password": "12345678"
-                },
-                "auth": {
-                    "type": "legacy",
-                    "password": "12345678"
                 }
             }
         ],
-        "features": {               //backend features
-            "guestLogin": false,
-            "register": true
+        "auth": {       // how can autenticate into the app
+            "guest": "",
+            "local": {
+                "allowCodeLogin": true,
+                "allowRegister": true
+            },
+            "google": {
+                "clientId": "1234567890",
+                "clientSecret": "12345678"
+            }
         }
     } 
 }

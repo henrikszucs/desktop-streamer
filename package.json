@@ -25,10 +25,13 @@
     ],
     "license": "",
     "dependencies": {
-        "jszip": "^3.10.1",
-        "ws": "^8.18.0",
+        "easy-communicator": "^1.0.0",
         "easy-mime": "^0.0.1",
-        "easy-communicator": "^1.0.0"
+        "jszip": "^3.10.1",
+        "knex": "^3.1.0",
+        "mysql": "^2.18.1",
+        "nodemailer": "^7.0.5",
+        "ws": "^8.18.0"
     },
     "engines": {
         "node": ">=10.15.3"
