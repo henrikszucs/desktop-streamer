@@ -6,6 +6,8 @@ import IDB from "./libs/idb/idb.js";
 import Communicator from "./libs/communicator/communicator.js";
 
 
+
+
 // enviroment variables
 const isDesktop = (typeof globalThis.desktop !== "undefined");
 const width = window.innerWidth;
@@ -13,15 +15,35 @@ const sizeS = 600;
 const sizeM = 993;
 
 // Load local configuration from disk
+const DATABBASE = "desktop_streamer";
+const CONF_TABLE = "configuration";
+let DB = null;
 const confLoad = new Promise(async function(resolve) {
-    await IDB.TableSet("desktop_streamer", "configuration");
-    const db = await IDB.DatabaseGet("desktop_streamer");
-    const table = IDB.TableGet(db, "configuration");
-    const res = await IDB.RowGet(table, [["color", "#006e1c"], ["mode", "light"]]);
-    resolve({
-        "color": res[0],
-        "mode": res[1]
-    });
+    await IDB.TableSet(DATABBASE, CONF_TABLE);
+    DB = await IDB.DatabaseGet(DATABBASE);
+    const table = IDB.TableGet(DB, CONF_TABLE);
+
+    // key and their default values
+    const vals = {
+        "color": "#006e1c",
+        "mode": "light",
+        "sessionId": ""
+    };
+
+    // load values from database
+    const keys = Object.keys(vals);
+    const search = [];
+    for (let key of keys) {
+        search.push([key, vals[key]]);
+    }
+    const res = await IDB.RowGet(table, search);
+    const result = {};
+    let i = 0;
+    for (let i = 0, length = keys.length; i < length; i++) {
+        result[keys[i]] = res[i];
+    }
+
+    resolve(result);
 });
 
 
@@ -38,6 +60,7 @@ const Server = class extends EventTarget {
     address = "";
     ws = null;
     communicator = null;
+    conf = {};
     isOnline = false;
     constructor(address) {
         super();
@@ -85,8 +108,21 @@ const Server = class extends EventTarget {
 
         //connection status
         this.ws.addEventListener("open", async () => {
+            // sync
             await this.communicator.sideSync();
             await this.communicator.timeSync();
+
+            // get server conf
+            try {
+                const message = this.communicator.invoke({"type":"conf-get"});
+                await message.wait();
+                this.conf = message.data;
+            } catch (error) {
+                console.error("Failed to get server configuration:", error);
+                this.ws.close();
+            }
+
+            // trigger online
             console.log("connected");
             this.dispatchEvent(new CustomEvent("online"));
             this.isOnline = true;
@@ -104,9 +140,15 @@ const Server = class extends EventTarget {
                 this.connect();
             }, 2000);
         }, { "once": true });
-    }
+    };
+    async authGoogle(credential) {
+        const message = this.communicator.invoke({"type":"login-google", "credential": credential});
+        await message.wait();
+        console.log(message.data);
+        return message.data;
+    };
 };
-const server = new Server("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
+globalThis.server = new Server("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
 
 
 // UI classes
@@ -582,27 +624,63 @@ const RoomScreen = class {
 };
 
 
+const GoogleLogin = class extends EventTarget {
+    constructor(clientId) {
+        super();
+
+        // load google script if not already loaded
+        const scriptSrc = "https://accounts.google.com/gsi/client";
+        if (document.querySelector("head script[src=\"" + scriptSrc + "\"]") === null) {
+            const googleScript = document.createElement("script");
+            googleScript.setAttribute("src", scriptSrc);
+            document.head.appendChild(googleScript);
+        }
+
+        // store client id
+        this.clientId = clientId;
+
+        // global callback function
+        window.onGoogleLogin = (response) => {
+            console.log(response);
+            console.log("https://oauth2.googleapis.com/tokeninfo?id_token=" + response.credential);
+            const responsePayload = this.decodeJWT(response.credential);
+            console.log(responsePayload);
+
+            this.dispatchEvent(
+                new CustomEvent("login", {"detail": response})
+            );
+        }
+    };
+    createButton(el) {
+        el.innerHTML = "<div data-auto_prompt=false data-callback=onGoogleLogin data-client_id=" + this.clientId + " data-context=signin data-ux_mode=popup id=g_id_onload></div><div class=g_id_signin data-logo_alignment=left data-shape=pill data-size=large data-text=signin_with data-theme=filled_blue data-type=standard></div>";
+    };
+    decodeJWT(token) {
+        let base64Url = token.split(".")[1];
+        let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+        let jsonPayload = decodeURIComponent(atob(base64).split("").map(function (c) {
+                return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join("")
+        );
+        return JSON.parse(jsonPayload);
+    };
+};
+
+
+
 // Main logic
 const main = async function() {
     const val = await Promise.all([confLoad, domReady]);
     conf["local"] = val[0];
     console.log(conf);
 
-    // Dialog and screen management
-    const emptyDialog = new EmptyDialog();
-    let openedDialog = emptyDialog;
-    let openedScreen = null;
-    const switchScreen = function(newScreen) {
-        switchDialog(emptyDialog);
-        openedScreen.close();
-        openedScreen = downloadScreen;
-        openedScreen.open();
-    };
-    const switchDialog = function(newDialog) {
-        openedDialog.close();
-        openedDialog = newDialog;
-        openedDialog.open();
-    };
+    const googleLogin = new GoogleLogin("586602798490-q3eu5jshqvafase5deqmjqivqobrkhfi.apps.googleusercontent.com");
+    googleLogin.createButton(document.getElementById("google-login"));
+
+    
+
+
+
+    
     
     
     
@@ -670,7 +748,21 @@ const main = async function() {
     const sharesBtn2 = document.getElementById("btn-shares-2");
     
 
-
+    // Dialog and screen management
+    const emptyDialog = new EmptyDialog();
+    let openedDialog = emptyDialog;
+    let openedScreen = welcomeScreen;
+    const switchScreen = function(newScreen) {
+        switchDialog(emptyDialog);
+        openedScreen.close();
+        openedScreen = downloadScreen;
+        openedScreen.open();
+    };
+    const switchDialog = function(newDialog) {
+        openedDialog.close();
+        openedDialog = newDialog;
+        openedDialog.open();
+    };
 
     
     

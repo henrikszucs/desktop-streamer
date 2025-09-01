@@ -95,6 +95,36 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
+// HTTPS get
+const httpsGetText = async function(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            const statusCode = res.statusCode;
+
+            if (statusCode !== 200) {
+                const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
+                //console.error(error.message);
+                // Consume response data to free up memory
+                res.resume();
+                reject(error);
+                return;
+            }
+
+            let rawData = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+                rawData += chunk;
+            });
+            res.on("end", () => {
+                resolve(rawData);
+            });
+        }).on("error", (error) => {
+            console.error(`Got error: ${error.message}`);
+            reject(error);
+        });
+    });       
+};
+
 //
 // Logic
 //
@@ -377,6 +407,7 @@ const processConf = async function(confPath) {
             if (type === "guest") {
                 confOut["ws"]["auth"][type] = {};
             } else if (type === "local") {
+                throw new Error("Password authentication is not implemented yet!");
                 if (typeof auth[type] !== "object") {
                     throw new Error("Invalid WS local auth configuration: " + auth[type]);
                 }
@@ -594,6 +625,10 @@ const Server = class {
     wsServer = null;
     wsHttpServer = null;
     clients = new Map();
+    publicAuthInfo = {};
+    authGuest = null;
+    authGoogle = null;
+    wsAuthMethods = {};
 
     isClosing = false;
     constructor() {
@@ -702,7 +737,7 @@ const Server = class {
                         fileData = await this.getFileDataStream(path.join(basePaths[0], "index.html")); 
                     }
                     res.writeHead(200, {
-                        //"Content-Security-Policy": "default-src 'self'",
+                        //"Content-Security-Policy": "connect-src https://accounts.google.com/gsi/",
                         "Cache-Control": "no-cache, no-store, must-revalidate",
                         "Last-Modified": fileData["lastModified"],
                         "Content-Length": fileData["size"],
@@ -909,10 +944,83 @@ const Server = class {
             // Create db schema
             if (await this.db.schema.hasTable("users") === false) {
                 await this.db.schema.createTable("users", function (table) {
-                    table.increments();
-                    table.string("name");
-                    table.timestamps();
+                    table.bigint("user_id");
+                    table.string("email");
+                    table.string("first_name");
+                    table.string("last_name");
+                    table.string("password");
+                    table.boolean("is_activated");
                 });
+                await this.db.schema.alterTable("users", function (table) {
+                    table.primary("user_id");
+                    table.unique("email");
+                });
+            }
+            if (await this.db.schema.hasTable("sessions") === false) {
+                await this.db.schema.createTable("sessions", function (table) {
+                    table.bigint("session_id");
+                    table.bigint("user_id");
+                    table.bigint("expires");
+                    table.text("details");
+                });
+                await this.db.schema.alterTable("sessions", function (table) {
+                    table.primary("session_id");
+                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
+            if (await this.db.schema.hasTable("login_codes") === false) {
+                await this.db.schema.createTable("login_codes", function (table) {
+                    table.bigint("code_id");
+                    table.bigint("user_id");
+                    table.bigint("client_secret");
+                    table.bigint("expires");
+                });
+                await this.db.schema.alterTable("login_codes", function (table) {
+                    table.primary("code_id");
+                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
+            if (await this.db.schema.hasTable("activate") === false) {
+                await this.db.schema.createTable("activate", function (table) {
+                    table.bigint("activation_id");
+                    table.bigint("user_id");
+                    table.bigint("expires");
+                });
+                await this.db.schema.alterTable("activate", function (table) {
+                    table.primary("activation_id");
+                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
+
+            // copy auth methods
+            this.wsAuthMethods = {};
+            if (typeof conf["ws"]["auth"]["guest"] !== "undefined") {
+                this.publicAuthInfo["guest"] = "";
+                this.authGuest = (messageObj) => {
+                    messageObj.send({"sessionId": undefined});
+                };
+            }
+            if (typeof conf["ws"]["auth"]["google"] !== "undefined") {
+                this.publicAuthInfo["google"] = {
+                    "clientId": conf["ws"]["auth"]["google"]["clientId"]
+                };
+                this.authGoogle = async (messageObj) => {
+                    const credential = messageObj.data["credential"];
+                    let userInfo = undefined;
+                    try {
+                        const res = await httpsGetText("https://oauth2.googleapis.com/tokeninfo?id_token=" + credential);
+                        userInfo = JSON.parse(res);
+                    } catch (error) {
+                        console.log(error);
+                    }
+                    if (userInfo === undefined) {
+                        messageObj.send({"sessionId": undefined});
+                        return;
+                    } else {
+                        console.log(userInfo);
+                        messageObj.send({"sessionId": 1});
+                    }
+                };
             }
 
             // start WS server
@@ -974,10 +1082,9 @@ const Server = class {
             "sendThreads": 16
         });
         ws.addEventListener("message", function(event) {
-            let data = event.data;
+            let data = event.data;  // can be string or ArrayBuffer
             try {
-                if (buffer.isUtf8(data)) {
-                    data = data.toString("utf8");
+                if (typeof data === "string") {
                     data = JSON.parse(data);
                 } else {
                     data = new Uint8Array(data);
@@ -996,13 +1103,40 @@ const Server = class {
         console.log("Client connected (" + clientId + ")");
 
         // listen messages
-        com.onIncoming(async function(messageObj) {
+        com.onIncoming(async (messageObj) => {
             await messageObj.wait();
-            console.log(messageObj);
+            const message = messageObj.data;
+
+            //check basic structure
+            if (typeof message !== "object" && typeof message["type"] !== "string") {
+                console.log("Invalid message format", message);
+                messageObj.abort();
+                return;
+            }
 
             // config check
-
+            if (message["type"] === "conf-get") {
+                messageObj.send({
+                   "auth": this.publicAuthInfo
+                });
+                return;
+            }
+            if (message["type"] === "login-guest") {
+                this.authGuest(messageObj);
+                return;
+            }
+            if (message["type"] === "login-google") {
+                this.authGoogle(messageObj);
+                return;
+            }
+            if (message["type"] === "login-check") {
+                const sessionId = message["sessionId"];
+                return;
+            }
             
+            console.log("Invalid request");
+            messageObj.abort();
+            return;
         });
 
         // listen error

@@ -92,6 +92,7 @@ server configuration file path: server/conf/conf.json
         "auth": {       // how can autenticate into the app
             "guest": "",
             "local": {
+                "allowPasswordLogin": true,
                 "allowCodeLogin": true,
                 "allowRegister": true
             },
