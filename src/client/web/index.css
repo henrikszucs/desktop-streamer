@@ -77,9 +77,30 @@ body.dark {
 }
 
 .hide {
-    display: none;
+    display: none !important;
 }
 
+/* Side menu fix */
+.nav-side-fix > a {
+    justify-content: flex-start;
+    width: 100% !important;
+    width: -moz-available !important;          /* WebKit-based browsers will ignore this. */
+    width: -webkit-fill-available !important;  /* Mozilla-based browsers will ignore this. */
+    width: fill-available !important;
+}
+
+#dialog-menu {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+#dialog-menu > div:nth-child(2) > button {
+    width: 100%;
+    width: -moz-available;          /* WebKit-based browsers will ignore this. */
+    width: -webkit-fill-available;  /* Mozilla-based browsers will ignore this. */
+    width: fill-available;
+}
 
 /* Top search */
 .wide-search {
@@ -94,6 +115,8 @@ body.dark {
 
 .multicolumn-dialog {
     max-width: 720px;
+    display: flex;
+    flex-direction: column;
 }
 
 .multicolumn-dialog > div {
@@ -104,6 +127,8 @@ body.dark {
 
 .multicolumn-dialog > div > div:nth-child(1) {
     overflow: auto;
+    display: flex;
+    flex-direction: column;
 }
 
 .multicolumn-dialog > div > div:nth-child(1) > button {
@@ -133,4 +158,30 @@ body.dark {
     .multicolumn-dialog {
         width: 70vw;
     }
+}
+
+
+/* Room dialog */
+.room-layout {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    max-height: 100vh;
+}
+
+.room-layout > :nth-child(1) {
+    text-align: center;
+    flex-grow: 1;
+    display: flex;
+    min-height: 0;
+    min-width: 0;
+}
+
+.room-layout > :nth-child(1) > video {
+    width: 100%;
+    aspect-ratio: 16/9;
+}
+
+.room-layout > :nth-child(2) {
+    flex-shrink: 0;
 }

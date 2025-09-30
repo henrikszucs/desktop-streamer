@@ -60,7 +60,6 @@ const Server = class extends EventTarget {
     address = "";
     ws = null;
     communicator = null;
-    conf = {};
     isOnline = false;
     constructor(address) {
         super();
@@ -116,10 +115,15 @@ const Server = class extends EventTarget {
             try {
                 const message = this.communicator.invoke({"type":"conf-get"});
                 await message.wait();
-                this.conf = message.data;
+                conf["ws"]["remote"] = message.data;
             } catch (error) {
                 console.error("Failed to get server configuration:", error);
                 this.ws.close();
+                return;
+            }
+            if (typeof conf["ws"]["remote"] === "undefined") {
+                this.ws.close();
+                return;
             }
 
             // trigger online
@@ -152,7 +156,6 @@ globalThis.server = new Server("wss://" + conf["ws"]["domain"] + ":" + conf["ws"
 
 
 // UI classes
-
 const EmptyDialog = class {
     constructor() {
         // get important elements
@@ -176,9 +179,11 @@ const LoadingDialog = class {
         this.overlay.classList.add("active");
     };
     close = () => {
+        // close dialog
         this.loading.classList.remove("active");
         this.overlay.classList.remove("blur");
         this.overlay.classList.remove("active");
+        
     };
 };
 
@@ -260,6 +265,30 @@ const SearchDialog = class extends EventTarget {
     };
 };
 
+const MenuDialog = class {
+    constructor() {
+        // get important elements
+        this.overlay = document.getElementById("dialog-overlay");
+        this.dialog = document.getElementById("dialog-menu");
+        this.closeBtn = document.getElementById("btn-menu-close");
+
+        // set event listeners
+        this.closeBtn.addEventListener("click", () => {
+            this.close();
+        });
+    };
+    open = () => {
+        this.overlay.classList.add("active");
+        this.dialog.classList.add("active");
+        this.overlay.addEventListener("click", this.close);
+    };
+    close = () => {
+        this.overlay.classList.remove("active");
+        this.dialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.close);
+    };
+};
+
 const SettingsDialog = class {
     constructor() {
         // get important elements
@@ -311,16 +340,16 @@ const AccountDialog = class {
     };
 };
 
-const WelcomeScreen = class {
+const NewScreen = class {
     constructor() {
         // get important elements
-        this.welcomeScreen = document.getElementById("screen-welcome");
+        this.newScreen = document.getElementById("screen-new");
     };
     open = () => {
-        this.welcomeScreen.classList.remove("hide");
+        this.newScreen.classList.remove("hide");
     };
     close = () => {
-        this.welcomeScreen.classList.add("hide");
+        this.newScreen.classList.add("hide");
     };
 };
 
@@ -342,7 +371,7 @@ const DownloadScreen = class {
 
         // get important elements
         this.downloadBtn = document.getElementById("btn-download");
-        this.downloadScreen = document.getElementById("screen-download");
+        this.downloadScreen = document.getElementById("screen-downloads");
         this.downloadWindows = document.getElementById("download-win32");
         this.downloadMacos = document.getElementById("download-macos");
         this.downloadLinux = document.getElementById("download-linux");
@@ -393,9 +422,9 @@ const DownloadScreen = class {
         });
 
         this.downloadFinish.addEventListener("click", () => {
-            const file = selectedOs + "-" + selectedArch + ".zip";
+            const file = this.selectedOs + "-" + this.selectedArch + ".zip";
             console.log("Download client:", file);
-            //window.open(location.href + file, "_blank");
+            window.open(location.href + file, "_blank");
         });
     };
     open = () => {
@@ -545,55 +574,60 @@ const LoginScreen = class {
     };
 };
 
-const RegisterScreen = class {
+const ServiceScreen = class {
     constructor() {
         // get important elements
-        this.registerScreen = document.getElementById("screen-register");
+        this.serviceScreen = document.getElementById("screen-services");
+        this.serviceBtn = document.getElementById("btn-services");
+        this.serviceBtn2 = document.getElementById("btn-services-2");
     };
     open = () => {
-        this.registerScreen.classList.remove("hide");
+        this.serviceScreen.classList.remove("hide");
+        this.serviceBtn.classList.add("active");
+        this.serviceBtn2.classList.add("fill");
     };
     close = () => {
-        this.registerScreen.classList.add("hide");
+        this.serviceScreen.classList.add("hide");
+        this.serviceBtn.classList.remove("active");
+        this.serviceBtn2.classList.remove("fill");
     };
 };
 
-const PasswordResetScreen = class {
+const DeviceScreen = class {
     constructor() {
         // get important elements
-        this.passwordResetScreen = document.getElementById("screen-password");
+        this.deviceScreen = document.getElementById("screen-devices");
+        this.deviceBtn = document.getElementById("btn-devices");
+        this.deviceBtn2 = document.getElementById("btn-devices-2");
     };
     open = () => {
-        this.passwordResetScreen.classList.remove("hide");
+        this.deviceScreen.classList.remove("hide");
+        this.deviceBtn.classList.add("active");
+        this.deviceBtn2.classList.add("fill");
     };
     close = () => {
-        this.passwordResetScreen.classList.add("hide");
+        this.deviceScreen.classList.add("hide");
+        this.deviceBtn.classList.remove("active");
+        this.deviceBtn2.classList.remove("fill");
     };
 };
 
-const SharesScreen = class {
+const OutgoingScreen = class {
     constructor() {
         // get important elements
-        this.sharesScreen = document.getElementById("screen-shares");
+        this.outgoingScreen = document.getElementById("screen-outgoings");
+        this.outgoingBtn = document.getElementById("btn-outgoings");
+        this.outgoingBtn2 = document.getElementById("btn-outgoings-2");
     };
     open = () => {
-        this.sharesScreen.classList.remove("hide");
+        this.outgoingScreen.classList.remove("hide");
+        this.outgoingBtn.classList.add("active");
+        this.outgoingBtn2.classList.add("fill");
     };
     close = () => {
-        this.sharesScreen.classList.add("hide");
-    };
-};
-
-const RoomsScreen = class {
-    constructor() {
-        // get important elements
-        this.roomsScreen = document.getElementById("screen-rooms");
-    };
-    open = () => {
-        this.roomsScreen.classList.remove("hide");
-    };
-    close = () => {
-        this.roomsScreen.classList.add("hide");
+        this.outgoingScreen.classList.add("hide");
+        this.outgoingBtn.classList.remove("active");
+        this.outgoingBtn2.classList.remove("fill");
     };
 };
 
@@ -602,26 +636,21 @@ const RoomScreen = class {
         // get important elements
         this.roomScreen = document.getElementById("screen-room");
         this.navTop = document.getElementById("nav-top");
-        this.navBottom = document.getElementById("nav-bottom");
         this.navLeft = document.getElementById("nav-left");
-        this.navRoom = document.getElementById("nav-room");
     };
     open = () => {
         this.roomScreen.classList.remove("hide");
-        this.navRoom.classList.remove("hide");
         this.navTop.classList.add("hide");
-        this.navBottom.classList.add("hide");
         this.navLeft.classList.add("hide");
     };
     close = () => {
         this.roomScreen.classList.add("hide");
-        this.navRoom.classList.add("hide");
         this.navTop.classList.remove("hide");
-        this.navBottom.classList.remove("hide");
         this.navLeft.classList.remove("hide");
         
     };
 };
+
 
 
 const GoogleLogin = class extends EventTarget {
@@ -673,17 +702,6 @@ const main = async function() {
     conf["local"] = val[0];
     console.log(conf);
 
-    const googleLogin = new GoogleLogin("586602798490-q3eu5jshqvafase5deqmjqivqobrkhfi.apps.googleusercontent.com");
-    googleLogin.createButton(document.getElementById("google-login"));
-
-    
-
-
-
-    
-    
-    
-    
     // Search dialog
     const searchDialog = new SearchDialog();
     document.getElementById("btn-search").addEventListener("click", () => {
@@ -705,57 +723,85 @@ const main = async function() {
     // Account dialog
     const accountDialog = new AccountDialog();
 
-    // Welcome screen
-    const welcomeScreen = new WelcomeScreen();
+
+
+    // New screen
+    const newScreen = new NewScreen();
+    document.getElementById("btn-new").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "new");
+        loadPath();
+    });
+    document.getElementById("btn-new-2").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "new");
+        loadPath();
+    });
 
     // Download screen
     const downloadScreen = new DownloadScreen(conf["http"]["clients"]);
-    downloadScreen.downloadBtn.addEventListener("click", () => {
+    document.getElementById("btn-download").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "downloads");
+        loadPath();
+    });
+    document.getElementById("btn-download-2").addEventListener("click", () => {
         window.history.pushState({}, "", "/" + "downloads");
         loadPath();
     });
 
     // Login screen
     const loginScreen = new LoginScreen();
-
-    // Register screen
-    const registerScreen = new RegisterScreen();
-
-    // Password reset screen
-    const passwordResetScreen = new PasswordResetScreen();
-
-    // Shares screen
-    const sharesScreen = new SharesScreen();
-
+    document.getElementById("btn-login").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "login");
+        loadPath();
+    });
+    
     // Rooms screen
-    const roomsScreen = new RoomsScreen();
+    const serviceScreen = new ServiceScreen();
+    document.getElementById("btn-services").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "services");
+        loadPath();
+    });
+    document.getElementById("btn-services-2").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "services");
+        loadPath();
+    });
+
+    // Devices screen
+    const deviceScreen = new DeviceScreen();
+    document.getElementById("btn-devices").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "devices");
+        loadPath();
+    });
+    document.getElementById("btn-devices-2").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "devices");
+        loadPath();
+    });
+
+    // Outgoings screen
+    const outgoingScreen = new OutgoingScreen();
+    document.getElementById("btn-outgoings").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "outgoings");
+        loadPath();
+    });
+    document.getElementById("btn-outgoings-2").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "outgoings");
+        loadPath();
+    });
 
     // Room screen
     const roomScreen = new RoomScreen();
 
-    
 
 
-    
-
-    const addBtn = document.getElementById("btn-add");
-    const addBtn2 = document.getElementById("btn-add-2");
-
-    const roomsBtn = document.getElementById("btn-clients");
-    const roomsBtn2 = document.getElementById("btn-clients-2");
-
-    const sharesBtn = document.getElementById("btn-shares");
-    const sharesBtn2 = document.getElementById("btn-shares-2");
     
 
     // Dialog and screen management
     const emptyDialog = new EmptyDialog();
     let openedDialog = emptyDialog;
-    let openedScreen = welcomeScreen;
+    let openedScreen = newScreen;
     const switchScreen = function(newScreen) {
         switchDialog(emptyDialog);
         openedScreen.close();
-        openedScreen = downloadScreen;
+        openedScreen = newScreen;
         openedScreen.open();
     };
     const switchDialog = function(newDialog) {
@@ -767,17 +813,44 @@ const main = async function() {
     
     
     // Side menu toggle
-    const menuBtn = document.getElementById("btn-menu");
+    const menuBtn = document.getElementById("btn-menu-left");
+    let isMenuMax = false;
+    const switchMenu = function(isMax = isMenuMax) {
+        if (isMax) {
+            menuBtn.parentElement.parentElement.classList.add("max");
+            document.getElementById("btn-download").classList.add("primary");
+            document.getElementById("btn-download").children[0].classList.remove("primary");
+        } else {
+            menuBtn.parentElement.parentElement.classList.remove("max");
+            document.getElementById("btn-download").classList.remove("primary");
+            document.getElementById("btn-download").children[0].classList.add("primary");
+        }
+    };
     if (sizeS < width) {
         if (width < sizeM) {
-            menuBtn.parentElement.parentElement.classList.remove("max");
+            isMenuMax = false;
+            switchMenu();
         } else {
-            menuBtn.parentElement.parentElement.classList.add("max");
+            isMenuMax = true;
+            switchMenu();
         }
     }
     menuBtn.addEventListener("click", function (event) {
-        event.target.parentElement.parentElement.classList.toggle("max");
+        isMenuMax = !isMenuMax;
+        switchMenu();
     });
+    const menuDialog = new MenuDialog();
+    const menuBtn2 = document.getElementById("btn-menu-top");
+    menuBtn2.addEventListener("click", function (event) {
+        switchDialog(menuDialog);
+    });
+    window.addEventListener("resize", function() {
+        const width = window.innerWidth;
+        if (sizeS < width && openedDialog === menuDialog) {
+            switchDialog(emptyDialog);
+        };
+    });
+
 
     
     // Load the given URL path
@@ -786,8 +859,8 @@ const main = async function() {
         path = path.slice(1);
         path = path.split("/");
 
-        const singleRoutes = ["welcome", "downloads", "shares", "login", "register", "password-reset"];
-        const doubleRoutes = ["room", "rooms", "search"];
+        const singleRoutes = ["new", "downloads", "outgoings", "login"];
+        const doubleRoutes = ["services", "devices", "search", "room"];
         if (singleRoutes.includes(path[0])) {
             path = [path[0]];
         } else if (doubleRoutes.includes(path[0])) {
@@ -799,24 +872,50 @@ const main = async function() {
 
 
         // load screens
-        if (path[0] === "downloads") {
+        if (path[0] === "new") {
+            switchScreen(newScreen);
+        } else if (path[0] === "downloads") {
             switchScreen(downloadScreen);
+        } else if (path[0] === "login") {
+            switchScreen(loginScreen);
+        } else if (path[0] === "services") {
+            switchScreen(serviceScreen);
+        } else if (path[0] === "devices") {
+            switchScreen(deviceScreen);
+        } else if (path[0] === "outgoings") {
+            switchScreen(outgoingScreen);
         } else {
-
+            switchScreen(newScreen);
         }
     };
     window.addEventListener("popstate", loadPath);
-    loadPath();
     
     
 
     // Loading
     let loadingDialog = new LoadingDialog();
-    if (server.isOnline) {
+    const switchOnline = function() {
+        // prepare UI
+        const serverConf = conf["ws"]["remote"];
+
+        if (typeof serverConf["auth"]["google"] !== "undefined") {
+            const googleLogin = new GoogleLogin(serverConf["auth"]["google"]["clientId"]);
+            googleLogin.createButton(document.getElementById("google-login"));
+            document.getElementById("google-login").classList.remove("hide");
+        } else {
+            document.getElementById("google-login").classList.add("hide");
+        }
+
         loadingDialog.close();
+        loadPath();
+    };
+    if (server.isOnline) {
+        switchOnline();
     }
-    server.addEventListener("online", loadingDialog.close);
-    server.addEventListener("offline", loadingDialog.open);
+    server.addEventListener("online", switchOnline);
+    server.addEventListener("offline", function() {
+        loadingDialog.open();
+    });
 };
 main();
 

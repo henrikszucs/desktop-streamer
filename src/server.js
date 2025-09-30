@@ -9,7 +9,6 @@ import process from "node:process";
 import fs from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
-import buffer from "node:buffer";
 
 // third-party dependenciess
 import JSZip from "jszip";
@@ -20,6 +19,7 @@ import nodemailer from "nodemailer";
 // first-party dependencies
 import Mime from "easy-mime";
 import Communicator from "easy-communicator";
+import { type } from "node:os";
 
 const CLIENT_VERSION = "0.1.0";
 const MIN_CLIENT_VERSION = CLIENT_VERSION;
@@ -95,35 +95,6 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
-// HTTPS get
-const httpsGetText = async function(url) {
-    return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            const statusCode = res.statusCode;
-
-            if (statusCode !== 200) {
-                const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
-                //console.error(error.message);
-                // Consume response data to free up memory
-                res.resume();
-                reject(error);
-                return;
-            }
-
-            let rawData = "";
-            res.setEncoding("utf8");
-            res.on("data", (chunk) => {
-                rawData += chunk;
-            });
-            res.on("end", () => {
-                resolve(rawData);
-            });
-        }).on("error", (error) => {
-            console.error(`Got error: ${error.message}`);
-            reject(error);
-        });
-    });       
-};
 
 //
 // Logic
@@ -151,294 +122,443 @@ const processConf = async function(confPath) {
     
 
     // check HTTP settings
-    if (typeof confIn["http"] === "object") {
+    const http = confIn["http"];
+    if (typeof http === "object") {
         confOut["http"] = {};
+        const httpOut = confOut["http"];
 
         // check domain
-        if (typeof confIn["http"]["domain"] !== "string" || confIn["http"]["domain"].length === 0) {
-            throw new Error("Invalid HTTP domain: " + confIn["http"]["domain"]);
+        const domain = http["domain"];
+        if (typeof domain !== "string" || domain.length === 0) {
+            throw new Error("Invalid HTTP domain: " + domain);
         }
-        confOut["http"]["domain"] = confIn["http"]["domain"];
+        httpOut["domain"] = domain;
 
         // check port
-        if (typeof confIn["http"]["port"] !== "number" || confIn["http"]["port"] < 1 || confIn["http"]["port"] > 65535) {
-            throw new Error("Invalid HTTP port: " + confIn["http"]["port"]);
+        const port = http["port"];
+        if (typeof port !== "number" || port < 1 || port > 65535) {
+            throw new Error("Invalid HTTP port: " + port);
         }
-        confOut["http"]["port"] = confIn["http"]["port"];
+        httpOut["port"] = port;
 
         // check key
-        if (typeof confIn["http"]["key"] !== "string") {
-            throw new Error("Invalid HTTP key path: " + confIn["http"]["key"]);
+        const key = http["key"];
+        if (typeof key !== "string") {
+            throw new Error("Invalid HTTP key path: " + key);
         }
         try {
-            const keyPath = setAbsolute(confIn["http"]["key"], path.dirname(confPath));
-            confOut["http"]["key"] = await fs.readFile(keyPath, {
+            const keyPath = setAbsolute(key, path.dirname(confPath));
+            httpOut["key"] = await fs.readFile(keyPath, {
                 "encoding": "utf8"
             });
         } catch (error) {
-            throw new Error("Invalid HTTP key path: " + confIn["http"]["key"] + " - " + error.message);
+            throw new Error("Invalid HTTP key path: " + http["key"] + " - " + error.message);
         }
 
         // check cert
-        if (typeof confIn["http"]["cert"] !== "string") {
-            throw new Error("Invalid HTTP cert path: " + confIn["http"]["cert"]);
+        const cert = http["cert"];
+        if (typeof cert !== "string") {
+            throw new Error("Invalid HTTP cert path: " + cert);
         }
         try {
-            const certPath = setAbsolute(confIn["http"]["cert"], path.dirname(confPath));
-            confOut["http"]["cert"] = await fs.readFile(certPath, {
+            const certPath = setAbsolute(cert, path.dirname(confPath));
+            httpOut["cert"] = await fs.readFile(certPath, {
                 "encoding": "utf8"
             });
         } catch (error) {
-            throw new Error("Invalid HTTP cert path: " + confIn["http"]["cert"] + " - " + error.message);
+            throw new Error("Invalid HTTP cert path: " + cert + " - " + error.message);
         }
 
         // check redirect (optional)
-        if (typeof confIn["http"]["redirect"] === "number") {
-            if (confIn["http"]["redirect"] < 1 || confIn["http"]["redirect"] > 65535 || confIn["http"]["redirect"] === confIn["http"]["port"]) {
-                throw new Error("Invalid HTTP redirect port: " + confIn["http"]["redirect"]);
+        const redirect = http["redirect"];
+        if (typeof redirect === "number") {
+            if (redirect < 1 || redirect > 65535 || redirect === http["port"]) {
+                throw new Error("Invalid HTTP redirect port: " + redirect);
             }
-            confOut["http"]["redirect"] = confIn["http"]["redirect"];
+            httpOut["redirect"] = redirect;
         }
 
         // check cache (optional)
-        if (typeof confIn["http"]["cache"] === "object") {
-            confOut["http"]["cache"] = {};
+        const cache = http["cache"];
+        if (typeof cache === "object") {
+            httpOut["cache"] = {};
+            const httpCacheOut = httpOut["cache"];
             // check size
-            if (typeof confIn["http"]["cache"]["size"] !== "number" || confIn["http"]["cache"]["size"] < 0) {
-                throw new Error("Invalid HTTP cache size: " + confIn["http"]["cache"]["size"]);
+            const size = cache["size"];
+            if (typeof size !== "number" || size < 0) {
+                throw new Error("Invalid HTTP cache size: " + size);
             }
-            confOut["http"]["cache"]["size"] = confIn["http"]["cache"]["size"];
+            httpCacheOut["size"] = size;
             // check sizeLimit
-            if (typeof confIn["http"]["cache"]["sizeLimit"] !== "number" || confIn["http"]["cache"]["sizeLimit"] < 0) {
-                throw new Error("Invalid HTTP cache sizeLimit: " + confIn["http"]["cache"]["sizeLimit"]);
+            const sizeLimit = cache["sizeLimit"];
+            if (typeof sizeLimit !== "number" || sizeLimit < 0) {
+                throw new Error("Invalid HTTP cache sizeLimit: " + sizeLimit);
             }
-            if (confIn["http"]["cache"]["sizeLimit"] > confIn["http"]["cache"]["size"]) {
+            if (sizeLimit > cache["size"]) {
                 throw new Error("HTTP cache sizeLimit cannot be greater than cache size!");
             }
-            confOut["http"]["cache"]["sizeLimit"] = confIn["http"]["cache"]["sizeLimit"];
+            httpCacheOut["sizeLimit"] = sizeLimit;
         }
 
         // check remote (optional)
-        if (typeof confIn["http"]["remote"] === "object") {
-            confOut["http"]["remote"] = {};
+        const remote = http["remote"];
+        if (typeof remote === "object") {
+            httpOut["remote"] = {};
             // check host
-            if (typeof confIn["http"]["remote"]["host"] !== "string" || confIn["http"]["remote"]["host"].length === 0) {
-                throw new Error("Invalid HTTP remote host: " + confIn["http"]["remote"]["host"]);
+            const host = remote["host"];
+            if (typeof host !== "string" || host.length === 0) {
+                throw new Error("Invalid HTTP remote host: " + host);
             }
-            confOut["http"]["remote"]["host"] = confIn["http"]["remote"]["host"];
+            httpOut["remote"]["host"] = host;
+
             // check port
-            if (typeof confIn["http"]["remote"]["port"] !== "number" || confIn["http"]["remote"]["port"] < 1 || confIn["http"]["remote"]["port"] > 65535) {
-                throw new Error("Invalid HTTP remote port: " + confIn["http"]["remote"]["port"]);
+            if (typeof http["remote"]["port"] !== "number" || http["remote"]["port"] < 1 || http["remote"]["port"] > 65535) {
+                throw new Error("Invalid HTTP remote port: " + http["remote"]["port"]);
             }
-            confOut["http"]["remote"]["port"] = confIn["http"]["remote"]["port"];
+            httpOut["remote"]["port"] = http["remote"]["port"];
         }
     }
 
 
     // check WS settings
-    if (typeof confIn["ws"] === "object") {
+    const ws = confIn["ws"];
+    if (typeof ws === "object") {
         confOut["ws"] = {};
+        const wsOut = confOut["ws"];
 
         // check port
-        if (typeof confIn["ws"]["port"] !== "number" || confIn["ws"]["port"] < 1 || confIn["ws"]["port"] > 65535) {
-            throw new Error("Invalid WS port: " + confIn["ws"]["port"]);
+        const port = ws["port"];
+        if (typeof port !== "number" || port < 1 || port > 65535) {
+            throw new Error("Invalid WS port: " + port);
         }
-        if (confIn["ws"]["port"] === confOut?.["http"]?.["redirect"]) {
+        if (port === confOut?.["http"]?.["redirect"]) {
             throw new Error("WS port cannot be the same as HTTP redirect port!");
         }
-        confOut["ws"]["port"] = confIn["ws"]["port"];
+        wsOut["port"] = port;
 
         // check key
-        if (typeof confIn["ws"]["key"] !== "string") {
-            throw new Error("Invalid WS key path: " + confIn["ws"]["key"]);
+        const key = ws["key"];
+        if (typeof key !== "string") {
+            throw new Error("Invalid WS key path: " + key);
         }
         try {
-            const keyPath = setAbsolute(confIn["ws"]["key"], path.dirname(confPath));
-            confOut["ws"]["key"] = await fs.readFile(keyPath, {
+            const keyPath = setAbsolute(key, path.dirname(confPath));
+            wsOut["key"] = await fs.readFile(keyPath, {
                 "encoding": "utf8"
             });
         } catch (error) {
-            throw new Error("Invalid WS key path: " + confIn["ws"]["key"] + " - " + error.message);
+            throw new Error("Invalid WS key path: " + key + " - " + error.message);
         }
 
         // check cert
-        if (typeof confIn["ws"]["cert"] !== "string") {
-            throw new Error("Invalid WS cert path: " + confIn["ws"]["cert"]);
+        const cert = ws["cert"];
+        if (typeof cert !== "string") {
+            throw new Error("Invalid WS cert path: " + cert);
         }
         try {
-            const certPath = setAbsolute(confIn["ws"]["cert"], path.dirname(confPath));
-            confOut["ws"]["cert"] = await fs.readFile(certPath, {
+            const certPath = setAbsolute(cert, path.dirname(confPath));
+            wsOut["cert"] = await fs.readFile(certPath, {
                 "encoding": "utf8"
             });
         } catch (error) {
             throw new Error("Invalid WS cert path: " + confIn["ws"]["cert"] + " - " + error.message);
         }
 
-        // check Database
-        if (typeof confIn["ws"]["database"] !== "object") {
-            throw new Error("Invalid WS Database configuration: " + confIn["ws"]["database"]);
-        }
-        confOut["ws"]["database"] = {};
+        // check database
+        const database = ws["database"];
+        if (typeof database !== "object") {
+            throw new Error("Invalid WS Database configuration: " + database);
+        } else {
+            wsOut["database"] = {};
+            const databaseOut = wsOut["database"];
 
-        // check Database type
-        if (typeof confIn["ws"]["database"]["type"] !== "string" || ["mysql"].includes(confIn["ws"]["database"]["type"]) === false) {
-            throw new Error("Invalid WS Database type: " + confIn["ws"]["database"]["type"]);
-        }
-        confOut["ws"]["database"]["type"] = confIn["ws"]["database"]["type"];
-
-        // check Database host
-        if (typeof confIn["ws"]["database"]["host"] !== "string" || confIn["ws"]["database"]["host"].length === 0) {
-            throw new Error("Invalid WS Database host: " + confIn["ws"]["database"]["host"]);
-        }
-        confOut["ws"]["database"]["host"] = confIn["ws"]["database"]["host"];
-
-        // check Database port
-        if (typeof confIn["ws"]["database"]["port"] !== "number" || confIn["ws"]["database"]["port"] < 1 || confIn["ws"]["database"]["port"] > 65535) {
-            throw new Error("Invalid WS Database port: " + confIn["ws"]["database"]["port"]);
-        }
-        confOut["ws"]["database"]["port"] = confIn["ws"]["database"]["port"];
-
-        // check Database user
-        if (typeof confIn["ws"]["database"]["user"] !== "string") {
-            throw new Error("Invalid WS Database user: " + confIn["ws"]["database"]["user"]);
-        }
-        confOut["ws"]["database"]["user"] = confIn["ws"]["database"]["user"];
-
-        // check Database password
-        if (typeof confIn["ws"]["database"]["pass"] !== "string") {
-            throw new Error("Invalid WS Database password: " + confIn["ws"]["database"]["pass"]);
-        }
-        confOut["ws"]["database"]["pass"] = confIn["ws"]["database"]["pass"];
-
-        // check Database database
-        if (typeof confIn["ws"]["database"]["db"] !== "string") {
-            throw new Error("Invalid WS Database name: " + confIn["ws"]["database"]["db"]);
-        }
-        confOut["ws"]["database"]["db"] = confIn["ws"]["database"]["db"];
-
-        // check SMTP settings
-        if (typeof confIn["ws"]["smtp"] !== "object" && confIn["ws"]["smtp"] instanceof Array === false) {
-            throw new Error("Invalid WS SMTP configuration: " + confIn["ws"]["smtp"]);
-        }
-        if (confIn["ws"]["smtp"].length === 0) {
-            throw new Error("Invalid WS SMTP configuration: At least one WS SMTP configuration must be provided!");
-        }
-        confOut["ws"]["smtp"] = [];
-
-        // check each SMTP emails
-        for (const smtp of confIn["ws"]["smtp"]) {
-            if (typeof smtp !== "object") {
-                throw new Error("Invalid WS SMTP configuration: " + smtp);
+            // check Database type
+            const type = database["type"];
+            if (typeof type !== "string" || ["mysql"].includes(type) === false) {
+                throw new Error("Invalid WS Database type: " + type);
             }
-            const smtpOut = {};
+            databaseOut["type"] = type;
 
-            // check SMTP host
-            if (typeof smtp["host"] !== "string" || smtp["host"].length === 0) {
-                throw new Error("Invalid WS SMTP host: " + smtp["host"]);
+            // check Database host
+            const host = database["host"];
+            if (typeof host !== "string" || host.length === 0) {
+                throw new Error("Invalid WS Database host: " + host);
             }
-            smtpOut["host"] = smtp["host"];
+            databaseOut["host"] = host;
 
-            // check SMTP port
-            if (typeof smtp["port"] !== "number" || smtp["port"] < 1 || smtp["port"] > 65535) {
-                throw new Error("Invalid WS SMTP port: " + smtp["port"]);
+            // check Database port
+            const port = database["port"];
+            if (typeof port !== "number" || port < 1 || port > 65535) {
+                throw new Error("Invalid WS Database port: " + port);
             }
-            smtpOut["port"] = smtp["port"];
+            databaseOut["port"] = port;
 
-            // check SMTP user
-            if (typeof smtp["user"] !== "string") {
-                throw new Error("Invalid WS SMTP user: " + smtp["user"]);
+            // check Database user
+            const user = database["user"];
+            if (typeof user !== "string") {
+                throw new Error("Invalid WS Database user: " + user);
             }
-            smtpOut["user"] = smtp["user"];
+            databaseOut["user"] = user;
 
-            // check send limit per hour
-            if (typeof smtp["limit"] !== "number" || smtp["limit"] < 1) {
-                throw new Error("Invalid WS SMTP limitPerHour: " + smtp["limit"]);
+            // check Database password
+            const pass = database["pass"];
+            if (typeof pass !== "string") {
+                throw new Error("Invalid WS Database password: " + pass);
             }
-            smtpOut["limit"] = smtp["limit"];
+            databaseOut["pass"] = pass;
 
-            // check authentication
-            if (typeof smtp["auth"] !== "object") {
-                throw new Error("Invalid WS SMTP auth configuration: " + smtp["auth"]);
+            // check Database database
+            const db = database["db"];
+            if (typeof db !== "string") {
+                throw new Error("Invalid WS Database name: " + db);
             }
-            smtpOut["auth"] = {};
+            databaseOut["db"] = db;
 
-            // check auth type
-            if (smtp["auth"]["type"] === "password") {
-                // check password
-                if (typeof smtp["auth"]["pass"] !== "string" || smtp["auth"]["pass"].length === 0) {
-                    throw new Error("Invalid WS SMTP auth password: " + smtp["auth"]["pass"]);
+        };
+        
+        // check emails
+        const emails = ws["emails"];
+        if (typeof emails !== "object" || emails instanceof Array === false || emails.length === 0) {
+            throw new Error("Invalid WS SMTP configuration: " + emails);
+        } else {
+            wsOut["emails"] = [];
+            const emailsOut = wsOut["emails"];
+
+            // check each email 
+            for (const email of emails) {
+                if (typeof email !== "object") {
+                    throw new Error("Invalid WS SMTP configuration: " + email);
                 }
-                smtpOut["auth"]["type"] = "password";
-                smtpOut["auth"]["pass"] = smtp["auth"]["pass"];
+                const emailOut = {};
 
-            } else if (smtp["auth"]["type"] === "OAuth2") {
-                // check clientId
-                if (typeof smtp["auth"]["clientId"] !== "string" || smtp["auth"]["clientId"].length === 0) {
-                    throw new Error("Invalid WS SMTP auth clientId: " + smtp["auth"]["clientId"]);
+                // check SMTP host
+                const host = email["host"];
+                if (typeof host !== "string" || host.length === 0) {
+                    throw new Error("Invalid WS SMTP host: " + host);
                 }
-                smtpOut["auth"]["clientId"] = smtp["auth"]["clientId"];
+                emailOut["host"] = host;
 
-                // check clientSecret
-                if (typeof smtp["auth"]["clientSecret"] !== "string" || smtp["auth"]["clientSecret"].length === 0) {
-                    throw new Error("Invalid WS SMTP auth clientSecret: " + smtp["auth"]["clientSecret"]);
+                // check SMTP port
+                const port = email["port"];
+                if (typeof port !== "number" || port < 1 || port > 65535) {
+                    throw new Error("Invalid WS SMTP port: " + port);
                 }
-                smtpOut["auth"]["clientSecret"] = smtp["auth"]["clientSecret"];
+                emailOut["port"] = port;
 
-                // check refreshToken
-                if (typeof smtp["auth"]["refreshToken"] !== "string" || smtp["auth"]["refreshToken"].length === 0) {
-                    throw new Error("Invalid WS SMTP auth refreshToken: " + smtp["auth"]["refreshToken"]);
+                // check SMTP user
+                const user = email["user"];
+                if (typeof user !== "string") {
+                    throw new Error("Invalid WS SMTP user: " + user);
                 }
-                smtpOut["auth"]["refreshToken"] = smtp["auth"]["refreshToken"];
+                emailOut["user"] = user;
+
+                // check send limit per hour
+                const limit = email["limit"];
+                if (typeof limit !== "number" || limit < 1) {
+                    throw new Error("Invalid WS SMTP limitPerHour: " + limit);
+                }
+                emailOut["limit"] = limit;
+
+                // check authentication
+                const auth = email["auth"];
+                if (typeof auth !== "object") {
+                    throw new Error("Invalid WS SMTP auth configuration: " + auth);
+                } else {
+                    emailOut["auth"] = {};
+                    const authOut = emailOut["auth"];
+
+                    // check auth type
+                    const type = auth["type"];
+                    if (type === "password") {
+                        // check password
+                        const pass = auth["pass"];
+                        if (typeof pass !== "string") {
+                            throw new Error("Invalid WS SMTP auth password: " + pass);
+                        }
+                        authOut["pass"] = pass;
+
+                    } else if (type === "OAuth2") {
+                        // check clientId
+                        const clientId = auth["clientId"];
+                        if (typeof clientId !== "string" || clientId.length === 0) {
+                            throw new Error("Invalid WS SMTP auth clientId: " + clientId);
+                        }
+                        authOut["clientId"] = clientId;
+
+                        // check clientSecret
+                        const clientSecret = auth["clientSecret"];
+                        if (typeof clientSecret !== "string" || clientSecret.length === 0) {
+                            throw new Error("Invalid WS SMTP auth clientSecret: " + clientSecret);
+                        }
+                        authOut["clientSecret"] = clientSecret;
+
+                        // check refreshToken
+                        const refreshToken = auth["refreshToken"];
+                        if (typeof refreshToken !== "string" || refreshToken.length === 0) {
+                            throw new Error("Invalid WS SMTP auth refreshToken: " + refreshToken);
+                        }
+                        authOut["refreshToken"] = refreshToken;
+                    } else {
+                        throw new Error("Invalid WS SMTP auth type: " + smtp["auth"]["type"]);
+                    }
+                    authOut["type"] = type;
+                }
+
+                emailsOut.push(emailOut);
+            }
+        }
+
+        // check webrtc
+        const webrtc = ws["webrtc"];
+        if (typeof webrtc !== "object") {
+            throw new Error("Invalid WS WebRTC configuration: " + webrtc);
+        } else {
+            wsOut["webrtc"] = {};
+            const webrtcOut = wsOut["webrtc"];
+            const iceServers = webrtc["iceServers"];
+            if (typeof iceServers !== "object" || iceServers instanceof Array === false || iceServers.length === 0) {
+                throw new Error("Invalid WS WebRTC iceServers configuration: " + iceServers);
             } else {
-                throw new Error("Invalid WS SMTP auth type: " + smtp["auth"]["type"]);
+                webrtcOut["iceServers"] = [];
+                const iceServersOut = webrtcOut["iceServers"];
+                for (const iceServer of iceServers) {
+                    iceServersOut.push(iceServer);
+                    if (typeof iceServer !== "string" || iceServer.length === 0) {
+                        throw new Error("Invalid WS WebRTC iceServer: " + iceServer);
+                    }
+                }
             }
-            confOut["ws"]["smtp"].push(smtpOut);
         }
+        
 
-        // check auth
-        if (typeof confIn["ws"]["auth"] !== "object") {
-            throw new Error("Invalid WS auth configuration: " + confIn["ws"]["auth"]);
-        }
-        confOut["ws"]["auth"] = {};
+        // check features
+        const features = ws["features"];
+        if (typeof features !== "object") {
+            throw new Error("Invalid WS features configuration: " + features);
+        } else {
+            wsOut["features"] = {};
+            const featuresOut = wsOut["features"];
 
-        // check each auth method
-        for (const type in confIn["ws"]["auth"]) {
-            const auth = confIn["ws"]["auth"];
-            if (type === "guest") {
-                confOut["ws"]["auth"][type] = {};
-            } else if (type === "local") {
-                throw new Error("Password authentication is not implemented yet!");
-                if (typeof auth[type] !== "object") {
-                    throw new Error("Invalid WS local auth configuration: " + auth[type]);
-                }
-                confOut["ws"]["auth"][type] = {};
-                // check allowCodeLogin
-                if (typeof auth[type]["allowCodeLogin"] !== "boolean") {
-                    throw new Error("Invalid WS local auth allowCodeLogin: " + auth[type]["allowCodeLogin"]);
-                }
-                confOut["ws"]["auth"][type]["allowCodeLogin"] = auth[type]["allowCodeLogin"];
-                // check allowRegister
-                if (typeof auth[type]["allowRegister"] !== "boolean") {
-                    throw new Error("Invalid WS local auth allowRegister: " + auth[type]["allowRegister"]);
-                }
-                confOut["ws"]["auth"][type]["allowRegister"] = auth[type]["allowRegister"];
-            } else if (type === "google") {
-                if (typeof auth[type] !== "object") {
-                    throw new Error("Invalid WS google auth configuration: " + auth[type]);
-                }
-                confOut["ws"]["auth"][type] = {};
-                // check clientId
-                if (typeof auth[type]["clientId"] !== "string" || auth[type]["clientId"].length === 0) {
-                    throw new Error("Invalid WS google auth clientId: " + auth[type]["clientId"]);
-                }
-                confOut["ws"]["auth"][type]["clientId"] = auth[type]["clientId"];
-                // check clientSecret
-                if (typeof auth[type]["clientSecret"] !== "string" || auth[type]["clientSecret"].length === 0) {
-                    throw new Error("Invalid WS google auth clientSecret: " + auth[type]["clientSecret"]);
-                }
-                confOut["ws"]["auth"][type]["clientSecret"] = auth[type]["clientSecret"];
+            // check auth
+            const auth = features["auth"];
+            if (typeof auth !== "object") {
+                throw new Error("Invalid WS features auth configuration: " + auth);
             } else {
-                throw new Error("Invalid WS auth type: " + type);
+                featuresOut["auth"] = {};
+                const authOut = featuresOut["auth"];
+
+                // check local auth
+                const local = auth["local"];
+                if (typeof local === "object") {
+                    throw new Error("Password authentication is not implemented yet!");
+                    authOut["local"] = {};
+                    const localOut = authOut["local"];     
+                    
+                    // check allowPasswordLogin
+                    const allowPasswordLogin = local["allowPasswordLogin"];
+                    if (typeof allowPasswordLogin !== "boolean") {
+                        throw new Error("Invalid WS features auth local allowPasswordLogin: " + allowPasswordLogin);
+                    }
+                    localOut["allowPasswordLogin"] = allowPasswordLogin;
+
+                    // check allowCodeLogin
+                    const allowCodeLogin = local["allowCodeLogin"];
+                    if (typeof allowCodeLogin !== "boolean") {
+                        throw new Error("Invalid WS features auth local allowCodeLogin: " + allowCodeLogin);
+                    }
+                    localOut["allowCodeLogin"] = allowCodeLogin;
+
+                    // check allowRegister
+                    const allowRegister = local["allowRegister"];
+                    if (typeof allowRegister !== "boolean") {
+                        throw new Error("Invalid WS features auth local allowRegister: " + allowRegister);
+                    }
+                    localOut["allowRegister"] = allowRegister;
+
+                }
+
+                // check google auth
+                const google = auth["google"];
+                if (typeof google === "object") {
+                    authOut["google"] = {};
+                    const googleOut = authOut["google"];
+
+                    // check clientId
+                    const clientId = google["clientId"];
+                    if (typeof clientId !== "string" || clientId.length === 0) {
+                        throw new Error("Invalid WS features auth google clientId: " + clientId);
+                    }
+                    googleOut["clientId"] = clientId;
+
+                    // check clientSecret
+                    const clientSecret = google["clientSecret"];
+                    if (typeof clientSecret !== "string" || clientSecret.length === 0) {
+                        throw new Error("Invalid WS features auth google clientSecret: " + clientSecret);
+                    }
+                    googleOut["clientSecret"] = clientSecret;
+                }
+
+                if (Object.keys(authOut).length === 0) {
+                    throw new Error("At least one WS features auth method must be configured!");
+                }
+            }
+
+            // check screenSharing
+            const screenSharing = features["screenSharing"];
+            if (typeof screenSharing === "object") {
+                featuresOut["screenSharing"] = {};
+                const screenSharingOut = featuresOut["screenSharing"];
+
+                // check isHomePage (optional, default false)
+                const isHomePage = screenSharing["isHomePage"];
+                if (typeof isHomePage !== "undefined") {
+                    if (typeof isHomePage !== "boolean") {
+                        throw new Error("Invalid WS features screenSharing isHomePage: " + isHomePage);
+                    } else {
+                        screenSharingOut["isHomePage"] = isHomePage;
+                    }
+                } else {
+                    screenSharingOut["isHomePage"] = false;
+                }
+
+                // check allowGuestShare
+                const allowGuestShare = screenSharing["allowGuestShare"];
+                if (typeof allowGuestShare !== "undefined" && typeof allowGuestShare !== "boolean") {
+                    throw new Error("Invalid WS features screenSharing isHomePage: " + isHomePage);
+                } else {
+                    screenSharingOut["allowGuestShare"] = allowGuestShare;
+                }
+
+                // check allowGuestJoin
+                const allowGuestJoin = screenSharing["allowGuestJoin"];
+                if (typeof allowGuestJoin !== "undefined" && typeof allowGuestJoin !== "boolean") {
+                    throw new Error("Invalid WS features screenSharing isHomePage: " + isHomePage);
+                } else {
+                    screenSharingOut["allowGuestJoin"] = allowGuestJoin;
+                }
+            }
+
+            // check serviceSharing
+            const serviceSharing = features["serviceSharing"];
+            if (typeof serviceSharing === "object") {
+                featuresOut["serviceSharing"] = {};
+                const serviceSharingOut = featuresOut["serviceSharing"];
+
+                // check isHomePage (optional, default false)
+                const isHomePage = serviceSharingOut["isHomePage"];
+                if (typeof isHomePage !== "undefined") {
+                    if (typeof isHomePage !== "boolean") {
+                        throw new Error("Invalid WS features screenSharing isHomePage: " + isHomePage);
+                    } else {
+                        serviceSharingOut["isHomePage"] = isHomePage;
+                    }
+                } else {
+                    serviceSharingOut["isHomePage"] = false;
+                }
+
+                if (serviceSharingOut["isHomePage"] === true && featuresOut["screenSharing"]["isHomePage"] === true) {
+                    throw new Error("WS features screenSharing and serviceSharing cannot both be home page!");
+                }
             }
         }
 
@@ -625,10 +745,9 @@ const Server = class {
     wsServer = null;
     wsHttpServer = null;
     clients = new Map();
-    publicAuthInfo = {};
-    authGuest = null;
+    clientsByCallingId = new Map();
+    clientConf = {};
     authGoogle = null;
-    wsAuthMethods = {};
 
     isClosing = false;
     constructor() {
@@ -688,6 +807,35 @@ const Server = class {
         } catch (error) {
             return undefined;
         }
+    };
+
+    async httpsGetText(url) {
+        return new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                const statusCode = res.statusCode;
+
+                if (statusCode !== 200) {
+                    const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
+                    //console.error(error.message);
+                    // Consume response data to free up memory
+                    res.resume();
+                    reject(error);
+                    return;
+                }
+
+                let rawData = "";
+                res.setEncoding("utf8");
+                res.on("data", (chunk) => {
+                    rawData += chunk;
+                });
+                res.on("end", () => {
+                    resolve(rawData);
+                });
+            }).on("error", (error) => {
+                console.error(`Got error: ${error.message}`);
+                reject(error);
+            });
+        });       
     };
 
     async start(conf) {
@@ -889,8 +1037,8 @@ const Server = class {
         // Start WebSocket server
         process.stdout.write("Starting WS server...    ");
         if (typeof conf["ws"] === "object") {
-            // Connect SMTP
-            for (const smtp of conf["ws"]["smtp"]) {
+            // Connect to mail servers
+            for (const smtp of conf["ws"]["emails"]) {
                 if (smtp["auth"]["type"] === "password") {
                     const transporter = nodemailer.createTransport({
                         "host": smtp["host"],
@@ -945,10 +1093,10 @@ const Server = class {
             if (await this.db.schema.hasTable("users") === false) {
                 await this.db.schema.createTable("users", function (table) {
                     table.bigint("user_id");
-                    table.string("email");
-                    table.string("first_name");
-                    table.string("last_name");
-                    table.string("password");
+                    table.text("email");
+                    table.text("first_name");
+                    table.text("last_name");
+                    table.text("password");
                     table.boolean("is_activated");
                 });
                 await this.db.schema.alterTable("users", function (table) {
@@ -991,39 +1139,95 @@ const Server = class {
                     table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
                 });
             }
-
-            // copy auth methods
-            this.wsAuthMethods = {};
-            if (typeof conf["ws"]["auth"]["guest"] !== "undefined") {
-                this.publicAuthInfo["guest"] = "";
-                this.authGuest = (messageObj) => {
-                    messageObj.send({"sessionId": undefined});
-                };
+            if (await this.db.schema.hasTable("rooms") === false) {
+                await this.db.schema.createTable("rooms", function (table) {
+                    table.bigint("room_id");
+                    table.text("host_code");
+                    table.bigint("expires");
+                });
+                await this.db.schema.alterTable("rooms", function (table) {
+                    table.primary("room_id");
+                });
             }
-            if (typeof conf["ws"]["auth"]["google"] !== "undefined") {
-                this.publicAuthInfo["google"] = {
-                    "clientId": conf["ws"]["auth"]["google"]["clientId"]
-                };
-                this.authGoogle = async (messageObj) => {
-                    const credential = messageObj.data["credential"];
+            if (await this.db.schema.hasTable("resources") === false) {
+                await this.db.schema.createTable("resources", function (table) {
+                    table.bigint("resource_id");
+                    table.bigint("parent_id");
+                    table.bigint("room_id");
+                });
+                await this.db.schema.alterTable("resources", function (table) {
+                    table.primary("resource_id");
+                    table.setNullable("parent_id");
+                    table.foreign("parent_id").references("resources.resource_id").onDelete("CASCADE").onUpdate("CASCADE");
+                    table.setNullable("room_id");
+                    table.foreign("room_id").references("rooms.room_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
+            if (await this.db.schema.hasTable("permissions") === false) {
+                await this.db.schema.createTable("permissions", function (table) {
+                    table.bigint("permission_id");
+                    table.bigint("user_id");
+                    table.boolean("can_share");
+                    table.boolean("can_write");
+                    table.boolean("is_owner");
+                });
+                await this.db.schema.alterTable("permissions", function (table) {
+                    table.primary("permission_id");
+                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
+            if (await this.db.schema.hasTable("permission_join") === false) {
+                await this.db.schema.createTable("permission_join", function (table) {
+                    table.bigint("permission_id");
+                    table.bigint("resource_id");
+                });
+                await this.db.schema.alterTable("permission_join", function (table) {
+                    table.index(["permission_id", "resource_id"]);
+                    table.foreign("permission_id").references("permissions.permission_id").onDelete("CASCADE").onUpdate("CASCADE");
+                    table.foreign("resource_id").references("resources.resource_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
+
+
+            // Configure auth methods
+            if (typeof conf["ws"]["features"]["auth"]["google"] !== "undefined") {
+                this.authGoogle = async (credential) => {
                     let userInfo = undefined;
                     try {
-                        const res = await httpsGetText("https://oauth2.googleapis.com/tokeninfo?id_token=" + credential);
+                        const res = await this.httpsGetText("https://oauth2.googleapis.com/tokeninfo?id_token=" + credential);
                         userInfo = JSON.parse(res);
                     } catch (error) {
                         console.log(error);
                     }
-                    if (userInfo === undefined) {
-                        messageObj.send({"sessionId": undefined});
-                        return;
-                    } else {
-                        console.log(userInfo);
-                        messageObj.send({"sessionId": 1});
-                    }
+                    return userInfo;
+                };
+            } else {
+                this.authGoogle = (credential) => {
+                    return undefined;
                 };
             }
 
-            // start WS server
+            // Setup public configuration for client
+            this.clientConf = {
+                "webrtc": {
+                    "iceServers": [...conf["ws"]["webrtc"]["iceServers"]]
+                },
+                "screenSharing": {
+                    "isHomePage": conf["ws"]["features"]["screenSharing"]["isHomePage"],
+                    "allowGuestShare": conf["ws"]["features"]["screenSharing"]["allowGuestShare"],
+                    "allowGuestJoin": conf["ws"]["features"]["screenSharing"]["allowGuestJoin"]
+                },
+                "serviceSharing": {
+                    "isHomePage": conf["ws"]["features"]["serviceSharing"]["isHomePage"]
+                },
+                "auth": {}
+            };
+            if (typeof conf["ws"]["features"]["auth"]["google"] !== "undefined") {
+                this.clientConf["auth"]["google"] = {};
+                this.clientConf["auth"]["google"]["clientId"] = conf["ws"]["features"]["auth"]["google"]["clientId"];
+            }
+
+            // Listen WS port
             if (conf["ws"]["port"] === conf?.["http"]?.["port"]) {
                 this.wsServer = new WebSocketServer({
                     "server": this.httpServer
@@ -1116,24 +1320,44 @@ const Server = class {
 
             // config check
             if (message["type"] === "conf-get") {
-                messageObj.send({
-                   "auth": this.publicAuthInfo
-                });
+                messageObj.send(this.clientConf);
                 return;
             }
-            if (message["type"] === "login-guest") {
-                this.authGuest(messageObj);
-                return;
-            }
+
             if (message["type"] === "login-google") {
-                this.authGoogle(messageObj);
+                const userInfo = await this.authGoogle(messageObj.data["credential"]);
+                let sessionId = undefined;
+
+                messageObj.send({"sessionId": sessionId});
                 return;
             }
+
             if (message["type"] === "login-check") {
                 const sessionId = message["sessionId"];
                 return;
             }
-            
+
+            if (message["type"] === "get-resources") {
+                return;
+            }
+
+            if (message["type"] === "create-share") {
+                
+                if (typeof message["code"] === "string") {
+                    // create existing
+
+                } else {
+                    // create new
+
+                }
+                return;
+            }
+
+            if (message["type"] === "join-room") {
+
+                return;
+            }
+
             console.log("Invalid request");
             messageObj.abort();
             return;

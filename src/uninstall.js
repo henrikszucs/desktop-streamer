@@ -9,6 +9,7 @@ const main = async function() {
         "./package-lock.json",
         "./node_modules",
         "./tmp",
+        "./src/client/electron/dist"
     ];
     for (const dir of pathList) {
         try {
