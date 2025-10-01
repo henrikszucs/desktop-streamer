@@ -27,12 +27,12 @@
             <div class="max m l">
                 <div class="field large prefix round fill active wide-search">
                     <i class="front" id="input-search-finish">search</i>
-                    <input placeholder="Search text" id="input-search"/>
+                    <input placeholder="Searching..." id="input-search" data-i18n="main.search"/>
                     <menu class="min" id="input-search-menu">
                         <li>
                             <div class="field large prefix">
                                 <i class="front">arrow_back</i>
-                                <input placeholder="Search text" id="input-search-true"/>
+                                <input placeholder="Searching..." id="input-search-true" data-i18n="main.search"/>
                             </div>
                         </li>
                         <li>
@@ -57,12 +57,12 @@
             <button class="circle large transparent" id="btn-settings">
                 <i>settings</i>
             </button>
-            <button class="circle large transparent">
+            <button class="circle large fill">
                 <img class="responsive" src="/icons/guest.svg" height="32" id="btn-user">
                 <menu class="border left no-wrap " id="btn-user-menu-login">
                     <li id="btn-login">
                         <i>login</i>
-                        <span>Log in</span>
+                        <span data-i18n="main.login">Log in</span>
                     </li>
                 </menu>
                 <menu class="border left no-wrap hide" id="btn-user-menu-user">
@@ -85,25 +85,25 @@
                 </button>
                 <button class="primary-container square round extend" id="btn-new">
                     <i>add</i>
-                    <span>New</span>
+                    <span data-i18n="main.new">New</span>
                 </button>
             </header>
             <a id="btn-services">
                 <i>filter_drama</i>
-                <div>Services</div>
+                <div data-i18n="main.services">Services</div>
             </a>
             <a id="btn-devices">
                 <i>devices</i>
-                <div>Devices</div>
+                <div data-i18n="main.devices">Devices</div>
             </a>
             <a id="btn-outgoings">
                 <i>upload</i>
-                <div>Outgoing shares</div>
+                <div data-i18n="main.outgoings">Outgoing shares</div>
             </a>
             <div class="max"></div>
             <a class="primary" id="btn-download">
                 <i>download</i>
-                <div>Download client</div>
+                <div data-i18n="main.downloads">Download client</div>
             </a>
         </nav>
 
@@ -112,9 +112,9 @@
         <div class="overlay blur active" id="dialog-overlay"></div>
 
         <dialog class="active" id="dialog-loading">
-            <h5>Loading...</h5>
+            <h5 data-i18n="loading.title">Loading...</h5>
             <br>
-            <div>The application is loading please wait...</div>
+            <div data-i18n="loading.subtitle">The application is loading please wait...</div>
             <br>
             <progress></progress>
         </dialog>
@@ -122,12 +122,12 @@
         <dialog class="top transparent" id="dialog-search">
             <div class="field large prefix round fill active">
                 <i class="front" id="input-search-2-finish">search</i>
-                <input placeholder="Search text" id="input-search-2"/>
+                <input placeholder="Searching..." id="input-search-2" data-i18n="main.search"/>
                 <menu class="min" id="input-search-2-menu">
                     <li>
                         <div class="field large prefix">
                             <i class="front" >arrow_back</i>
-                            <input placeholder="Search text" id="input-search-2-true"/>
+                            <input placeholder="Searching..." id="input-search-2-true" data-i18n="main.search"/>
                         </div>
                     </li>
                     <li>
@@ -151,7 +151,7 @@
             <div>
                 <header>
                     <nav>
-                        <h6 class="max">Menu</h6>
+                        <h6 class="max" data-i18n="main.menu">Menu</h6>
                         <button class="transparent circle large" id="btn-menu-close">
                             <i>close</i>
                         </button>
@@ -160,35 +160,35 @@
                 <div class="space"></div>
                 <button class="primary-container small-round large responsive" id="btn-new-2">
                     <i>add</i>
-                    <span>New</span>
+                    <span data-i18n="main.new">New</span>
                 </button>
                 <div class="space"></div>
                 <ul class="list">
                     <li class="wave round" id="btn-services-2">
                         <i>filter_drama</i>
-                        <span>Services</span>
+                        <span data-i18n="main.services">Services</span>
                     </li>
                     <li class="wave round" id="btn-devices-2">
                         <i>devices</i>
-                        <span>Devices</span>
+                        <span data-i18n="main.devices">Devices</span>
                     </li>
                     <li class="wave round" id="btn-outgoings-2">
                         <i>upload</i>
-                        <span>Outgoing shares</span>
+                        <span data-i18n="main.outgoings">Outgoing shares</span>
                     </li>
                 </ul>
             </div>
             <div>
                 <button class="primary" id="btn-download-2">
                     <i>download</i>
-                    <div>Download client</div>
+                    <div data-i18n="main.downloads">Download client</div>
                 </button>
             </div>
         </dialog>
 
         <dialog class="multicolumn-dialog" id="dialog-settings">
             <nav>
-                <h5>Settings</h5>
+                <h5 data-i18n="settings.title">Settings</h5>
                 <div class="max"></div>
                 <button class="circle transparent" id="btn-settings-close">
                     <i>close</i>
@@ -196,80 +196,84 @@
             </nav>
             <div>
                 <div>
-                    <button class="primary small-margin" id="btn-settings-apperance">
+                    <button class="primary small-margin" id="btn-settings-appearance">
                         <i>palette</i>
-                        <span class="l m">Apperance</span>
+                        <span class="l m" data-i18n="settings.appearance.btn">Appearance</span>
                     </button>
                     <button class="fill small-margin" id="btn-settings-audio">
                         <i>speaker</i>
-                        <span class="l m">Audio</span>
+                        <span class="l m" data-i18n="settings.audio.btn">Audio</span>
                     </button>
                     <button class="fill small-margin" id="btn-settings-video">
                         <i>videocam</i>
-                        <span class="l m">Video</span>
+                        <span class="l m" data-i18n="settings.video.btn">Video</span>
                     </button>
                     <button class="fill small-margin" id="btn-settings-control">
                         <i>joystick</i>
-                        <span class="l m">Control</span>
+                        <span class="l m" data-i18n="settings.control.btn">Control</span>
                     </button>
                     <button class="fill small-margin" id="btn-settings-about">
                         <i>info</i>
-                        <span class="l m">About</span>
+                        <span class="l m" data-i18n="settings.about.btn">About</span>
                     </button>
                 </div>
-                <!-- Apperance settings -->
-                <div id="settings-apperance">
-                    <h5 class="small-margin">Apperance settings</h5>
-                    <div class="small-margin">
-                        <fieldset>
-                            <legend>Theme color</legend>
-                            <nav class="wrap">
-                                <button class="chip circle small">
-                                <i>dark_mode</i>
-                                </button>
-                                <button class="chip circle">
-                                <i>palette</i>
-                                <input type="color"/>
-                                </button>
-                                <button class="circle small red"></button>
-                                <button class="circle small pink"></button>
-                                <button class="circle small purple"></button>
-                                <button class="circle small indigo"></button>
-                                <button class="circle small blue"></button>
-                                <button class="circle small green"></button>
-                                <button class="circle small yellow"></button>
-                                <button class="circle small orange"></button>
-                            </nav>
-                        </fieldset>
-                        <fieldset>
-                            <legend>Language</legend>
-                            <div class="field suffix border round">
-                                <select>
-                                    <option>English</option>
-                                    <option>Magyar</option>
-                                </select>
-                                <i>arrow_drop_down</i>
-                            </div>
-                        </fieldset>
+                <div>
+                    <!-- Apperance settings -->
+                    <div id="settings-appearance">
+                        <h5 class="small-margin" data-i18n="settings.appearance.title">Apperance settings</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.appearance.theme">Theme color</legend>
+                                <nav class="wrap">
+                                    <button class="chip circle small" id="btn-appearance-theme">
+                                        <i>dark_mode</i>
+                                    </button>
+                                    <button class="chip circle" id="btn-appearance-theme-color">
+                                        <i>palette</i>
+                                        <input type="color"/>
+                                    </button>
+                                    <button class="circle small green" id="btn-appearance-theme-green"></button>
+                                    <button class="circle small red" id="btn-appearance-theme-red"></button>
+                                    <button class="circle small pink" id="btn-appearance-theme-pink"></button>
+                                    <button class="circle small purple" id="btn-appearance-theme-purple"></button>
+                                    <button class="circle small indigo" id="btn-appearance-theme-indigo"></button>
+                                    <button class="circle small blue" id="btn-appearance-theme-blue"></button>
+                                    <button class="circle small yellow" id="btn-appearance-theme-yellow"></button>
+                                    <button class="circle small orange" id="btn-appearance-theme-orange"></button>
+                                </nav>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.appearance.lang">Language</legend>
+                                <div class="field suffix border round">
+                                    <select id="select-appearance-lang">
+                                        <option value="auto" data-i18n="settings.appearance.autolang">-- Automatic selection --</option>
+                                        <option value="en">English</option>
+                                        <option value="hu">Magyar</option>
+                                    </select>
+                                    <i>arrow_drop_down</i>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                    <!-- Audio settings -->
+                    <div id="settings-audio" class="hide">
+                    </div>
+                    <!-- Video settings -->
+                    <div id="settings-video" class="hide">
+                    </div>
+                    <!-- Control settings -->
+                    <div id="settings-control" class="hide">
+                    </div>
+                    <!-- About -->
+                    <div id="settings-about" class="hide">
+                        <h5 class="small-margin">About Desktop Streamer</h5>
+                        <div class="small-margin">
+                            <p>Version: 1.0.0</p>
+                            <p>Desktop Streamer is an open source project that allows you to access your desktop remotly through a simple web interface. It is built with Electron and Node.js.</p>
+                        </div>
                     </div>
                 </div>
-                <!-- Audio settings -->
-                <div id="settings-audio">
-                </div>
-                <!-- Video settings -->
-                <div id="settings-video">
-                </div>
-                <!-- Control settings -->
-                <div id="settings-control">
-                </div>
-                <!-- About -->
-                <div id="settings-about" class="hide">
-                    <h5 class="small-margin">About Desktop Streamer</h5>
-                    <div class="small-margin">
-                        <p>Version: 1.0.0</p>
-                        <p>Desktop Streamer is an open source project that allows you to access your desktop remotly through a simple web interface. It is built with Electron and Node.js.</p>
-                    </div>
-                </div>
+                
 
             </div>
             

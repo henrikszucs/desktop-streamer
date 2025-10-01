@@ -1,10 +1,12 @@
 "use strict";
 
 // load dependencies
-import conf from "./conf.js";
 import IDB from "./libs/idb/idb.js";
 import Communicator from "./libs/communicator/communicator.js";
 
+//load configuration
+import conf from "./conf.js";
+import localization from "./localization.js";
 
 
 
@@ -27,6 +29,7 @@ const confLoad = new Promise(async function(resolve) {
     const vals = {
         "color": "#006e1c",
         "mode": "light",
+        "lang": "auto",
         "sessionId": ""
     };
 
@@ -296,13 +299,119 @@ const SettingsDialog = class {
         this.settingsBtn = document.getElementById("btn-settings");
         this.settingsDialog = document.getElementById("dialog-settings");
         this.settingsClose = document.getElementById("btn-settings-close");
-        
 
+        this.currentScreen = document.getElementById("settings-appearance");
+        this.currentBtn = document.getElementById("btn-settings-appearance");
+        const addScreen = (btn, screen) => {
+            btn.addEventListener("click", (event) => {
+                if (this.currentScreen !== screen) {
+                    this.currentScreen.classList.add("hide");
+                    screen.classList.remove("hide");
+                    this.currentScreen = screen;
+
+                    this.currentBtn.classList.remove("primary");
+                    this.currentBtn.classList.add("fill");
+                    btn.classList.add("primary");
+                    btn.classList.remove("fill");
+                    this.currentBtn = btn;
+                }
+            });
+        };
+        addScreen(document.getElementById("btn-settings-appearance"), document.getElementById("settings-appearance"));
+        addScreen(document.getElementById("btn-settings-audio"), document.getElementById("settings-audio"));
+        addScreen(document.getElementById("btn-settings-video"), document.getElementById("settings-video"));
+        addScreen(document.getElementById("btn-settings-control"), document.getElementById("settings-control"));
+        addScreen(document.getElementById("btn-settings-about"), document.getElementById("settings-about"));
+        
         // set event listeners
         this.settingsClose.addEventListener("click", () => {
             this.close();
         });
 
+        // Appearance settings
+        const themeBtn = document.getElementById("btn-appearance-theme");
+        const setThemeIcon = () => {
+            console.log("Set theme icon:", globalThis.ui("mode"));
+            if (globalThis.ui("mode") === "dark") {
+                themeBtn.children[0].innerText = "dark_mode";
+            } else {
+                themeBtn.children[0].innerText = "light_mode";
+            }
+        };
+        const setColor = async (color) => {
+            globalThis.ui("theme", color);
+
+            const r = Number("0x"+color.slice(1,3));
+            const g = Number("0x"+color.slice(3,5));
+            const b = Number("0x"+color.slice(5,7));
+            const isNeedDark = 0.2126 * r + 0.7152 * g + 0.0722 * b > 127;
+
+            const newMode = isNeedDark ? "dark" : "light";
+            setTimeout(() => {
+                globalThis.ui("mode", newMode);
+                setThemeIcon();
+            }, 1);
+
+            conf["local"]["color"] = color;
+            conf["local"]["mode"] = newMode;
+            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["color", color], ["mode", newMode]]);
+        };
+        themeBtn.addEventListener("click", async () => {
+            const newMode = globalThis.ui("mode") === "dark" ? "light" : "dark";
+            globalThis.ui("mode", newMode);
+            setThemeIcon();
+            conf["local"]["mode"] = newMode;
+            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["mode", newMode]])
+        });
+        setThemeIcon();
+        document.getElementById("btn-appearance-theme-color").addEventListener("change", (event) => {
+            const color = event.target.value;
+            setColor(color);
+        });
+        document.getElementById("btn-appearance-theme-green").addEventListener("click", (event) => {
+            setColor("#006e1c");
+        });
+        document.getElementById("btn-appearance-theme-red").addEventListener("click", (event) => {
+            setColor("#f44336");
+        });
+        document.getElementById("btn-appearance-theme-pink").addEventListener("click", (event) => {
+            setColor("#e91e63");
+        });
+        document.getElementById("btn-appearance-theme-purple").addEventListener("click", (event) => {
+            setColor("#9c27b0");
+        });
+        document.getElementById("btn-appearance-theme-indigo").addEventListener("click", (event) => {
+            setColor("#3f51b5");
+        });
+        document.getElementById("btn-appearance-theme-blue").addEventListener("click", (event) => {
+            setColor("#2196f3");
+        });
+        document.getElementById("btn-appearance-theme-yellow").addEventListener("click", (event) => {
+            setColor("#ffeb3b");
+        });
+        document.getElementById("btn-appearance-theme-orange").addEventListener("click", (event) => {
+            setColor("#ff9800");
+        });
+
+        const langSelect = document.getElementById("select-appearance-lang");
+        langSelect.value = conf["local"]["lang"];
+        langSelect.addEventListener("change", async (event) => {
+            let lang = event.target.value;
+            if (lang !== "auto" && localization.supportedLanguages.indexOf(lang) === -1) {
+                lang = "auto";
+            }
+            conf["local"]["lang"] = lang;
+            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["lang", lang]]);
+            
+            if (lang === "auto") {
+                lang = (navigator.language || navigator.userLanguage).substring(0,2);
+            }
+            if (localization.supportedLanguages.indexOf(lang) === -1) {
+                lang = "en";
+            }
+            localization.translate(lang);
+            
+        });
     };
     open = () => {
         this.overlay.classList.add("active");
@@ -669,12 +778,21 @@ const GoogleLogin = class extends EventTarget {
         this.clientId = clientId;
 
         // global callback function
-        window.onGoogleLogin = (response) => {
-            console.log(response);
-            console.log("https://oauth2.googleapis.com/tokeninfo?id_token=" + response.credential);
+        window.onGoogleLogin = async (response) => {
+            //console.log(response);
+            let res;
+            try {
+                res = await server.authGoogle(response.credential);
+            } catch(err) {
+                console.error("Google login failed");
+            }
+            /*console.log("https://oauth2.googleapis.com/tokeninfo?id_token=" + response.credential);
             const responsePayload = this.decodeJWT(response.credential);
-            console.log(responsePayload);
-
+            console.log(responsePayload);*/
+            console.log(res);
+            if (typeof res === "undefined") {
+                return;
+            }
             this.dispatchEvent(
                 new CustomEvent("login", {"detail": response})
             );
@@ -700,7 +818,24 @@ const GoogleLogin = class extends EventTarget {
 const main = async function() {
     const val = await Promise.all([confLoad, domReady]);
     conf["local"] = val[0];
+
+    globalThis.localization = localization;
+
+    // load local conf
+    globalThis.ui("theme", conf["local"]["color"]);
+    setTimeout(() => {
+        globalThis.ui("mode", conf["local"]["mode"]);
+    }, 1);
     console.log(conf);
+
+    let lang = conf["local"]["lang"];
+    if (lang === "auto") {
+            lang = (navigator.language || navigator.userLanguage).substring(0,2);
+    }
+    if (localization.supportedLanguages.indexOf(lang) === -1) {
+        lang = "en";
+    }
+    localization.translate(lang);
 
     // Search dialog
     const searchDialog = new SearchDialog();
@@ -722,7 +857,6 @@ const main = async function() {
 
     // Account dialog
     const accountDialog = new AccountDialog();
-
 
 
     // New screen

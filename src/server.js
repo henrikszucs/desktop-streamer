@@ -19,7 +19,6 @@ import nodemailer from "nodemailer";
 // first-party dependencies
 import Mime from "easy-mime";
 import Communicator from "easy-communicator";
-import { type } from "node:os";
 
 const CLIENT_VERSION = "0.1.0";
 const MIN_CLIENT_VERSION = CLIENT_VERSION;
@@ -1328,7 +1327,7 @@ const Server = class {
                 const userInfo = await this.authGoogle(messageObj.data["credential"]);
                 let sessionId = undefined;
 
-                messageObj.send({"sessionId": sessionId});
+                messageObj.send({userInfo});
                 return;
             }
 
