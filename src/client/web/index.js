@@ -12,6 +12,64 @@ import localization from "./localization.js";
 
 // enviroment variables
 const isDesktop = (typeof globalThis.desktop !== "undefined");
+const checkBrowser = function() {
+    // Opera 8.0+
+    const isOpera = (!!window.opr && !!opr.addons) || !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
+
+    // Firefox 1.0+
+    const isFirefox = typeof InstallTrigger !== 'undefined';
+
+    // Safari 3.0+ "[object HTMLElementConstructor]" 
+    const isSafari = /constructor/i.test(window.HTMLElement) || (function (p) { return p.toString() === "[object SafariRemoteNotification]"; })(!window['safari'] || (typeof safari !== 'undefined' && window['safari'].pushNotification));
+
+    // Internet Explorer 6-11
+    const isIE = /*@cc_on!@*/false || !!document.documentMode;
+
+    // Edge 20+
+    const isEdge = !isIE && !!window.StyleMedia;
+
+    // Chrome 1 - 79
+    const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+
+    // Edge (based on chromium) detection
+    const isEdgeChromium = isChrome && (navigator.userAgent.indexOf("Edg") != -1);
+
+    // Blink engine detection
+    const isBlink = (isChrome || isOpera) && !!window.CSS;
+
+    return {
+        "isFirefox": isFirefox,
+        "isChrome": isChrome,
+        "isSafari": isSafari,
+        "isOpera": isOpera,
+        "isIE": isIE,
+        "isEdge": isEdge,
+        "isEdgeChromium": isEdgeChromium,
+        "isBlink": isBlink
+    };
+};
+globalThis.checkBrowser2 = () => {
+    const ua = navigator.userAgent;
+    let tem; 
+    let M = ua.match(/(opera|chrome|safari|firefox|msie|trident(?=\/))\/?\s*(\d+)/i) || [];
+    if (/trident/i.test(M[1])) {
+        tem = /\brv[ :]+(\d+)/g.exec(ua) || [];
+        return "IE " + (tem[1] || "");
+    }
+    if (M[1] === "Chrome") {
+        tem = ua.match(/\b(OPR|Edge)\/(\d+)/);
+        if (tem != null) {
+            return tem.slice(1).join(" ").replace("OPR", "Opera");
+        }
+    }
+    M = M[2]? [M[1], M[2]]: [navigator.appName, navigator.appVersion, "-?"];
+    if ((tem = ua.match(/version\/(\d+)/i))!= null) { 
+        M.splice(1, 1, tem[1]);
+    }
+    return M;
+};
+
+const browser = checkBrowser();
 const width = window.innerWidth;
 const sizeS = 600;
 const sizeM = 993;
@@ -28,8 +86,9 @@ const confLoad = new Promise(async function(resolve) {
     // key and their default values
     const vals = {
         "color": "#006e1c",
-        "mode": "light",
+        "mode": "auto",
         "lang": "auto",
+        "exitShortcuts": "[]",
         "sessionId": ""
     };
 
@@ -46,6 +105,7 @@ const confLoad = new Promise(async function(resolve) {
         result[keys[i]] = res[i];
     }
 
+    result["exitShortcuts"] = JSON.parse(result["exitShortcuts"]);
     resolve(result);
 });
 
@@ -299,130 +359,780 @@ const SettingsDialog = class {
         this.settingsBtn = document.getElementById("btn-settings");
         this.settingsDialog = document.getElementById("dialog-settings");
         this.settingsClose = document.getElementById("btn-settings-close");
-
-        this.currentScreen = document.getElementById("settings-appearance");
-        this.currentBtn = document.getElementById("btn-settings-appearance");
-        const addScreen = (btn, screen) => {
-            btn.addEventListener("click", (event) => {
-                if (this.currentScreen !== screen) {
-                    this.currentScreen.classList.add("hide");
-                    screen.classList.remove("hide");
-                    this.currentScreen = screen;
-
-                    this.currentBtn.classList.remove("primary");
-                    this.currentBtn.classList.add("fill");
-                    btn.classList.add("primary");
-                    btn.classList.remove("fill");
-                    this.currentBtn = btn;
-                }
-            });
-        };
-        addScreen(document.getElementById("btn-settings-appearance"), document.getElementById("settings-appearance"));
-        addScreen(document.getElementById("btn-settings-audio"), document.getElementById("settings-audio"));
-        addScreen(document.getElementById("btn-settings-video"), document.getElementById("settings-video"));
-        addScreen(document.getElementById("btn-settings-control"), document.getElementById("settings-control"));
-        addScreen(document.getElementById("btn-settings-about"), document.getElementById("settings-about"));
         
         // set event listeners
         this.settingsClose.addEventListener("click", () => {
             this.close();
         });
 
-        // Appearance settings
-        const themeBtn = document.getElementById("btn-appearance-theme");
-        const setThemeIcon = () => {
-            console.log("Set theme icon:", globalThis.ui("mode"));
-            if (globalThis.ui("mode") === "dark") {
-                themeBtn.children[0].innerText = "dark_mode";
-            } else {
-                themeBtn.children[0].innerText = "light_mode";
+        // device list
+        const listDevicesHelper = async function (type) {
+            const selectedDevices = [];
+            let devices = await navigator.mediaDevices.enumerateDevices();
+            for (let device of devices) {
+                if (device.kind === type && (device.deviceId !== "default" || device.deviceId !== "communications")) {
+                    selectedDevices.push(device);
+                }
             }
+            const startLenght = selectedDevices.length;
+            for (let i = startLenght - 1; i > -1; i--) {
+                if (selectedDevices[i].deviceId === "" ) {
+                    selectedDevices.splice(i, 1);
+                }
+            }
+
+            if (selectedDevices.length === 0 && startLenght !== 0) {
+                return undefined;
+            }
+            return selectedDevices;
         };
-        const setColor = async (color) => {
-            globalThis.ui("theme", color);
+        const listDevices = async function(type="audioinput") {
+            // try to list device
+            let selectedDevices = await listDevicesHelper(type);
 
-            const r = Number("0x"+color.slice(1,3));
-            const g = Number("0x"+color.slice(3,5));
-            const b = Number("0x"+color.slice(5,7));
-            const isNeedDark = 0.2126 * r + 0.7152 * g + 0.0722 * b > 127;
+            // try to get permission by accessing microphone
+            if (selectedDevices === undefined) {
+                try {
+                    const accessMediaStream = await navigator.mediaDevices.getUserMedia({"audio": true, "video": true});
+                    const accessTracks = accessMediaStream.getTracks();
+                    for (let track of accessTracks) {
+                        track.stop();
+                    }
+                } catch(err) {
+                    console.log(err);
+                }
 
-            const newMode = isNeedDark ? "dark" : "light";
-            setTimeout(() => {
-                globalThis.ui("mode", newMode);
-                setThemeIcon();
-            }, 1);
-
-            conf["local"]["color"] = color;
-            conf["local"]["mode"] = newMode;
-            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["color", color], ["mode", newMode]]);
+                // try to list device again
+                selectedDevices = await listDevicesHelper(type);
+                if (selectedDevices === undefined) {
+                    return [];
+                }
+            }
+                        
+            return selectedDevices;
         };
-        themeBtn.addEventListener("click", async () => {
-            const newMode = globalThis.ui("mode") === "dark" ? "light" : "dark";
-            globalThis.ui("mode", newMode);
-            setThemeIcon();
-            conf["local"]["mode"] = newMode;
-            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["mode", newMode]])
-        });
-        setThemeIcon();
-        document.getElementById("btn-appearance-theme-color").addEventListener("change", (event) => {
-            const color = event.target.value;
-            setColor(color);
-        });
-        document.getElementById("btn-appearance-theme-green").addEventListener("click", (event) => {
-            setColor("#006e1c");
-        });
-        document.getElementById("btn-appearance-theme-red").addEventListener("click", (event) => {
-            setColor("#f44336");
-        });
-        document.getElementById("btn-appearance-theme-pink").addEventListener("click", (event) => {
-            setColor("#e91e63");
-        });
-        document.getElementById("btn-appearance-theme-purple").addEventListener("click", (event) => {
-            setColor("#9c27b0");
-        });
-        document.getElementById("btn-appearance-theme-indigo").addEventListener("click", (event) => {
-            setColor("#3f51b5");
-        });
-        document.getElementById("btn-appearance-theme-blue").addEventListener("click", (event) => {
-            setColor("#2196f3");
-        });
-        document.getElementById("btn-appearance-theme-yellow").addEventListener("click", (event) => {
-            setColor("#ffeb3b");
-        });
-        document.getElementById("btn-appearance-theme-orange").addEventListener("click", (event) => {
-            setColor("#ff9800");
-        });
 
-        const langSelect = document.getElementById("select-appearance-lang");
-        langSelect.value = conf["local"]["lang"];
-        langSelect.addEventListener("change", async (event) => {
-            let lang = event.target.value;
-            if (lang !== "auto" && localization.supportedLanguages.indexOf(lang) === -1) {
-                lang = "auto";
-            }
-            conf["local"]["lang"] = lang;
-            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["lang", lang]]);
+        // Window classes
+        const AppearanceWindow = class {
+            constructor() {
+                this.win = document.getElementById("settings-appearance");
+                this.btn = document.getElementById("btn-settings-appearance");
+                
+                // language settings
+                this.langSelect = document.getElementById("select-appearance-lang");
+                this.langSelect.addEventListener("change", async (event) => {
+                    let lang = event.target.value;
+                    if (lang !== "auto" && localization.supportedLanguages.indexOf(lang) === -1) {
+                        lang = "auto";
+                    }
+                    conf["local"]["lang"] = lang;
+                    await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["lang", lang]]);
+                    
+                    if (lang === "auto") {
+                        lang = (navigator.language || navigator.userLanguage).substring(0,2);
+                    }
+                    if (localization.supportedLanguages.indexOf(lang) === -1) {
+                        lang = "en";
+                    }
+                    localization.setLang(lang);
+                    localization.translate(lang);
+                    
+                });
+
+                // theme settings
+                this.themeBtn = document.getElementById("btn-appearance-theme");
+                this.themeBtn.addEventListener("click", async () => {
+                    if (conf["local"]["mode"] === "auto") {
+                        conf["local"]["mode"] = "light";
+                    } else if (conf["local"]["mode"] === "light") {
+                        conf["local"]["mode"] = "dark";
+                    } else {
+                        conf["local"]["mode"] = "auto";
+                    }
+                    let mode = conf["local"]["mode"];
+                    if (mode === "auto") {
+                        mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+                    }
+                    globalThis.ui("mode", mode);
+                    this.setThemeIcon();
+                    await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["mode", conf["local"]["mode"]]]);
+                });
+                document.getElementById("btn-appearance-theme-color").addEventListener("change", (event) => {
+                    const color = event.target.value;
+                    this.setColor(color);
+                });
+                document.getElementById("btn-appearance-theme-green").addEventListener("click", (event) => {
+                    this.setColor("#006e1c");
+                });
+                document.getElementById("btn-appearance-theme-red").addEventListener("click", (event) => {
+                    this.setColor("#f44336");
+                });
+                document.getElementById("btn-appearance-theme-pink").addEventListener("click", (event) => {
+                    this.setColor("#e91e63");
+                });
+                document.getElementById("btn-appearance-theme-purple").addEventListener("click", (event) => {
+                    this.setColor("#9c27b0");
+                });
+                document.getElementById("btn-appearance-theme-indigo").addEventListener("click", (event) => {
+                    this.setColor("#3f51b5");
+                });
+                document.getElementById("btn-appearance-theme-blue").addEventListener("click", (event) => {
+                    this.setColor("#2196f3");
+                });
+                document.getElementById("btn-appearance-theme-yellow").addEventListener("click", (event) => {
+                    this.setColor("#ffeb3b");
+                });
+                document.getElementById("btn-appearance-theme-orange").addEventListener("click", (event) => {
+                    this.setColor("#ff9800");
+                });
+
+                // auto lanunch
+                this.autoLaunchLabel = document.getElementById("label-auto-launch");
+                this.autoLaunchCheckbox = document.getElementById("checkbox-auto-launch");
+                this.autoLaunchError = document.getElementById("error-auto-launch");
+                if (isDesktop) {
+                    this.autoLaunchLabel.classList.remove("hide");
+                } else {
+                    this.autoLaunchError.classList.remove("hide");
+                }
+            };
+            setThemeIcon() {
+                if (conf["local"]["mode"] === "auto") {
+                    this.themeBtn.children[0].innerText = "hdr_auto";
+                } else if (conf["local"]["mode"] === "light") {
+                    this.themeBtn.children[0].innerText = "light_mode";
+                } else {
+                    this.themeBtn.children[0].innerText = "dark_mode";
+                }
+            };
+            async setColor(color) {
+                globalThis.ui("theme", color);
+
+                /*const r = Number("0x"+color.slice(1,3));
+                const g = Number("0x"+color.slice(3,5));
+                const b = Number("0x"+color.slice(5,7));
+                const isNeedDark = 0.2126 * r + 0.7152 * g + 0.0722 * b > 127;
+
+                const newMode = isNeedDark ? "dark" : "light";
+                */
+
+                conf["local"]["color"] = color;
+                await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["color", color]]);
+            };
+            open = () => {
+                this.langSelect.value = conf["local"]["lang"];
+                this.setThemeIcon();
+
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+            };
+            close = () => {
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+            };
+        };
+
+        const AudioWindow = class {
+            constructor() {
+                this.win = document.getElementById("settings-audio");
+                this.btn = document.getElementById("btn-settings-audio");
+
+                this.audioSpeakerContext = null;
+                this.audioMicContext = null;
+
+                // system audio share
+                this.systemAudioSupport = document.getElementById("system-audio-support");
+                this.systemAudioPartial = document.getElementById("system-audio-partial");
+                this.systemAudioUnsupport = document.getElementById("system-audio-unsupport");
+                if (isDesktop) {
+                    this.systemAudioSupport.classList.remove("hide");
+                } else if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
+                    this.systemAudioPartial.classList.remove("hide");
+                } else {
+                    this.systemAudioUnsupport.classList.remove("hide");
+                }
+
+                // speaker test
+                this.speakerSelect = document.getElementById("select-audio-test");
+                this.speakerBtn = document.getElementById("btn-test-audio-test");
+                this.speakerContext = null;
+                this.speakerSource = null;
+                this.speakerBtn.addEventListener("click", async () => {
+                    if (this.speakerContext !== null) {
+                        this.speakerStop();
+                        return;
+                    }
+                    this.speakerBtn.children[0].innerText = "pause";
+
+                    const value = this.speakerSelect.value;
+                    let url;
+                    if (value === "0") {
+                        url = "/sounds/test1.mp3";
+                    } else if (value === "1") {
+                        url = "/sounds/test2.mp3";
+                    } else {
+                        url = "/sounds/test3.mp3";
+                    }
+
+                    const context = new AudioContext();
+                    const source = context.createBufferSource();
+
+                    this.speakerContext = context;
+                    this.speakerSource = source;
+
+                    const res = await fetch(url);
+                    const buffer = await res.arrayBuffer();
+                    const audioBuffer = await context.decodeAudioData(buffer);
+                    source.buffer = audioBuffer;
+                    source.connect(context.destination);
+                    source.start();
+                    source.onended = (event) => {
+                        this.speakerStop();
+                    };
+                });
+                        
+
+                // mic test
+                this.micSelect = document.getElementById("select-audio-input");
+                this.micRefresh = document.getElementById("btn-refresh-audio-input");
+                this.micTest = document.getElementById("btn-test-audio-input");
+                this.listMic = async () => {
+                    // list audio input devices
+                    const selectedDevices = await listDevices("audioinput");
+
+                    // remove all old options
+                    const select = this.micSelect;
+                    for (let i = select.options.length-1; i > -1; i--) {
+                        select.remove(i);
+                    }
+
+                    // add new options
+                    if (selectedDevices.length === 0) {
+                        select.disabled = true;
+                        const option = new Option(localization.get("settings.audio.mic.notfound"), "");
+                        select.add(option);
+                    } else {
+                        select.disabled = false;
+                        for (let device of selectedDevices) {
+                            const option = new Option(device.label || `Microphone ${select.options.length+1}`, device.deviceId);
+                            select.add(option);
+                        }
+                        select.dispatchEvent(new Event("change"));
+                    }
+                };
+                navigator.mediaDevices.addEventListener("devicechange", () => {
+                    this.listMic();
+                });
+                this.micRefresh.addEventListener("click", () => {
+                    this.listMic();
+                });
+                this.micSelect.addEventListener("change", (event) => {
+                    const deviceId = event.target.value;
+                    if (deviceId === "") {
+                        this.micTest.disabled = true;
+                    } else {
+                        this.micTest.disabled = false;
+                    }
+                });
+
+                this.micTestContext = null;
+                this.micTestStream = null;
+                this.micTestInterval = -1;
+                this.micTest.addEventListener("click", async () => {
+                    if (this.micTestContext !== null) {
+                        this.micStop();
+                        return;
+                    }
+
+                    const deviceId = this.micSelect.value;
+                    const stream = await navigator.mediaDevices.getUserMedia({"audio": {"deviceId": deviceId}});
+
+                    const audioCtx = new AudioContext();
+                    const analyser = audioCtx.createAnalyser();
+                    const source = audioCtx.createMediaStreamSource(stream);
+                    source.connect(analyser);
+
+                    this.micTestContext = audioCtx;
+                    this.micTestStream = stream;
+
+                    analyser.fftSize = 32;
+                    const bufferLength = analyser.frequencyBinCount;
+                    const dataArray = new Uint8Array(bufferLength);
+                    
+                    this.micTestInterval = setInterval(() => {
+                        analyser.getByteFrequencyData(dataArray);
+                        let sum = 0;
+                        for (let i = 0; i < bufferLength; i++) {
+                            sum = Math.max(dataArray[i]);
+                        }
+                        const avg = sum;
+                        if (avg > 50) {
+                            this.micTest.children[0].innerText = "signal_cellular_alt";
+                        } else if (avg > 26) {
+                            this.micTest.children[0].innerText = "signal_cellular_alt_2_bar";
+                        } else {
+                            this.micTest.children[0].innerText = "signal_cellular_alt_1_bar";
+                        }
+                    }, 100);
+
+                });
+
+            };
+            speakerStop() {
+                if (this.speakerContext === null) {
+                    return;
+                }
+
+                this.speakerSource.stop();
+                this.speakerSource = null;
+                this.speakerContext.close();
+                this.speakerContext = null;
+                
+                this.speakerBtn.children[0].innerText = "play_arrow";
+            };
+            micStop() {
+                if (this.micTestContext === null) {
+                    return;
+                }
+
+                this.micTestContext.close();
+                this.micTestContext = null;
+
+                const tracks = this.micTestStream.getTracks();
+                for (let track of tracks) {
+                    track.stop();
+                }
+                this.micTestStream = null;
+
+                clearInterval(this.micTestInterval);
+                this.micTestInterval = -1;
+
+                this.micTest.children[0].innerText = "play_arrow";
+            };
             
-            if (lang === "auto") {
-                lang = (navigator.language || navigator.userLanguage).substring(0,2);
-            }
-            if (localization.supportedLanguages.indexOf(lang) === -1) {
-                lang = "en";
-            }
-            localization.translate(lang);
+            open = () => {
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+                this.listMic();
+            };
+            close = () => {
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+                this.speakerStop();
+                this.micStop();
+            };
             
+        };
+
+        const VideoWindow = class {
+            constructor() {
+                this.win = document.getElementById("settings-video");
+                this.btn = document.getElementById("btn-settings-video");
+
+                // camera
+                this.cameraSelect = document.getElementById("select-camera-input");
+                this.cameraRefresh = document.getElementById("btn-camera-refresh");
+                this.cameraTest = document.getElementById("btn-camera-test");
+                this.listCam = async () => {
+                    // list audio input devices
+                    const selectedDevices = await listDevices("videoinput");
+
+                    // remove all old options
+                    const select = this.cameraSelect;
+                    for (let i = select.options.length-1; i > -1; i--) {
+                        select.remove(i);
+                    }
+
+                    // add new options
+                    if (selectedDevices.length === 0) {
+                        select.disabled = true;
+                        const option = new Option(localization.get("settings.video.cam.notfound"), "");
+                        select.add(option);
+                    } else {
+                        select.disabled = false;
+                        for (let device of selectedDevices) {
+                            const option = new Option(device.label || `Webcam ${select.options.length+1}`, device.deviceId);
+                            select.add(option);
+                        }
+                        select.dispatchEvent(new Event("change"));
+                    }
+                };
+                navigator.mediaDevices.addEventListener("devicechange", () => {
+                    this.listCam();
+                });
+                this.cameraRefresh.addEventListener("click", () => {
+                    this.listCam();
+                });
+                this.cameraSelect.addEventListener("change", (event) => {
+                    const deviceId = event.target.value;
+                    if (deviceId === "") {
+                        this.cameraTest.disabled = true;
+                    } else {
+                        this.cameraTest.disabled = false;
+                    }
+                });
+
+                this.cameraVideo = document.getElementById("video-camera-test");
+                this.cameraVideoBox = document.getElementById("video-camera-test-box");
+                this.cameraTestStream = null;
+                this.cameraTest.addEventListener("click", async () => {
+                    if (this.cameraTestStream !== null) {
+                        this.stopCam();
+                        return;
+                    }
+
+                    const deviceId = this.cameraSelect.value;
+                    const stream = await navigator.mediaDevices.getUserMedia({"video": {"deviceId": deviceId}});
+                    
+                    this.cameraVideo.srcObject = stream;
+                    this.cameraTestStream = stream;
+                    this.cameraVideoBox.classList.remove("hide");
+                    this.cameraTest.children[0].innerText = "pause";
+                });
+
+                // screen test
+                this.displaySelect = document.getElementById("select-display-input");
+                this.displayTest = document.getElementById("btn-display-test");
+                if (isDesktop) {
+                    // TODO: list electron screen sources
+                } else {
+                    this.displaySelect.disabled = true;
+                    const select = this.displaySelect;
+                    const option = new Option(localization.get("settings.video.display.notfound"), "");
+                    select.add(option);
+                    select.dispatchEvent(new Event("change"));
+                }
+
+                this.displayVideo = document.getElementById("video-display-test");
+                this.displayVideoBox = document.getElementById("video-display-test-box");
+                this.displayTestStream = null;
+                this.displayTest.addEventListener("click", async () => {
+                    if (this.displayTestStream !== null) {
+                        this.stopDisplay();
+                        return;
+                    }
+
+                    const stream = await navigator.mediaDevices.getDisplayMedia({"video": true, "audio": false});
+                    
+                    this.displayVideo.srcObject = stream;
+                    this.displayTestStream = stream;
+                    stream.getVideoTracks()[0].addEventListener("ended", () => {
+                        this.stopDisplay();
+                    });
+
+                    this.displayVideoBox.classList.remove("hide");
+                    this.displayTest.children[0].innerText = "pause";
+                });
+            };
+            stopCam() {
+                if (this.cameraTestStream === null) {
+                    return;
+                }
+                this.cameraVideo.srcObject = null;
+
+                const tracks = this.cameraTestStream.getTracks();
+                for (let track of tracks) {
+                    track.stop();
+                }
+                this.cameraTestStream = null;
+
+                this.cameraVideoBox.classList.add("hide");
+                this.cameraTest.children[0].innerText = "play_arrow";
+            };
+            stopDisplay() {
+                if (this.displayTestStream === null) {
+                    return;
+                }
+                this.displayVideo.srcObject = null;
+
+                const tracks = this.displayTestStream.getTracks();
+                for (let track of tracks) {
+                    track.stop();
+                }
+                this.displayTestStream = null;
+
+                this.displayVideoBox.classList.add("hide");
+                this.displayTest.children[0].innerText = "play_arrow";
+            };
+            open = () => {
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+                this.listCam();
+            };
+            close = () => {
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+                this.stopCam();
+                this.stopDisplay();
+            };
+        };
+
+        const ControlWindow = class {
+            constructor() {
+                this.win = document.getElementById("settings-control");
+                this.btn = document.getElementById("btn-settings-control");
+
+                // check mouse share support
+                this.mouseShareSupport = document.getElementById("mouse-share-support");
+                this.mouseShareUnsupport = document.getElementById("mouse-share-unsupport");
+                if (isDesktop) {
+                    this.mouseShareSupport.classList.remove("hide");
+                } else {
+                    this.mouseShareUnsupport.classList.remove("hide");
+                }
+
+                // exit shortcuts
+                this.shortcuts = [];
+                this.shortcutList = document.getElementById("shortcut-list");
+                this.shortcutAdd = document.getElementById("btn-shortcut-add");
+                this.shortcutAdd.addEventListener("click", async () => {
+                    const newShortcut = {
+                        "delay": "1",
+                        "keys": []
+                    };
+                    conf["local"]["exitShortcuts"].push(newShortcut);
+                    await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["exitShortcuts", JSON.stringify(conf["local"]["exitShortcuts"])]]);
+                    this.createShortcut(newShortcut["delay"], Array.from(newShortcut["keys"]).join(" + "), newShortcut);
+                });
+            };
+            createShortcut(delay, key, confobj) {
+                const el = document.createElement("div");
+                el.classList.add("shortcut-box");
+
+                // delay
+                const delayBox = document.createElement("div");
+                delayBox.classList.add("field", "label", "suffix", "border", "round", "shortcut-delay");
+                const delaySelect = document.createElement("select");
+                for (let i = 1; i < 8; i++) {
+                    const option = new Option(localization.get("settings.control.exit-shortcut.delay-unit"+i), i.toString());
+                    delaySelect.add(option);
+                    option.value = i.toString();
+                }
+                delaySelect.value = delay;
+                if (typeof confobj === "undefined") {
+                    delaySelect.disabled = true;
+                } else {
+                    delaySelect.addEventListener("change", async (event) => {
+                        confobj["delay"] = event.target.value;
+                        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["exitShortcuts", JSON.stringify(conf["local"]["exitShortcuts"])]]);
+                    });
+                }
+                delayBox.appendChild(delaySelect);
+                const delayLabel = document.createElement("label");
+                delayLabel.innerText = localization.get("settings.control.exit-shortcut.delay");
+                delayBox.appendChild(delayLabel);
+                const delayIcon = document.createElement("i");
+                delayIcon.innerText = "arrow_drop_down";
+                delayBox.appendChild(delayIcon);
+                el.appendChild(delayBox);
+
+                // key and delete
+                const elSub = document.createElement("div");
+                elSub.classList.add("shortcut-box-sub");
+
+                const keyBox = document.createElement("div");
+                keyBox.classList.add("field", "label", "border", "round", "shortcut-key");
+                const keyInput = document.createElement("input");
+                keyInput.type = "text";
+                if (key === "") {
+                    keyInput.value = localization.get("settings.control.exit-shortcut.none");
+                } else {
+                    keyInput.value = key;
+                }
+                if (typeof confobj === "undefined") {
+                    keyInput.disabled = true;
+                } else {
+                    let firstKey = "";
+                    const allkeys = new Set();
+                    keyInput.addEventListener("keydown", (event) => {
+                        event.preventDefault();
+                        const key = event.key;
+                        if (firstKey === "") {
+                            allkeys.clear();
+                            firstKey = key;
+                        }
+                        allkeys.add(key);
+                        event.target.value = Array.from(allkeys).join(" + ");
+                    });
+                    keyInput.addEventListener("keyup", async (event) => {
+                        event.preventDefault();
+                        const key = event.key;
+                        if (key === firstKey) {
+                            firstKey = "";
+                            confobj["keys"] = Array.from(allkeys);
+                            await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["exitShortcuts", JSON.stringify(conf["local"]["exitShortcuts"])]]);
+                        }
+                    });
+                }
+                keyBox.appendChild(keyInput);
+                const keyLabel = document.createElement("label");
+                keyLabel.innerText = localization.get("settings.control.exit-shortcut.key");
+                keyBox.appendChild(keyLabel);
+                elSub.appendChild(keyBox);
+
+                const deleteBox = document.createElement("div");
+                deleteBox.classList.add("shortcut-delete");
+                if (typeof confobj === "undefined") {
+                    deleteBox.style.visibility = "hidden";
+                } else {
+                    deleteBox.addEventListener("click", async () => {
+                        el.remove();
+                        const exitShortcuts = conf["local"]["exitShortcuts"];
+                        exitShortcuts.splice(exitShortcuts.indexOf(confobj), 1);
+                        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["exitShortcuts", JSON.stringify(exitShortcuts)]]);
+                    });
+                }
+                const deleteBtn = document.createElement("button");
+                const deleteIcon = document.createElement("i");
+                deleteIcon.innerText = "delete";
+                deleteBtn.appendChild(deleteIcon);
+                deleteBox.appendChild(deleteBtn);
+                elSub.appendChild(deleteBox);
+
+                el.appendChild(elSub);
+
+                this.shortcuts.push(el);
+                this.shortcutList.appendChild(el);
+                return [el, keyInput, deleteBtn];
+            };
+            deleteShortcut(el) {
+                el.remove();
+            };
+            open = () => {
+                this.shortcuts = [];
+                // add browser specific shortcuts
+                if (isDesktop === false) {
+                    this.createShortcut("1", "ESC");
+                    this.createShortcut("1", "F11");
+                }
+                // add user defined shortcuts
+                for (const shortcut of conf["local"]["exitShortcuts"]) {
+                    this.createShortcut(shortcut["delay"], Array.from(shortcut["keys"]).join(" + "), shortcut);
+                }
+                
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+            };
+            close = () => {
+                for (const shortcut of this.shortcuts) {
+                    this.deleteShortcut(shortcut);
+                }
+
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+            };
+        };
+
+        const AboutWindow = class {
+            constructor() {
+                this.win = document.getElementById("settings-about");
+                this.btn = document.getElementById("btn-settings-about");
+
+                this.version = document.getElementById("about-version");
+                this.version.innerText = conf["http"]["version"];
+
+                this.supported = document.getElementById("about-supported");
+                let isMissing = false;
+
+                // check autolaunch support
+                this.autoLanuch = document.getElementById("about-auto-launch");
+                if (isDesktop === false) {
+                    isMissing = true;
+                    this.autoLanuch.classList.remove("hide");
+                }
+
+                // check system audio share support
+                this.systemAudio = document.getElementById("about-audio");
+                this.systemAudio2 = document.getElementById("about-audio-unsupported");
+                if (isDesktop === false) {
+                    isMissing = true;
+                    if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
+                        this.systemAudio.classList.remove("hide");
+                    } else {
+                        this.systemAudio2.classList.remove("hide");
+                    }
+                }
+
+                // check screen share support
+                this.screenShare = document.getElementById("about-screen");
+                if (isDesktop === false) {
+                    isMissing = true;
+                    this.screenShare.classList.remove("hide");
+                }
+
+                // check control share support
+                this.controlShare = document.getElementById("about-control");
+                if (isDesktop === false) {
+                    isMissing = true;
+                    this.controlShare.classList.remove("hide");
+                }
+
+                if (isMissing === false) {
+                    this.supported.classList.remove("hide");
+                }
+            };
+            open = () => {
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+            };
+            close = () => {
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+            };
+        };
+        
+        const appearanceWindow = new AppearanceWindow();
+        const audioWindow = new AudioWindow();
+        const videoWindow = new VideoWindow();
+        const controlWindow = new ControlWindow();
+        const aboutWindow = new AboutWindow();
+
+        // category change
+        this.currentWindow = appearanceWindow;
+        document.getElementById("btn-settings-appearance").addEventListener("click", () => {
+            this.changeWindow(appearanceWindow);
         });
+        document.getElementById("btn-settings-audio").addEventListener("click", () => {
+            this.changeWindow(audioWindow);
+        });
+        document.getElementById("btn-settings-video").addEventListener("click", () => {
+            this.changeWindow(videoWindow);
+        });
+        document.getElementById("btn-settings-control").addEventListener("click", () => {
+            this.changeWindow(controlWindow);
+        });
+        document.getElementById("btn-settings-about").addEventListener("click", () => {
+            this.changeWindow(aboutWindow);
+        });
+    };
+    changeWindow(window) {
+        this.currentWindow.close();
+        window.open();
+        this.currentWindow = window;
     };
     open = () => {
         this.overlay.classList.add("active");
         this.settingsDialog.classList.add("active");
         this.overlay.addEventListener("click", this.close);
+        this.currentWindow.open();
     };
     close = () => {
         this.overlay.classList.remove("active");
         this.settingsDialog.classList.remove("active");
         this.overlay.removeEventListener("click", this.close);
+        this.currentWindow.close();
     };
+    
 };
 
 const AccountDialog = class {
@@ -819,14 +1529,15 @@ const main = async function() {
     const val = await Promise.all([confLoad, domReady]);
     conf["local"] = val[0];
 
-    globalThis.localization = localization;
-
     // load local conf
     globalThis.ui("theme", conf["local"]["color"]);
     setTimeout(() => {
-        globalThis.ui("mode", conf["local"]["mode"]);
+        let mode = conf["local"]["mode"];
+        if (mode === "auto") {
+            mode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? "dark" : "light";
+        }
+        globalThis.ui("mode", mode);
     }, 1);
-    console.log(conf);
 
     let lang = conf["local"]["lang"];
     if (lang === "auto") {
@@ -835,7 +1546,12 @@ const main = async function() {
     if (localization.supportedLanguages.indexOf(lang) === -1) {
         lang = "en";
     }
+    localization.setLang(lang);
     localization.translate(lang);
+
+    console.log(conf);
+    globalThis.localization = localization;
+
 
     // Search dialog
     const searchDialog = new SearchDialog();
@@ -884,6 +1600,7 @@ const main = async function() {
     // Login screen
     const loginScreen = new LoginScreen();
     document.getElementById("btn-login").addEventListener("click", () => {
+        document.getElementById("btn-user-circle").blur();
         window.history.pushState({}, "", "/" + "login");
         loadPath();
     });
@@ -1041,6 +1758,7 @@ const main = async function() {
         }
 
         loadingDialog.close();
+        switchDialog(emptyDialog);
         loadPath();
     };
     if (server.isOnline) {
@@ -1048,6 +1766,7 @@ const main = async function() {
     }
     server.addEventListener("online", switchOnline);
     server.addEventListener("offline", function() {
+        switchDialog(emptyDialog);
         loadingDialog.open();
     });
 };

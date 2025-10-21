@@ -57,7 +57,7 @@
             <button class="circle large transparent" id="btn-settings">
                 <i>settings</i>
             </button>
-            <button class="circle large fill">
+            <button class="circle large fill" id="btn-user-circle">
                 <img class="responsive" src="/icons/guest.svg" height="32" id="btn-user">
                 <menu class="border left no-wrap " id="btn-user-menu-login">
                     <li id="btn-login">
@@ -194,7 +194,7 @@
                     <i>close</i>
                 </button>
             </nav>
-            <div>
+            <div class="no-round">
                 <div>
                     <button class="primary small-margin" id="btn-settings-appearance">
                         <i>palette</i>
@@ -223,6 +223,17 @@
                         <h5 class="small-margin" data-i18n="settings.appearance.title">Apperance settings</h5>
                         <div class="small-margin">
                             <fieldset>
+                                <legend data-i18n="settings.appearance.lang">Language</legend>
+                                <div class="field suffix border round select-appearance-lang">
+                                    <select id="select-appearance-lang">
+                                        <option value="auto" data-i18n="settings.appearance.autolang">-- Automatic selection --</option>
+                                        <option value="en">English</option>
+                                        <option value="hu">Magyar</option>
+                                    </select>
+                                    <i>arrow_drop_down</i>
+                                </div>
+                            </fieldset>
+                            <fieldset>
                                 <legend data-i18n="settings.appearance.theme">Theme color</legend>
                                 <nav class="wrap">
                                     <button class="chip circle small" id="btn-appearance-theme">
@@ -243,33 +254,184 @@
                                 </nav>
                             </fieldset>
                             <fieldset>
-                                <legend data-i18n="settings.appearance.lang">Language</legend>
-                                <div class="field suffix border round">
-                                    <select id="select-appearance-lang">
-                                        <option value="auto" data-i18n="settings.appearance.autolang">-- Automatic selection --</option>
-                                        <option value="en">English</option>
-                                        <option value="hu">Magyar</option>
-                                    </select>
-                                    <i>arrow_drop_down</i>
-                                </div>
+                                <legend data-i18n="settings.appearance.autostart.title">Auto startup</legend>
+                                <label class="checkbox hide" id=label-auto-launch">
+                                    <input type="checkbox" id="checkbox-auto-launch">
+                                    <span data-i18n="settings.appearance.autostart.checkbox">Launch with the system</span>
+                                </label>
+                                <span class="error-text hide" id="error-auto-launch" data-i18n="settings.appearance.autostart.error">Auto lanuch not supported.</span>
                             </fieldset>
                         </div>
                     </div>
                     <!-- Audio settings -->
                     <div id="settings-audio" class="hide">
+                        <h5 class="small-margin" data-i18n="settings.audio.title">Apperance settings</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.audio.system.title">System audio share</legend>
+                                <span class="green-text hide" id="system-audio-support" data-i18n="settings.audio.system.supported">Fully supported</span>
+                                <span class="tertiary-text hide" id="system-audio-partial" data-i18n="settings.audio.system.partial">Only manual share supported</span>
+                                <span class="error-text hide" id="system-audio-unsupport" data-i18n="settings.audio.system.unsupported">System audio share not supported</span>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.audio.speaker.title">Speakers</legend>
+                                <div class="audio-test">
+                                    <div class="field suffix border round select-audio-test">
+                                        <select id="select-audio-test">
+                                            <option value="0" data-i18n="settings.audio.speaker.test1">Test sound 1</option>
+                                            <option value="1" data-i18n="settings.audio.speaker.test2">Test sound 2</option>
+                                            <option value="2" data-i18n="settings.audio.speaker.test3">Test sound 3</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-test-audio-test">
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.audio.mic.title">Microphones</legend>
+                                <div class="audio-input">
+                                    <div class="field suffix border round select-audio-input">
+                                        <select id="select-audio-input" disabled>
+                                            <option data-i18n="settings.audio.mic.notfound">No Microphone</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-refresh-audio-input">
+                                            <i>refresh</i>
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-test-audio-input" disabled>
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
                     </div>
                     <!-- Video settings -->
                     <div id="settings-video" class="hide">
+                        <h5 class="small-margin" data-i18n="settings.video.title">Video settings</h5>
+                        <fieldset>
+                            <legend data-i18n="settings.video.cam.title">Webcams</legend>
+                            <div class="select-camera-input-box">
+                                <div class="field suffix border round select-camera-input">
+                                    <select id="select-camera-input" disabled>
+                                        <option data-i18n="settings.video.cam.notfound">No webcam detected</option>
+                                    </select>
+                                    <i>arrow_drop_down</i>
+                                </div>
+                                <div>
+                                    <button class="circle large" id="btn-camera-refresh">
+                                        <i>refresh</i>
+                                    </button>
+                                </div>
+                                <div>
+                                    <button class="circle large" id="btn-camera-test" disabled>
+                                        <i>play_arrow</i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="hide" id="video-camera-test-box">
+                                <div class="video-container">
+                                    <video class="video" id="video-camera-test" autoplay="true"></video>
+                                </div>
+                            </div>
+                        </fieldset>
+                        <fieldset>
+                            <legend data-i18n="settings.video.display.title">Screen share</legend>
+                            <div class="select-display-input-box">
+                                <div class="field suffix border round select-display-input">
+                                    <select id="select-display-input" disabled>
+                                        <option data-i18n="settings.video.display.notfound">Only manual share supported</option>
+                                    </select>
+                                    <i>arrow_drop_down</i>
+                                </div>
+                                <div>
+                                    <button class="circle large" id="btn-display-test">
+                                        <i>play_arrow</i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="hide" id="video-display-test-box">
+                                <div class="video-container">
+                                    <video class="video" id="video-display-test" autoplay="true"></video>
+                                </div>
+                            </div>
+                        </fieldset>
                     </div>
                     <!-- Control settings -->
                     <div id="settings-control" class="hide">
+                        <h5 class="small-margin">Control settings</h5>
+                        <fieldset>
+                            <legend data-i18n="settings.control.control-share.title">Control share</legend>
+                            <div class="mouse-share">
+                                <span class="green-text hide" id="mouse-share-support" data-i18n="settings.control.control-share.supported">Fully supported</span>
+                                <span class="error-text hide" id="mouse-share-unsupport" data-i18n="settings.control.control-share.unsupported">Constol share not supported</span>
+                            </div>
+                        </fieldset>
+                        <fieldset>
+                            <legend data-i18n="settings.control.exit-shortcut.title">Fullscreen exit</legend>
+                            <div id="shortcut-list">
+                                <!--
+                                <div class="shortcut-box">
+                                    <div class="field label suffix border round shortcut-delay">
+                                        <select disabled>
+                                            <option>No delay</option>
+                                            <option>1 second</option>
+                                            <option>2 seconds</option>
+                                            <option>3 seconds</option>
+                                            <option>5 seconds</option>
+                                            <option>8 seconds</option>
+                                            <option>10 seconds</option>
+                                        </select>
+                                        <label>Holding time</label>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div class="shortcut-box-sub">
+                                        <div class="field label border round shortcut-key">
+                                            <input type="text" value="F11" disabled/>
+                                            <label>Key</label>
+                                        </div>
+                                        <div class="shortcut-delete">
+                                            <button class="circle large" disabled>
+                                                <i>delete</i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                -->
+                            </div>
+                            <button id="btn-shortcut-add">
+                                <i>add</i>
+                                <span data-i18n="settings.control.exit-shortcut.add">Add shortcut</span>
+                            </button>
+                        </fieldset>
                     </div>
                     <!-- About -->
                     <div id="settings-about" class="hide">
-                        <h5 class="small-margin">About Desktop Streamer</h5>
+                        <h5 class="small-margin" data-i18n="settings.about.title">About Desktop Streamer</h5>
                         <div class="small-margin">
-                            <p>Version: 1.0.0</p>
-                            <p>Desktop Streamer is an open source project that allows you to access your desktop remotly through a simple web interface. It is built with Electron and Node.js.</p>
+                            <p><span data-i18n="settings.about.version">Version:</span> <span id="about-version">1.0.0</span></p>
+                            <p data-i18n="settings.about.description">Desktop Streamer is an open source project that allows you to access your desktop remotly through a simple web interface. It is built with Electron and Node.js.</p>
+                            <fieldset style="display: flex; flex-direction: column;">
+                                <legend data-i18n="settings.about.missing-features">Missing features</legend>
+                                <span class="green-text hide" id="about-supported">&bull;<span data-i18n="settings.about.supported">Nothing missing, all features are supported.</span></span>
+
+                                <span class="error-text hide" id="about-auto-launch">&bull;<span data-i18n="settings.about.auto-launch">Auto launch: not supported</span></span>
+
+                                <span class="tertiary-text hide" id="about-audio">&bull;<span data-i18n="settings.about.system-audio">System audio share: only manual share</span></span>
+                                <span class="error-text hide" id="about-audio-unsupported">&bull;<span data-i18n="settings.about.system-audio-unsupported">System audio share: not supported</span></span>
+
+                                <span class="tertiary-text hide" id="about-screen">&bull;<span data-i18n="settings.about.screen-share">Screen share: only manual select</span></span>
+
+                                <span class="error-text hide" id="about-control">&bull;<span data-i18n="settings.about.control-share">Control share: not supported</span></span>
+                            </fieldset>
                         </div>
                     </div>
                 </div>

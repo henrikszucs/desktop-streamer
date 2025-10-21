@@ -80,6 +80,22 @@ body.dark {
     display: none !important;
 }
 
+/* video fix */
+.video-container {
+    position: relative;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available
+}
+
+.video {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    object-fit: contain; /* Not necessary in Chrome */
+    background-color: black;
+}
+
 /* Side menu fix */
 .nav-side-fix > a {
     justify-content: flex-start;
@@ -141,13 +157,14 @@ body.dark {
 
 .multicolumn-dialog > div > div:nth-child(2) {
     overflow: auto;
-    padding-left: 16px;
     flex: 2;
+    padding-right: 12px;
 }
 
 @media only screen and (max-width: 720px) {
     .multicolumn-dialog {
         width: 97vw;
+        padding: 16px;
     }
 }
 @media only screen and (min-width: 720px) and (max-width: 993px) {
@@ -160,6 +177,149 @@ body.dark {
         width: 70vw;
     }
 }
+
+
+/* Language style */
+.select-appearance-lang {
+    margin: 0 !important;
+}
+
+/* Audio style */
+.select-audio-test {
+    margin: 0 !important;
+    width: -moz-available;
+    width: 100%;
+    width: -webkit-fill-available;
+}
+
+.audio-test {
+    display: flex;
+    justify-content: space-between;
+}
+
+@media only screen and (max-width: 500px) {
+    .audio-test {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    .audio-test > div:nth-child(2) {
+        padding: 10px;
+    }
+}
+
+.select-audio-input {
+    width: -moz-available;
+    width: 100%;
+    width: -webkit-fill-available;
+    margin: 0;
+}
+
+.audio-input {
+    display: flex;
+    justify-content: space-between;
+}
+
+@media only screen and (max-width: 500px) {
+    .audio-input {
+        flex-wrap: wrap;
+    }
+    .audio-input > div:nth-child(2) {
+        padding: 10px;
+    }
+    .audio-input > div:nth-child(3) {
+        padding: 10px;
+    }
+}
+
+/* Video style */
+
+.select-camera-input {
+    margin: 0;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+.select-camera-input-box {
+    display: flex;
+    justify-content: space-between;
+}
+
+#video-camera-test-box {
+    display: flex;
+    justify-content: center;
+    padding-top: 20px;
+    height: 280px;
+}
+
+.select-display-input {
+    margin: 0;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+.select-display-input-box {
+    display: flex;
+    justify-content: space-between;
+}
+
+#video-display-test-box {
+    justify-content: center;
+    display: flex;
+    padding-top: 20px;
+    height: 280px;
+}
+
+
+/* Control style */
+
+.mouse-share {
+    display: flex;
+    justify-content: space-between;
+    flex-direction: column;
+}
+
+.shortcut-box {
+    display: flex;
+    justify-content: space-between;
+}
+
+@media only screen and (max-width: 500px) {
+    .shortcut-box {
+        flex-wrap: wrap;
+    }
+}
+
+.shortcut-box-sub {
+    display: flex;
+}
+
+.shortcut-delay {
+    width: 50%;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+@media only screen and (max-width: 500px) {
+    .shortcut-delay {
+        width: 100%;
+        width: -moz-available;
+        width: -webkit-fill-available;
+    }
+}
+
+.shortcut-key {
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.shortcut-delete {
+    min-width: fit-content;
+    align-self: center;
+}
+
+
 
 
 /* Room dialog */

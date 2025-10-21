@@ -15,7 +15,7 @@ npm run server
 
 ### Uninstall
 ```
-npm run uninstall
+npm run uninstall -- --bin
 ```
 
 ### Custom configuration
@@ -60,10 +60,11 @@ server configuration file path: server/conf/conf.json
         }
     },
     "ws": {
+        "domain": "localhost",          //access domain for non web clients (only if http domain not presented)
         "port": 444,
-        "key": "server.key",                //private key path
-        "cert": "server.crt",               //private cert path
-        "database": {                       //MySQL server connection
+        "key": "server.key",            //private key path
+        "cert": "server.crt",           //private cert path
+        "database": {                   //MySQL server connection
             "type": "mysql",
             "host": "localhost",
             "port": 3306,
@@ -71,7 +72,7 @@ server configuration file path: server/conf/conf.json
             "pass": "root",
             "db": "desktop_streamer"
         },
-        "emails": [                           //email sending connections with smtp
+        "emails": [                     //email sending connections with smtp
             {
                 "host": "",
                 "port": 567,

@@ -1,0 +1,2 @@
+delete: default_app.asar
+add: ffmpeg binary
