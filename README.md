@@ -128,5 +128,6 @@ server configuration file path: server/conf/conf.json
 │   ├── client/electron - ElectronJS deps (large file and not saved)
 │   └── client/web - web UI files
 ├── conf - configuration files
+├── bin - prebuild electron client binaries with ffmpeg
 └── tmp - temporary folder for generated files
 ```

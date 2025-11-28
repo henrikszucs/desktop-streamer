@@ -25,9 +25,10 @@ const createMainWindow = function(url) {
         "icon": path.join(app.getAppPath(), "icons/icon-32.png"),
         "webPreferences": {
             "partition": partition,
-            "contextIsolation": false,
-            "nodeIntegration": true,
+            "contextIsolation": true,
+            "nodeIntegration": false,
             "nodeIntegrationInWorker": false,
+            "preload": path.join(app.getAppPath(), "src/client/electron/preload.js"),
             "devTools": true
         }
     });
@@ -181,6 +182,8 @@ const main = async function() {
                 });
             }
             return sourcesOutput;
+        } else if (hangle === "change-language") {
+
         }
     };
     ipcMain.on("api", async function(event, ...args) {

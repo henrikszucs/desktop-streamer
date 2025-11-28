@@ -1,2 +1,3 @@
 delete: default_app.asar
-add: ffmpeg binary
+modify icon on windows
+

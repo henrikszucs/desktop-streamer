@@ -623,21 +623,25 @@ const compileClients = async function(conf) {
         await fs.rm(path.join(compilePath, file), { "recursive": true, "force": true });
     }
 
-    // read electron dist
+    // read available native libs
+    const nativePath = path.join(serverScriptPath, "client", "native");
+    const nativeLibs = await fs.readdir(nativePath);
+
+    // read binary dists (filter with native libs)
     const dists = [];
     const roots = await fs.readdir(sourcePath);
     for (const root of roots) {
         const rootPath = path.join(sourcePath, root);
         const rootInfo = path.basename(rootPath, path.extname(rootPath)).split("-");
         const rootStat = await fs.stat(rootPath);
-        if (rootStat.isDirectory() && rootInfo.length === 2) {
+        if (rootStat.isDirectory() && rootInfo.length === 2 && nativeLibs.includes(rootInfo[0] + "-" + rootInfo[1])) {
             dists.push({
                 "path": rootPath,
                 "os": rootInfo[0],
                 "arch": rootInfo[1],
                 "isZip": false
             });
-        } else if (rootStat.isFile() && path.extname(rootPath) === ".zip" && rootInfo.length === 2) {
+        } else if (rootStat.isFile() && path.extname(rootPath) === ".zip" && rootInfo.length === 2 && nativeLibs.includes(rootInfo[0] + "-" + rootInfo[1])) {
             dists.push({
                 "path": rootPath,
                 "os": rootInfo[0],
@@ -682,7 +686,6 @@ const compileClients = async function(conf) {
     const electronFiles = await fs.readdir(electronPath, {"recursive": true});
 
     // go through the dists
-    
     for (const dist of dists) {
         process.stdout.write("\n    Compiling " + dist["os"] + "-" + dist["arch"] + "...    ");
 
@@ -693,15 +696,37 @@ const compileClients = async function(conf) {
         if (dist["isZip"] === true) {
             const zipData = await fs.readFile(dist["path"]);
             const distZip = await JSZip.loadAsync(zipData);
+            const files = distZip.files;
+            
+            // delete asar default app file
+            let deleteFile = "resources/default_app.asar";
+            if (dist["os"] === "darwin") {
+                deleteFile = "Electron.app/Contents/Resources/default_app.asar";
+            }
+            if (typeof files[deleteFile] !== "undefined") {
+                delete files[deleteFile];
+            }
+
+            console.log(files);
+            
             for (let file in distZip.files) {
                 const fileContents =  await distZip.files[file].async("arraybuffer");
-                file = file.substring(file.indexOf("/") + 1);
-                console.log(file);
                 zip.file(file, fileContents);
             }
         } else {
-            const distFiles = await fs.readdir(dist["path"], {"recursive": true});
-            for (const file of distFiles) {
+            const files = await fs.readdir(dist["path"], {"recursive": true});
+
+            // delete asar default app file
+            let deleteFile = path.join("resources", "default_app.asar")
+            if (dist["os"] === "darwin") {
+                deleteFile = path.join("Electron.app", "Contents", "Resources", "default_app.asar");
+            }
+            const asarIndex = files.splice(files.indexOf(deleteFile), 1);
+            if (asarIndex !== -1) {
+                files.splice(asarIndex, 1);
+            }
+
+            for (const file of files) {
                 const filePath = path.join(dist["path"], file);
                 const isDir = (await fs.stat(filePath)).isDirectory();
                 if (isDir) {
@@ -715,11 +740,11 @@ const compileClients = async function(conf) {
         
         // go select destination to common parts
         let commonDest = path.join("resources", "app");
-        if (dist["os"] === "macos") {
+        if (dist["os"] === "darwin") {
             commonDest = path.join("Electron.app", "Contents", "Resources", "app");
         }
 
-        //copy web and electron files
+        //copy web files
         for (const file of webFiles) {
             const filePath = path.join(webPath, file);
             const isDir = (await fs.stat(filePath)).isDirectory();
@@ -730,8 +755,24 @@ const compileClients = async function(conf) {
                 zip.file(path.join(commonDest, file), fileContents);
             }
         }
+
+        // copy electron files
         for (const file of electronFiles) {
             const filePath = path.join(electronPath, file);
+            const isDir = (await fs.stat(filePath)).isDirectory();
+            if (isDir) {
+                zip.folder(path.join(commonDest, file));
+            } else {
+                const fileContents = await fs.readFile(filePath);
+                zip.file(path.join(commonDest, file), fileContents);
+            }
+        }
+
+        // copy native lib files
+        const nativeLibPath = path.join(nativePath, dist["os"] + "-" + dist["arch"]);
+        const nativeLibFiles = await fs.readdir(nativeLibPath, {"recursive": true});
+        for (const file of nativeLibFiles) {
+            const filePath = path.join(nativeLibPath, file);
             const isDir = (await fs.stat(filePath)).isDirectory();
             if (isDir) {
                 zip.folder(path.join(commonDest, file));
