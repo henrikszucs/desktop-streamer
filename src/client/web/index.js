@@ -3,6 +3,8 @@
 // load dependencies
 import IDB from "./libs/idb/idb.js";
 import Communicator from "./libs/communicator/communicator.js";
+import {BrowserAudioEncoder} from "./libs/ffmpeg-chunkifier/encoder-browser.js";
+import {Decoder, Player} from "./libs/ffmpeg-chunkifier/decoder.js";
 
 //load configuration
 import conf from "./conf.js";
@@ -10,8 +12,13 @@ import localization from "./localization.js";
 
 
 
-// enviroment variables
-const isDesktop = (typeof globalThis.desktop !== "undefined");
+// desktop enviroment
+const desktop = {
+    "isAvailable": false
+};
+globalThis.desktop = desktop;   // for debugging
+
+// general enviroment
 const checkBrowser = function() {
     // Opera 8.0+
     const isOpera = (!!window.opr && !!opr.addons) || !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
@@ -29,7 +36,7 @@ const checkBrowser = function() {
     const isEdge = !isIE && !!window.StyleMedia;
 
     // Chrome 1 - 79
-    const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+    const isChrome = !!window.chrome;
 
     // Edge (based on chromium) detection
     const isEdgeChromium = isChrome && (navigator.userAgent.indexOf("Edg") != -1);
@@ -48,7 +55,7 @@ const checkBrowser = function() {
         "isBlink": isBlink
     };
 };
-globalThis.checkBrowser2 = () => {
+const checkBrowser2 = () => {
     const ua = navigator.userAgent;
     let tem; 
     let M = ua.match(/(opera|chrome|safari|firefox|msie|trident(?=\/))\/?\s*(\d+)/i) || [];
@@ -88,6 +95,8 @@ const confLoad = new Promise(async function(resolve) {
         "color": "#006e1c",
         "mode": "auto",
         "lang": "auto",
+        "autoLaunch": false,
+        "minimizing": false,
         "exitShortcuts": "[]",
         "sessionId": ""
     };
@@ -436,7 +445,10 @@ const SettingsDialog = class {
                     }
                     localization.setLang(lang);
                     localization.translate(lang);
-                    
+                    if (desktop.isAvailable) {
+                        desktop.ipcRenderer.send("api", "set-lang", lang);
+                    }
+
                 });
 
                 // theme settings
@@ -486,15 +498,50 @@ const SettingsDialog = class {
                     this.setColor("#ff9800");
                 });
 
+                // tray setting
+                this.trayCheckbox = document.getElementById("checkbox-tray");
+                this.trayLabel = document.getElementById("label-tray");
+                this.trayError = document.getElementById("error-tray");
+                if (desktop.isAvailable) {
+                    this.trayLabel.classList.remove("hide");
+                    this.trayCheckbox.checked = conf["local"]["minimizing"];
+                    this.trayCheckbox.addEventListener("change", async (event) => {
+                        const isChecked = event.target.checked;
+                        conf["local"]["minimizing"] = isChecked;
+                        desktop.ipcRenderer.send("api", "set-tray", isChecked);
+                        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["minimizing", isChecked]]);
+                    });
+                } else {
+                    this.trayError.classList.remove("hide");
+                }
+
                 // auto lanunch
                 this.autoLaunchLabel = document.getElementById("label-auto-launch");
                 this.autoLaunchCheckbox = document.getElementById("checkbox-auto-launch");
                 this.autoLaunchError = document.getElementById("error-auto-launch");
-                if (isDesktop) {
+                if (desktop.isAvailable) {
                     this.autoLaunchLabel.classList.remove("hide");
+                    console.log(desktop.autoLaunch);
+                    desktop.autoLaunch.isEnabled().then((isEnabled) => {
+                        this.autoLaunchCheckbox.checked = isEnabled;
+                    });
+                    this.autoLaunchCheckbox.addEventListener("change", async (event) => {
+                        const isChecked = event.target.checked;
+                        if (isChecked) {
+                            await desktop.autoLaunch.enable();
+                        } else {
+                            await desktop.autoLaunch.disable();
+                        }
+                        const isEnabled = await desktop.autoLaunch.isEnabled();
+                        event.target.checked = isEnabled;
+                        conf["local"]["autoLaunch"] = isEnabled;
+                        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [["autoLaunch", isEnabled]]);
+                    });
+
                 } else {
                     this.autoLaunchError.classList.remove("hide");
                 }
+
             };
             setThemeIcon() {
                 if (conf["local"]["mode"] === "auto") {
@@ -542,11 +589,20 @@ const SettingsDialog = class {
                 this.audioSpeakerContext = null;
                 this.audioMicContext = null;
 
+                // decoder support
+                this.decoderAudioSupport = document.getElementById("decoder-audio-support");
+                this.decoderAudioUnsupport = document.getElementById("decoder-audio-unsupport");
+                if (typeof AudioDecoder !== "undefined") {
+                    this.decoderAudioSupport.classList.remove("hide");
+                } else {
+                    this.decoderAudioUnsupport.classList.remove("hide");
+                }
+
                 // system audio share
                 this.systemAudioSupport = document.getElementById("system-audio-support");
                 this.systemAudioPartial = document.getElementById("system-audio-partial");
                 this.systemAudioUnsupport = document.getElementById("system-audio-unsupport");
-                if (isDesktop) {
+                if (desktop.isAvailable) {
                     this.systemAudioSupport.classList.remove("hide");
                 } else if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
                     this.systemAudioPartial.classList.remove("hide");
@@ -559,6 +615,9 @@ const SettingsDialog = class {
                 this.speakerBtn = document.getElementById("btn-test-audio-test");
                 this.speakerContext = null;
                 this.speakerSource = null;
+                this.speakerSelect.addEventListener("change", (event) => {
+                    this.speakerStop();
+                });
                 this.speakerBtn.addEventListener("click", async () => {
                     if (this.speakerContext !== null) {
                         this.speakerStop();
@@ -733,6 +792,15 @@ const SettingsDialog = class {
                 this.win = document.getElementById("settings-video");
                 this.btn = document.getElementById("btn-settings-video");
 
+                // decoder support
+                this.decoderVideoSupport = document.getElementById("decoder-video-support");
+                this.decoderVideoUnsupport = document.getElementById("decoder-video-unsupport");
+                if (typeof VideoDecoder !== "undefined") {
+                    this.decoderVideoSupport.classList.remove("hide");
+                } else {
+                    this.decoderVideoUnsupport.classList.remove("hide");
+                }
+
                 // camera
                 this.cameraSelect = document.getElementById("select-camera-input");
                 this.cameraRefresh = document.getElementById("btn-camera-refresh");
@@ -755,7 +823,7 @@ const SettingsDialog = class {
                     } else {
                         select.disabled = false;
                         for (let device of selectedDevices) {
-                            const option = new Option(device.label || `Webcam ${select.options.length+1}`, device.deviceId);
+                            const option = new Option(device.label || localization.get("settings.video.cam.name") + " " + select.options.length+1, device.deviceId);
                             select.add(option);
                         }
                         select.dispatchEvent(new Event("change"));
@@ -796,37 +864,170 @@ const SettingsDialog = class {
 
                 // screen test
                 this.displaySelect = document.getElementById("select-display-input");
+                this.displayRefresh = document.getElementById("btn-display-refresh");
                 this.displayTest = document.getElementById("btn-display-test");
-                if (isDesktop) {
-                    // TODO: list electron screen sources
-                } else {
-                    this.displaySelect.disabled = true;
-                    const select = this.displaySelect;
-                    const option = new Option(localization.get("settings.video.display.notfound"), "");
-                    select.add(option);
-                    select.dispatchEvent(new Event("change"));
-                }
-
                 this.displayVideo = document.getElementById("video-display-test");
                 this.displayVideoBox = document.getElementById("video-display-test-box");
                 this.displayTestStream = null;
-                this.displayTest.addEventListener("click", async () => {
-                    if (this.displayTestStream !== null) {
-                        this.stopDisplay();
-                        return;
-                    }
-
-                    const stream = await navigator.mediaDevices.getDisplayMedia({"video": true, "audio": false});
-                    
-                    this.displayVideo.srcObject = stream;
-                    this.displayTestStream = stream;
-                    stream.getVideoTracks()[0].addEventListener("ended", () => {
-                        this.stopDisplay();
+                if (desktop.isAvailable) {
+                    this.listDisplay = async () => {
+                        const screens = desktop.Control.Screen.list();
+                        if (screens.length === 0) {
+                            // remove all old options
+                            const select = this.displaySelect;
+                            for (let i = select.options.length-1; i > -1; i--) {
+                                select.remove(i);
+                            }
+                            this.displaySelect.disabled = true;
+                            this.displayTest.disabled = true;
+                            const option = new Option(localization.get("settings.video.display.notfound"), "");
+                            select.add(option);
+                            select.dispatchEvent(new Event("change"));
+                        } else {
+                            // remove all old options
+                            const select = this.displaySelect;
+                            for (let i = select.options.length-1; i > -1; i--) {
+                                select.remove(i);
+                            }
+                            this.displaySelect.disabled = false;
+                            for (let i = 0; i < screens.length; i++) {
+                                const option = new Option(localization.get("settings.video.display.name") + " " +  (i+1), i);
+                                this.displaySelect.add(option);
+                            }
+                            this.displaySelect.dispatchEvent(new Event("change"));
+                        }
+                    };
+                    this.displayRefresh.addEventListener("click", () => {
+                        this.listDisplay();
                     });
+                    this.displayTest.addEventListener("click", async () => {
+                        if (this.displayTestStream !== null) {
+                            this.stopDisplay();
+                            return;
+                        }
+                        const screenIndex = Number(this.displaySelect.value);
+                        if (screenIndex < 0) {
+                            return;
+                        }
+                        const trackGenerator = new MediaStreamTrackGenerator({ "kind": "video" });
+                        console.log(trackGenerator)
+                        const writer = trackGenerator.writable.getWriter();
+                        const stream = new MediaStream([trackGenerator]);
 
-                    this.displayVideoBox.classList.remove("hide");
-                    this.displayTest.children[0].innerText = "pause";
-                });
+                        this.decoder = new Decoder();
+                        this.decoder.onVideoFrame = async (frame) => {
+                            console.log("Decoded video frame:", frame);
+                            try {
+                                await writer.write(frame);
+                            } catch (e) {
+                                console.error("Failed to write frame:", e);
+                            } finally {
+                                frame.close();
+                            }
+                        };
+                        this.videoEncoderFFmpeg = new desktop["FFmpegVideoEncoder"]();
+                        this.videoEncoderFFmpeg.onConfiguration = (config) => {
+                            console.log("Video configuration:", config);
+                            this.decoder.appendVideoConfiguration(config);
+                        };
+                        this.videoEncoderFFmpeg.onChunk = (chunk) => {
+                            console.log("Video chunk:", chunk);
+                            this.decoder.appendVideoChunk(chunk);
+                        };
+                        this.videoEncoderFFmpeg.onEnd = (error) => {
+                            console.log("Video encoding ended with error code:", error);
+                        };
+
+                        const ffpmegParams = [];
+                        ffpmegParams.push(
+                            "-fflags", "+nobuffer+flush_packets",
+                            "-flags", "+low_delay",
+                            "-analyzeduration", "0",         // Don't analyze input
+                            "-probesize", "32",              // Minimum probe size
+                            "-thread_queue_size", "8"       // Small queue");
+                        );
+                        if (desktop["os"].platform() === "win32") {
+                            ffpmegParams.push(
+                                "-filter_complex",
+                                "gfxcapture=monitor_idx=" + screenIndex +
+                                ":capture_cursor=true" +
+                                ":max_framerate=30" +
+                                ",hwdownload,format=bgra",
+                            );
+                        }
+                        ffpmegParams.push(
+                            "-c:v", "h264_nvenc",
+                            "-b:v", "10000K",
+                            "-tune:v", "3",
+                            "-profile:v", "2",
+                            "-level:v", "51",
+                            "-rc:v", "1",
+                            "-rgb_mode:v", "1",
+                            "-delay:v", "0",
+                            "-zerolatency:v", "1",
+                                
+                            "-framerate", "30",
+                            "-g", "30",             // Keyframe interval (every 30 frames = 0.5s at 60fps)
+                            "-keyint_min", "30",
+                            "-force_key_frames", "expr:gte(t,n_forced*0.5)",
+                            "-f", "mp4",
+                            "-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
+                            "-frag_duration", "16666",
+                            "pipe:1"
+                        );
+                        await this.videoEncoderFFmpeg.start(
+                            desktop["ffmpegPath"],
+                            ffpmegParams,
+                            {
+                                "codec": "avc1.640033",
+                                "codedWidth": 1920,
+                                "codedHeight": 1080,
+                                "hardwareAcceleration": "prefer-hardware",
+                                "optimizeForLatency": true
+                            }
+                        );
+                        this.displayVideo.srcObject = stream;
+                        this.displayTestStream = stream;
+                        stream.getVideoTracks()[0].addEventListener("ended", async () => {
+                            this.stopDisplay();
+                        });
+
+                        this.displayVideoBox.classList.remove("hide");
+                        this.displayTest.children[0].innerText = "pause";
+                    });
+                    this.listDisplay();
+
+                } else {
+                    this.displayRefresh.parentElement.classList.add("hide");
+
+                    const select = this.displaySelect;
+                    for (let i = select.options.length-1; i > -1; i--) {
+                        select.remove(i);
+                    }
+                    this.displaySelect.disabled = true;
+                    const option = new Option(localization.get("settings.video.display.notsupported"), "");
+                    this.displaySelect.add(option);
+
+                    this.displayTest.addEventListener("click", async () => {
+                        if (this.displayTestStream !== null) {
+                            this.stopDisplay();
+                            return;
+                        }
+                        const stream = await navigator.mediaDevices.getDisplayMedia({"video": true, "audio": false});
+                    
+                        this.displayVideo.srcObject = stream;
+                        this.displayTestStream = stream;
+                        stream.getVideoTracks()[0].addEventListener("ended", () => {
+                            this.stopDisplay();
+                        });
+
+                        this.displayVideoBox.classList.remove("hide");
+                        this.displayTest.children[0].innerText = "pause";
+                    });
+                }
+
+                
+                
             };
             stopCam() {
                 if (this.cameraTestStream === null) {
@@ -843,7 +1044,7 @@ const SettingsDialog = class {
                 this.cameraVideoBox.classList.add("hide");
                 this.cameraTest.children[0].innerText = "play_arrow";
             };
-            stopDisplay() {
+            async stopDisplay() {
                 if (this.displayTestStream === null) {
                     return;
                 }
@@ -854,6 +1055,9 @@ const SettingsDialog = class {
                     track.stop();
                 }
                 this.displayTestStream = null;
+
+                await this.videoEncoderFFmpeg?.end?.();
+                await this.decoder?.end?.();
 
                 this.displayVideoBox.classList.add("hide");
                 this.displayTest.children[0].innerText = "play_arrow";
@@ -881,7 +1085,7 @@ const SettingsDialog = class {
                 // check mouse share support
                 this.mouseShareSupport = document.getElementById("mouse-share-support");
                 this.mouseShareUnsupport = document.getElementById("mouse-share-unsupport");
-                if (isDesktop) {
+                if (desktop.isAvailable) {
                     this.mouseShareSupport.classList.remove("hide");
                 } else {
                     this.mouseShareUnsupport.classList.remove("hide");
@@ -1007,7 +1211,9 @@ const SettingsDialog = class {
             open = () => {
                 this.shortcuts = [];
                 // add browser specific shortcuts
-                if (isDesktop === false) {
+                if (desktop.isAvailable === true) {
+                    this.createShortcut("5", "ESC");
+                } else {
                     this.createShortcut("1", "ESC");
                     this.createShortcut("1", "F11");
                 }
@@ -1044,15 +1250,22 @@ const SettingsDialog = class {
 
                 // check autolaunch support
                 this.autoLanuch = document.getElementById("about-auto-launch");
-                if (isDesktop === false) {
+                if (desktop.isAvailable === false) {
                     isMissing = true;
                     this.autoLanuch.classList.remove("hide");
+                }
+
+                // check tray support
+                this.tray = document.getElementById("about-tray");
+                if (desktop.isAvailable === false) {
+                    isMissing = true;
+                    this.tray.classList.remove("hide");
                 }
 
                 // check system audio share support
                 this.systemAudio = document.getElementById("about-audio");
                 this.systemAudio2 = document.getElementById("about-audio-unsupported");
-                if (isDesktop === false) {
+                if (desktop.isAvailable === false) {
                     isMissing = true;
                     if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
                         this.systemAudio.classList.remove("hide");
@@ -1063,14 +1276,21 @@ const SettingsDialog = class {
 
                 // check screen share support
                 this.screenShare = document.getElementById("about-screen");
-                if (isDesktop === false) {
+                if (desktop.isAvailable === false) {
                     isMissing = true;
                     this.screenShare.classList.remove("hide");
                 }
 
+                // check play support
+                this.playback = document.getElementById("about-play");
+                if (desktop.isAvailable === false && (typeof VideoDecoder === "undefined" || typeof AudioDecoder === "undefined")) {
+                    isMissing = true;
+                    this.playback.classList.remove("hide");
+                }
+
                 // check control share support
                 this.controlShare = document.getElementById("about-control");
-                if (isDesktop === false) {
+                if (desktop.isAvailable === false) {
                     isMissing = true;
                     this.controlShare.classList.remove("hide");
                 }
@@ -1174,6 +1394,7 @@ const NewScreen = class {
 
 const DownloadScreen = class {
     constructor(clientList) {
+
         // convert client list to map
         this.clients = new Map();
         for (let client of clientList) {
@@ -1190,6 +1411,7 @@ const DownloadScreen = class {
 
         // get important elements
         this.downloadBtn = document.getElementById("btn-download");
+        this.downloadBtn2 = document.getElementById("btn-download-2");
         this.downloadScreen = document.getElementById("screen-downloads");
         this.downloadWindows = document.getElementById("download-win32");
         this.downloadMacos = document.getElementById("download-macos");
@@ -1245,11 +1467,20 @@ const DownloadScreen = class {
             console.log("Download client:", file);
             window.open(location.href + file, "_blank");
         });
+
+        //hide on desktop
+        if (desktop.isAvailable) {
+            this.downloadBtn.classList.add("hide");
+            this.downloadBtn2.classList.add("hide");
+        }
+
     };
     open = () => {
+        this.displayChoice(undefined, undefined);
         this.downloadScreen.classList.remove("hide");
     };
     close = () => {
+        this.displayChoice(undefined, undefined);
         this.downloadScreen.classList.add("hide");
     };
     displayChoice = (os, arch) => {
@@ -1258,6 +1489,7 @@ const DownloadScreen = class {
             os = this.selectedOs;
         }
         let osSet = this.clients.get(os);
+        
         if (osSet === undefined) {
             const iterator = clients.entries();
             const value = iterator.next();
@@ -1272,33 +1504,32 @@ const DownloadScreen = class {
         } else if (os === "linux") {
             newOsChoice = this.downloadLinux;
         }
-        if (newOsChoice !== this.lastOsChoice) {
-            this.lastOsChoice.classList.add("border");
-            newOsChoice.classList.remove("border");
-            this.lastOsChoice = newOsChoice;
-            this.selectedOs = os;
+        this.lastOsChoice.classList.add("border");
+        newOsChoice.classList.remove("border");
+        this.lastOsChoice = newOsChoice;
+        this.selectedOs = os;
 
-            if (osSet.has("x64") === false) {
-                this.downloadx64.classList.add("hide");
-            } else {
-                this.downloadx64.classList.remove("hide");
-            }
-            if (osSet.has("x86") === false) {
-                this.downloadx86.classList.add("hide");
-            } else {
-                this.downloadx86.classList.remove("hide");
-            }
-            if (osSet.has("arm64") === false) {
-                this.downloadArm64.classList.add("hide");
-            } else {
-                this.downloadArm64.classList.remove("hide");
-            }
-            if (osSet.has("arm32") === false) {
-                this.downloadArm32.classList.add("hide");
-            } else {
-                this.downloadArm32.classList.remove("hide");
-            }
+        if (osSet.has("x64") === false) {
+            this.downloadx64.classList.add("hide");
+        } else {
+            this.downloadx64.classList.remove("hide");
         }
+        if (osSet.has("x86") === false) {
+            this.downloadx86.classList.add("hide");
+        } else {
+            this.downloadx86.classList.remove("hide");
+        }
+        if (osSet.has("arm64") === false) {
+            this.downloadArm64.classList.add("hide");
+        } else {
+            this.downloadArm64.classList.remove("hide");
+        }
+        if (osSet.has("arm32") === false) {
+            this.downloadArm32.classList.add("hide");
+        } else {
+            this.downloadArm32.classList.remove("hide");
+        }
+        
 
         // select architecture
         if (arch === undefined) {
@@ -1526,6 +1757,46 @@ const GoogleLogin = class extends EventTarget {
 
 // Main logic
 const main = async function() {
+
+    //load desktop modules if available
+    if (typeof require !== "undefined") {
+        // load node modules
+        const path = require("node:path");
+        const os = require("node:os");
+        const { spawn } = require("node:child_process");
+
+        // load electron modules
+        const { ipcRenderer } = require("electron");
+        const appPath = await ipcRenderer.invoke("api", "path-app");
+        const exePath = await ipcRenderer.invoke("api", "path-exe");
+
+        // load desktop specific libs
+        const AutoLaunch = require(path.join(appPath, "libs/auto-launch/auto-launch.js"));
+        const Control = require(path.join(appPath, "libs/easy-control/easy-control.node"));
+        const FFmpegEncoder = require(path.join(appPath, "libs/ffmpeg-chunkifier/encoder-ffmpeg.js"));
+
+        // expose desktop APIs
+        desktop["isAvailable"] = true;
+        desktop["path"] = path;
+        desktop["os"] = os;
+        desktop["spawn"] = spawn;
+        desktop["ipcRenderer"] = ipcRenderer;
+        desktop["appPath"] = appPath;
+        desktop["autoLaunch"] = new AutoLaunch({
+            "name": "Desktop Streamer",
+            "path": exePath
+        });
+        desktop["Control"] = Control;
+        desktop["ffmpegPath"] = path.join(appPath, "libs/ffmpeg");
+        desktop["FFmpegVideoEncoder"] = FFmpegEncoder["FFmpegVideoEncoder"];
+        desktop["FFmpegAudioEncoder"] = FFmpegEncoder["FFmpegAudioEncoder"];
+
+        // disable require to prevent security issues
+        globalThis.require = undefined; // disable require for security reasons
+
+        console.log(desktop);
+    }
+    
     const val = await Promise.all([confLoad, domReady]);
     conf["local"] = val[0];
 
@@ -1541,7 +1812,7 @@ const main = async function() {
 
     let lang = conf["local"]["lang"];
     if (lang === "auto") {
-            lang = (navigator.language || navigator.userLanguage).substring(0,2);
+        lang = (navigator.language || navigator.userLanguage).substring(0,2);
     }
     if (localization.supportedLanguages.indexOf(lang) === -1) {
         lang = "en";
@@ -1549,6 +1820,11 @@ const main = async function() {
     localization.setLang(lang);
     localization.translate(lang);
 
+    if (desktop.isAvailable) {
+        desktop.ipcRenderer.invoke("api", "set-lang", lang);
+        desktop.ipcRenderer.send("api", "set-tray", conf["local"]["minimizing"]);
+    }
+    
     console.log(conf);
     globalThis.localization = localization;
 

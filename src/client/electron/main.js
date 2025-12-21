@@ -17,42 +17,6 @@ const os = require("node:os");
 const cmd = require("node:child_process");
 const partition = "persist:remote_desktop";
 
-// tool functions
-const createMainWindow = function(url) {
-    const win = new BrowserWindow({
-        "width": 800,
-        "height": 600,
-        "icon": path.join(app.getAppPath(), "icons/icon-32.png"),
-        "webPreferences": {
-            "partition": partition,
-            "contextIsolation": true,
-            "nodeIntegration": false,
-            "nodeIntegrationInWorker": false,
-            "preload": path.join(app.getAppPath(), "src/client/electron/preload.js"),
-            "devTools": true
-        }
-    });
-    
-    win.loadURL(url);
-    win.setMenu(null);
-    win.on("close", function(event) {
-        event.preventDefault();
-        win.hide();
-    });
-    win.webContents.on("before-input-event", async function(event, input) {
-        if (input.type === "keyDown" && input.key === "F12") {
-            if (win.webContents.isDevToolsOpened()) {
-                win.webContents.closeDevTools();
-            } else {
-                win.webContents.openDevTools({
-                    "mode:": "right"
-                });
-            }
-        }
-    });
-    return win;
-};
-
 
 //
 // main app
@@ -92,8 +56,7 @@ const main = async function() {
             }
         }
     ]);
-    //for debug
-	app.commandLine.appendSwitch("ignore-certificate-errors");
+	app.commandLine.appendSwitch("ignore-certificate-errors"); //for debug
     
     // Wait for load
     await app.whenReady();
@@ -112,7 +75,43 @@ const main = async function() {
     });
     
     // Main window create "local://local.local/"
-    winMain = createMainWindow("https://localhost");
+    const createMainWindow = function(url="https://localhost") {
+        const win = new BrowserWindow({
+            "width": 800,
+            "height": 600,
+            "icon": path.join(app.getAppPath(), "icons/icon-32.png"),
+            "webPreferences": {
+                "partition": partition,
+                "contextIsolation": false,
+                "nodeIntegration": true,
+                "nodeIntegrationInWorker": false,
+                "devTools": true
+            }
+        });
+        
+        win.loadURL(url);
+        win.setMenu(null);
+        win.on("close", function(event) {
+            if (tray !== null) {
+                event.preventDefault();
+                win.hide();
+            }
+        });
+        // for debug
+        win.webContents.on("before-input-event", async function(event, input) {
+            if (input.type === "keyDown" && input.key === "F12") {
+                if (win.webContents.isDevToolsOpened()) {
+                    win.webContents.closeDevTools();
+                } else {
+                    win.webContents.openDevTools({
+                        "mode:": "right"
+                    });
+                }
+            }
+        });
+        return win;
+    };
+    winMain = createMainWindow();
     app.on("activate", function() {
         if (BrowserWindow.getAllWindows().length === 0) {
             winMain = createMainWindow();
@@ -121,13 +120,7 @@ const main = async function() {
     });
     
     // Tray
-    const tray = new Tray(path.join(app.getAppPath(), "icons/icon-32.png"));
-    tray.on("click", function() {
-        if (winMain) {
-            winMain.show();
-        }
-    });
-    const menu = new Menu();
+    let menu = new Menu();
     const menuOpen = new MenuItem({
         "type": "normal",
         "label": "Open",
@@ -148,13 +141,13 @@ const main = async function() {
         }
     });
     menu.append(menuClose);
-    tray.setContextMenu(menu);
+
+    let tray = null;
     
     // Free when closed
     app.on("window-all-closed", function() {
         app.exit();
     });
-    
     
     // Screen change event
     const screenChange = async function() {
@@ -170,20 +163,55 @@ const main = async function() {
             return app.getPath("exe");
         } else if (handle === "path-app") {
             return app.getAppPath();
-        } else if (handle === "list-screens") {
-            const sources = await desktopCapturer.getSources({
-                "types": ["window", "screen"]
-            });
-            const sourcesOutput = [];
-            for (const source of sources) {
-                sourcesOutput.push({
-                    "name": source.name,
-                    "id": source.id
+        } else if (handle === "set-tray") {
+            const isOn = args[0];
+            if (isOn && tray === null) {
+                tray = new Tray(path.join(app.getAppPath(), "icons/icon-32.png"));
+                tray.on("click", function() {
+                    if (winMain) {
+                        winMain.show();
+                    }
                 });
+                tray.setContextMenu(menu);
+            } else if (!isOn && tray !== null) {
+                tray.destroy();
+                tray = null;
             }
-            return sourcesOutput;
-        } else if (hangle === "change-language") {
-
+                
+        } else if (handle === "set-lang") {
+            if (tray === null) {
+                return false;
+            }
+            const lang = args[0];
+            let openLabel = "Open";
+            let closeLabel = "Close";
+            if (lang === "hu") {
+                openLabel = "Megnyitás";
+                closeLabel = "Bezárás";
+            }
+            menu = new Menu();
+            const menuOpen = new MenuItem({
+                "type": "normal",
+                "label": openLabel,
+                "click": function() {
+                    if (winMain) {
+                        winMain.show();
+                    }
+                }
+            });
+            menu.append(menuOpen);
+            const menuClose = new MenuItem({
+                "type": "normal",
+                "label": closeLabel,
+                "click": function() {
+                    if (winMain) {
+                        app.exit();
+                    }
+                }
+            });
+            menu.append(menuClose);
+            tray.setContextMenu(menu);
+            return true;
         }
     };
     ipcMain.on("api", async function(event, ...args) {

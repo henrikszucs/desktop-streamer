@@ -81,6 +81,20 @@ const dict = {
                 "en": "-- Automatic selection --",
                 "hu": "-- Automatikus kiválasztás --"
             },
+            "tray": {
+                "title": {
+                    "en": "System tray",
+                    "hu": "Rendszer tálca"
+                },
+                "checkbox": {
+                    "en": "Create tray icon instead close",
+                    "hu": "Rendszer tálca ikon bezárás helyett"
+                },
+                "error": {
+                    "en": "System tray not supported.",
+                    "hu": "A rendszer tálca nem támogatott."
+                }
+            },
             "autostart": {
                 "title": {
                     "en": "Auto startup",
@@ -104,6 +118,20 @@ const dict = {
             "btn": {
                 "en": "Audio",
                 "hu": "Hang"
+            },
+            "decoder": {
+                "title": {
+                    "en": "Audio play",
+                    "hu": "Hang lejátszás"
+                },
+                "supported": {
+                    "en": "Low latency play supported",
+                    "hu": "Alacsony késleltetésű lejátszás támogatott"
+                },
+                "unsupported": {
+                    "en": "Low latency play not supported",
+                    "hu": "Alacsony késleltetésű lejátszás nem támogatott"
+                }
             },
             "system": {
                 "title": {
@@ -161,10 +189,28 @@ const dict = {
                 "en": "Video",
                 "hu": "Videó"
             },
+            "decoder": {
+                "title": {
+                    "en": "Video play",
+                    "hu": "Videó lejátszás"
+                },
+                "supported": {
+                    "en": "Low latency play supported",
+                    "hu": "Alacsony késleltetésű lejátszás támogatott"
+                },
+                "unsupported": {
+                    "en": "Low latency play not supported",
+                    "hu": "Alacsony késleltetésű lejátszás nem támogatott"
+                }
+            },
             "cam": {
                 "title": {
                     "en": "Webcams",
                     "hu": "Webkamera",
+                },
+                "name": {
+                    "en": "Webcam",
+                    "hu": "Webkamera"
                 },
                 "notfound": {
                     "en": "No webcam detected",
@@ -176,9 +222,17 @@ const dict = {
                     "en": "Screen share",
                     "hu": "Képernyő megosztás"
                 },
-                "notfound": {
+                "name": {
+                    "en": "Screen",
+                    "hu": "Képernyő"
+                },
+                "notsupported": {
                     "en": "Only manual share supported",
                     "hu": "Csak manuális megosztás támogatott"
+                },
+                "notfound": {
+                    "en": "Not found any device",
+                    "hu": "Nem található eszköz"
                 }
             }
         },
@@ -201,7 +255,7 @@ const dict = {
                     "hu": "Teljesen támogatott"
                 },
                 "unsupported": {
-                    "en": "Constol share not supported",
+                    "en": "Control share not supported",
                     "hu": "Irányítás megosztása nem támogatott"
                 }
             },
@@ -286,6 +340,10 @@ const dict = {
                 "en": "Auto launch: not supported",
                 "hu": "Automatikus indítás: nem támogatott"
             },
+            "tray": {
+                "en": "System tray: not supported",
+                "hu": "Rendszer tálca: nem támogatott"
+            },
             "system-audio": {
                 "en": "System audio share: only manual share",
                 "hu": "Rendszer hang megosztás: csak manuális megosztás"
@@ -297,6 +355,10 @@ const dict = {
             "screen-share": {
                 "en": "Screen share: only manual share",
                 "hu": "Képernyő megosztás: csak manuális megosztás"
+            },
+            "play": {
+                "en": "Low latency play: not supported",
+                "hu": "Alacsony késleltetésű lejátszás: nem támogatott"
             },
             "control-share": {
                 "en": "Control share: not supported",

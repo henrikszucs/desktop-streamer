@@ -254,6 +254,14 @@
                                 </nav>
                             </fieldset>
                             <fieldset>
+                                <legend data-i18n="settings.appearance.tray.title">System tray</legend>
+                                <label class="checkbox hide" id="label-tray">
+                                    <input type="checkbox" id="checkbox-tray">
+                                    <span data-i18n="settings.appearance.tray.checkbox">Minimizing on close</span>
+                                </label>
+                                <span class="error-text hide" id="error-tray" data-i18n="settings.appearance.tray.error">System tray not supported.</span>
+                            </fieldset>
+                            <fieldset>
                                 <legend data-i18n="settings.appearance.autostart.title">Auto startup</legend>
                                 <label class="checkbox hide" id="label-auto-launch">
                                     <input type="checkbox" id="checkbox-auto-launch">
@@ -265,8 +273,13 @@
                     </div>
                     <!-- Audio settings -->
                     <div id="settings-audio" class="hide">
-                        <h5 class="small-margin" data-i18n="settings.audio.title">Apperance settings</h5>
+                        <h5 class="small-margin" data-i18n="settings.audio.title">Audio settings</h5>
                         <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.audio.decoder.title">Audio play</legend>
+                                <span class="green-text hide" id="decoder-audio-support" data-i18n="settings.audio.decoder.supported">Low latency play supported</span>
+                                <span class="error-text hide" id="decoder-audio-unsupport" data-i18n="settings.audio.decoder.unsupported">Low latency play not supported</span>
+                            </fieldset>
                             <fieldset>
                                 <legend data-i18n="settings.audio.system.title">System audio share</legend>
                                 <span class="green-text hide" id="system-audio-support" data-i18n="settings.audio.system.supported">Fully supported</span>
@@ -317,101 +330,115 @@
                     <!-- Video settings -->
                     <div id="settings-video" class="hide">
                         <h5 class="small-margin" data-i18n="settings.video.title">Video settings</h5>
-                        <fieldset>
-                            <legend data-i18n="settings.video.cam.title">Webcams</legend>
-                            <div class="select-camera-input-box">
-                                <div class="field suffix border round select-camera-input">
-                                    <select id="select-camera-input" disabled>
-                                        <option data-i18n="settings.video.cam.notfound">No webcam detected</option>
-                                    </select>
-                                    <i>arrow_drop_down</i>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.video.decoder.title">Video play</legend>
+                                <span class="green-text hide" id="decoder-video-support" data-i18n="settings.video.decoder.supported">Low latency play supported</span>
+                                <span class="error-text hide" id="decoder-video-unsupport" data-i18n="settings.video.decoder.unsupported">Low latency play not supported</span>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.video.cam.title">Webcams</legend>
+                                <div class="select-camera-input-box">
+                                    <div class="field suffix border round select-camera-input">
+                                        <select id="select-camera-input" disabled>
+                                            <option data-i18n="settings.video.cam.notfound">No webcam detected</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-camera-refresh">
+                                            <i>refresh</i>
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-camera-test" disabled>
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div>
-                                    <button class="circle large" id="btn-camera-refresh">
-                                        <i>refresh</i>
-                                    </button>
+                                <div class="hide" id="video-camera-test-box">
+                                    <div class="video-container">
+                                        <video class="video" id="video-camera-test" autoplay="true"></video>
+                                    </div>
                                 </div>
-                                <div>
-                                    <button class="circle large" id="btn-camera-test" disabled>
-                                        <i>play_arrow</i>
-                                    </button>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.video.display.title">Screen share</legend>
+                                <div class="select-display-input-box">
+                                    <div class="field suffix border round select-display-input">
+                                        <select id="select-display-input" disabled>
+                                            <option data-i18n="settings.video.display.notfound">Only manual share supported</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-display-refresh">
+                                            <i>refresh</i>
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-display-test">
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="hide" id="video-camera-test-box">
-                                <div class="video-container">
-                                    <video class="video" id="video-camera-test" autoplay="true"></video>
+                                <div class="hide" id="video-display-test-box">
+                                    <div class="video-container">
+                                        <video class="video" id="video-display-test" autoplay="true"></video>
+                                    </div>
                                 </div>
-                            </div>
-                        </fieldset>
-                        <fieldset>
-                            <legend data-i18n="settings.video.display.title">Screen share</legend>
-                            <div class="select-display-input-box">
-                                <div class="field suffix border round select-display-input">
-                                    <select id="select-display-input" disabled>
-                                        <option data-i18n="settings.video.display.notfound">Only manual share supported</option>
-                                    </select>
-                                    <i>arrow_drop_down</i>
-                                </div>
-                                <div>
-                                    <button class="circle large" id="btn-display-test">
-                                        <i>play_arrow</i>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="hide" id="video-display-test-box">
-                                <div class="video-container">
-                                    <video class="video" id="video-display-test" autoplay="true"></video>
-                                </div>
-                            </div>
-                        </fieldset>
+                            </fieldset>
+                        </div>
                     </div>
                     <!-- Control settings -->
                     <div id="settings-control" class="hide">
                         <h5 class="small-margin">Control settings</h5>
-                        <fieldset>
-                            <legend data-i18n="settings.control.control-share.title">Control share</legend>
-                            <div class="mouse-share">
-                                <span class="green-text hide" id="mouse-share-support" data-i18n="settings.control.control-share.supported">Fully supported</span>
-                                <span class="error-text hide" id="mouse-share-unsupport" data-i18n="settings.control.control-share.unsupported">Constol share not supported</span>
-                            </div>
-                        </fieldset>
-                        <fieldset>
-                            <legend data-i18n="settings.control.exit-shortcut.title">Fullscreen exit</legend>
-                            <div id="shortcut-list">
-                                <!--
-                                <div class="shortcut-box">
-                                    <div class="field label suffix border round shortcut-delay">
-                                        <select disabled>
-                                            <option>No delay</option>
-                                            <option>1 second</option>
-                                            <option>2 seconds</option>
-                                            <option>3 seconds</option>
-                                            <option>5 seconds</option>
-                                            <option>8 seconds</option>
-                                            <option>10 seconds</option>
-                                        </select>
-                                        <label>Holding time</label>
-                                        <i>arrow_drop_down</i>
-                                    </div>
-                                    <div class="shortcut-box-sub">
-                                        <div class="field label border round shortcut-key">
-                                            <input type="text" value="F11" disabled/>
-                                            <label>Key</label>
-                                        </div>
-                                        <div class="shortcut-delete">
-                                            <button class="circle large" disabled>
-                                                <i>delete</i>
-                                            </button>
-                                        </div>
-                                    </div>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.control.control-share.title">Control share</legend>
+                                <div class="mouse-share">
+                                    <span class="green-text hide" id="mouse-share-support" data-i18n="settings.control.control-share.supported">Fully supported</span>
+                                    <span class="error-text hide" id="mouse-share-unsupport" data-i18n="settings.control.control-share.unsupported">Constol share not supported</span>
                                 </div>
-                                -->
-                            </div>
-                            <button id="btn-shortcut-add">
-                                <i>add</i>
-                                <span data-i18n="settings.control.exit-shortcut.add">Add shortcut</span>
-                            </button>
-                        </fieldset>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.control.exit-shortcut.title">Fullscreen exit</legend>
+                                <div id="shortcut-list">
+                                    <!--
+                                    <div class="shortcut-box">
+                                        <div class="field label suffix border round shortcut-delay">
+                                            <select disabled>
+                                                <option>No delay</option>
+                                                <option>1 second</option>
+                                                <option>2 seconds</option>
+                                                <option>3 seconds</option>
+                                                <option>5 seconds</option>
+                                                <option>8 seconds</option>
+                                                <option>10 seconds</option>
+                                            </select>
+                                            <label>Holding time</label>
+                                            <i>arrow_drop_down</i>
+                                        </div>
+                                        <div class="shortcut-box-sub">
+                                            <div class="field label border round shortcut-key">
+                                                <input type="text" value="F11" disabled/>
+                                                <label>Key</label>
+                                            </div>
+                                            <div class="shortcut-delete">
+                                                <button class="circle large" disabled>
+                                                    <i>delete</i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    -->
+                                </div>
+                                <button id="btn-shortcut-add">
+                                    <i>add</i>
+                                    <span data-i18n="settings.control.exit-shortcut.add">Add shortcut</span>
+                                </button>
+                            </fieldset>
+                        </div>
                     </div>
                     <!-- About -->
                     <div id="settings-about" class="hide">
@@ -424,11 +451,14 @@
                                 <span class="green-text hide" id="about-supported">&bull;<span data-i18n="settings.about.supported">Nothing missing, all features are supported.</span></span>
 
                                 <span class="error-text hide" id="about-auto-launch">&bull;<span data-i18n="settings.about.auto-launch">Auto launch: not supported</span></span>
+                                <span class="error-text hide" id="about-tray">&bull;<span data-i18n="settings.about.tray">System tray: not supported</span></span>
 
                                 <span class="tertiary-text hide" id="about-audio">&bull;<span data-i18n="settings.about.system-audio">System audio share: only manual share</span></span>
                                 <span class="error-text hide" id="about-audio-unsupported">&bull;<span data-i18n="settings.about.system-audio-unsupported">System audio share: not supported</span></span>
 
                                 <span class="tertiary-text hide" id="about-screen">&bull;<span data-i18n="settings.about.screen-share">Screen share: only manual select</span></span>
+
+                                <span class="error-text hide" id="about-play">&bull;<span data-i18n="settings.about.play">Low latency play: not supported</span></span>
 
                                 <span class="error-text hide" id="about-control">&bull;<span data-i18n="settings.about.control-share">Control share: not supported</span></span>
                             </fieldset>
