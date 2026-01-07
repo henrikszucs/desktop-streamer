@@ -50,6 +50,14 @@ const dict = {
             "en": "Login",
             "hu": "Bejelentkezés"
         },
+        "account": {
+            "en": "Account settings",
+            "hu": "Fiók beállítások"
+        },
+        "logout": {
+            "en": "Logout",
+            "hu": "Kijelentkezés"
+        },
         "menu": {
             "en": "Menu",
             "hu": "Menü"
@@ -366,6 +374,102 @@ const dict = {
             }
         }
     },
+    "account": {
+        "title": {
+            "en": "Account settings",
+            "hu": "Fiók beállítások"
+        },
+        "information": {
+            "title": {
+                "en": "Account information",
+                "hu": "Fiók információk"
+            },
+            "btn": {
+                "en": "Information",
+                "hu": "Információk"
+            },
+            "account-data": {
+                "en": "Account data",
+                "hu": "Fiók adatok"
+            },
+            "email": {
+                "en": "Email",
+                "hu": "Email"
+            },
+            "first-name": {
+                "en": "First name",
+                "hu": "Keresztnév"
+            },
+            "last-name": {
+                "en": "Last name",
+                "hu": "Vezetéknév"
+            }
+        },
+        "sessions": {
+            "title": {
+                "en": "Active sessions",
+                "hu": "Aktív munkamenetek"
+            },
+            "btn": {
+                "en": "Sessions",
+                "hu": "Munkamenetek"
+            },
+            "last-active": {
+                "en": "Last active",
+                "hu": "Utojára aktív"
+            },
+            "ip-address": {
+                "en": "IP address",
+                "hu": "IP cím"
+            },
+            "this-device": {
+                "en": "This device",
+                "hu": "Ez az eszköz"
+            },
+        },
+        "delete": {
+            "title": {
+                "en": "Delete account",
+                "hu": "Fiók törlése"
+            },
+            "btn": {
+                "en": "Delete",
+                "hu": "Törlés"
+            },
+            "warning": {
+                "en": "Deleting your account will remove all your data from our servers. This action is irreversible.",
+                "hu": "A fiók törlése eltávolítja az összes adatot a szervereinkről. Ez a művelet visszafordíthatatlan."
+            },
+            "send-key": {
+                "en": "Send delete key",
+                "hu": "Törlési kulcs küldése"
+            },
+            "send-success": {
+                "en": "You will receive a delete key in your email.",
+                "hu": "A törlési kulcsot elküldtük email címedre."
+            },
+            "send-error": {
+                "en": "Error sending delete key. Please try again later.",
+                "hu": "Hiba történt a törlési kulcs küldése során. Kérlek próbáld meg később."
+            },
+            "delete-key": {
+                "en": "Delete key",
+                "hu": "Törlési kulcs"
+            },
+            "confirm": {
+                "en": "Delete my account",
+                "hu": "Fiókom törlése"
+            },
+            "confirm-delete": {
+                "en": "Delete my account",
+                "hu": "Fiókom törlése"
+            },
+            "confirm-error": {
+                "en": "Error confirming delete key. Please try with other code.",
+                "hu": "Hiba történt a törlési kulcs megerősítése során. Kérlek próbáld meg más kóddal."
+            }
+        }
+    }
 };
 
 const get = (key, lang=curLang) => {

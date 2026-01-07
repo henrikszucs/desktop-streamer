@@ -16,7 +16,6 @@ import localization from "./localization.js";
 const desktop = {
     "isAvailable": false
 };
-globalThis.desktop = desktop;   // for debugging
 
 // general enviroment
 const checkBrowser = function() {
@@ -75,6 +74,28 @@ const checkBrowser2 = () => {
     }
     return M;
 };
+const getOS = function() {
+    const userAgent = window.navigator.userAgent,
+        platform = window.navigator?.userAgentData?.platform || window.navigator.platform,
+        macosPlatforms = ['macOS', 'Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'],
+        windowsPlatforms = ['Win32', 'Win64', 'Windows', 'WinCE'],
+        iosPlatforms = ['iPhone', 'iPad', 'iPod'];
+    let os = null;
+
+    if (macosPlatforms.indexOf(platform) !== -1) {
+        os = "darwin";
+    } else if (iosPlatforms.indexOf(platform) !== -1) {
+        os = 'ios';
+    } else if (windowsPlatforms.indexOf(platform) !== -1) {
+        os = 'win32';
+    } else if (/Android/.test(userAgent)) {
+        os = 'android';
+    } else if (/Linux/.test(platform)) {
+        os = 'linux';
+    }
+
+    return os;
+}
 
 const browser = checkBrowser();
 const width = window.innerWidth;
@@ -98,7 +119,8 @@ const confLoad = new Promise(async function(resolve) {
         "autoLaunch": false,
         "minimizing": false,
         "exitShortcuts": "[]",
-        "sessionId": ""
+        "sessionId": "",
+        "sessionKey": ""
     };
 
     // load values from database
@@ -133,9 +155,17 @@ const Server = class extends EventTarget {
     ws = null;
     communicator = null;
     isOnline = false;
-    constructor(address) {
+    loginState = {
+        "isLoggedIn": false,
+        "sessionId": "",
+        "sessionKey": ""
+    };
+    constructor() {
         super();
+    };
+    connect(address) {
         //events: online / offline
+        this.address = address;
         this.communicator = new Communicator({
             "sender": function() {},
             "interactTimeout": 3000,    //the max timeout between two packet arrive
@@ -147,15 +177,25 @@ const Server = class extends EventTarget {
             "sendThreads": 16
         });
 
-        this.connect(address);
+        if (conf["local"]["sessionId"] !== "") {
+            this.loginState["isLoggedIn"] = true;
+            this.loginState["sessionId"] = conf["local"]["sessionId"];
+            this.loginState["sessionKey"] = conf["local"]["sessionKey"];
+        }
+        
+        this.reconnect();
     };
-    connect(address = this.address) {
+    reconnect() {
         this.ws?.close?.();
         
         //create connection
-        this.address = address;
         this.ws = new WebSocket(this.address);
         this.ws.binaryType = "arraybuffer";
+
+        // listen for incoming requests
+        this.communicator.onIncoming((messageObj) => {
+            this.handleIncoming(messageObj);
+        });
 
         // configure sernder fn
         this.communicator.configure({
@@ -177,7 +217,7 @@ const Server = class extends EventTarget {
             this.communicator.receive(data);
         });
 
-        //connection status
+        // connection finishing
         this.ws.addEventListener("open", async () => {
             // sync
             await this.communicator.sideSync();
@@ -200,31 +240,189 @@ const Server = class extends EventTarget {
 
             // trigger online
             console.log("connected");
-            this.dispatchEvent(new CustomEvent("online"));
             this.isOnline = true;
+            this.dispatchEvent(new CustomEvent("online"));
+
+            // try to login with saved session
+            if (this.loginState["isLoggedIn"] === true) {
+                const message = this.communicator.invoke({"type":"login-session", "sessionKey": this.loginState["sessionKey"]});
+                await message.wait();
+                const data = message.data;
+                if (data["success"] !== true) {
+                    this.loginState["isLoggedIn"] = false;
+                    this.loginState["sessionId"] = "";
+                    this.loginState["sessionKey"] = "";
+                    await this.saveSession();
+                } else {
+                    this.dispatchEvent(new CustomEvent("login"));
+                }
+            }            
         }, { "once": true });
-        this.ws.addEventListener("error", () => {
-            console.log("disconnected");
-            this.dispatchEvent(new CustomEvent("offline"));
+
+        // handle disconnection
+        const handleDisconnection = () => {
+            this.ws.removeEventListener("error", handleError);
+            this.ws.removeEventListener("close", handleClose);
             this.isOnline = false;
-        }, { "once": true });
-        this.ws.addEventListener("close", () => {
-            console.log("closed");
             this.dispatchEvent(new CustomEvent("offline"));
-            this.isOnline = false;
             setTimeout(() => {
-                this.connect();
+                this.reconnect();
             }, 2000);
-        }, { "once": true });
+        };
+        const handleError = () => {
+            console.log("disconnected");
+            handleDisconnection();
+        };
+        this.ws.addEventListener("error", handleError, { "once": true });
+        const handleClose = () => {
+            console.log("close");
+            handleDisconnection();
+        };
+        this.ws.addEventListener("close", handleClose, { "once": true });
     };
-    async authGoogle(credential) {
-        const message = this.communicator.invoke({"type":"login-google", "credential": credential});
+    async handleIncoming(messageObj) {
+        await messageObj.wait();
+        const message = messageObj.data;
+
+        // logout
+        if (message["type"] === "logout") {
+            this.loginState["isLoggedIn"] = false;
+            this.loginState["sessionId"] = "";
+            this.loginState["sessionKey"] = "";
+            await this.saveSession();
+            return;
+        }
+        
+        // basic user data
+        if (["email", "firstName", "lastName", "picture"].includes(message["type"])) {
+            this.dispatchEvent(new CustomEvent("user-data", {
+                "detail": {
+                    "type": message["type"],
+                    "value": message["value"]
+                }
+            }));
+            return;
+        }
+        
+        // session added / removed
+        if (message["type"] === "sessions") {
+            if (message["isRemove"] === true) {
+                this.dispatchEvent(new CustomEvent("session-removed", {
+                    "detail": message["value"]
+                }));
+                return;
+            }
+
+            if (message["isChange"] === true) {
+                this.dispatchEvent(new CustomEvent("session-changed", {
+                    "detail": message["value"]
+                }));
+                return;
+            }
+            
+            this.dispatchEvent(new CustomEvent("session-added", {
+                "detail": message["value"]
+            }));
+        }
+    };
+    async loginGoogle(credential) {
+        const userAgent = {};
+        userAgent["desktop"] = desktop.isAvailable;
+        userAgent["os"] = getOS();
+        const message = this.communicator.invoke({"type":"login-google", "credential": credential, "userAgent": JSON.stringify(userAgent)});
         await message.wait();
-        console.log(message.data);
-        return message.data;
+        const data = message.data;
+        if (data["success"] === true) {
+            this.loginState["isLoggedIn"] = true;
+            this.loginState["sessionId"] = data["sessionId"];
+            this.loginState["sessionKey"] = data["sessionKey"];
+            this.saveSession();
+        }
+        return data["success"];
+    };
+    async logout(sessionId=this.loginState["sessionId"]) {
+        const message = this.communicator.invoke({"type":"logout", "sessionId": sessionId});
+        await message.wait();
+        if (sessionId === this.loginState["sessionId"] ) {
+            if (message.data["success"] === true) {
+                this.loginState["isLoggedIn"] = false;
+                this.loginState["sessionId"] = "";
+                this.loginState["sessionKey"] = "";
+                await this.saveSession();
+            }
+        }
+        return message.data["success"];
+    };
+    async getUserData(type, once=false) {
+        if (this.isOnline === false) {
+            throw new Error("Offline");
+        }
+        const messageObj = this.communicator.invoke({
+            "type": "user-data-subscribe",
+            "key": type,
+            "once": once
+        });
+        await messageObj.wait();
+        if (messageObj.data["success"] !== true) {
+            throw new Error("Failed to get user data");
+        }
+        return messageObj.data["value"];
+    };
+    async unsubscribeUserData(type) {
+        if (this.isOnline === false) {
+            throw new Error("Offline");
+        }
+        const messageObj = this.communicator.invoke({
+            "type": "user-data-unsubscribe",
+            "key": type
+        });
+        await messageObj.wait();
+        return messageObj.data["success"];
+    };
+    async deleteEmail(lang) {
+        if (this.isOnline === false) {
+            throw new Error("Offline");
+        }
+        const messageObj = this.communicator.invoke({
+            "type": "delete-email",
+            "lang": lang
+        });
+        await messageObj.wait();
+        return messageObj.data["success"];
+    };
+    async deleteAccount(deleteKey) {
+        if (this.isOnline === false) {
+            throw new Error("Offline");
+        }
+        const messageObj = this.communicator.invoke({
+            "type": "delete",
+            "deleteKey": deleteKey
+        });
+        await messageObj.wait();
+        const success = messageObj.data["success"];
+        if (success === true) {
+            this.loginState["isLoggedIn"] = false;
+            this.loginState["sessionId"] = "";
+            this.loginState["sessionKey"] = "";
+            await this.saveSession();
+        }
+        return success;
+    };
+    async saveSession() {
+        conf["local"]["sessionId"] = this.loginState["sessionId"];
+        conf["local"]["sessionKey"] = this.loginState["sessionKey"];
+        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [
+            ["sessionId", this.loginState["sessionId"]],
+            ["sessionKey", this.loginState["sessionKey"]]
+        ]);
+        if (this.loginState["isLoggedIn"]) {
+            this.dispatchEvent(new CustomEvent("login"));
+        } else {
+            this.dispatchEvent(new CustomEvent("logout"));
+        }
     };
 };
-globalThis.server = new Server("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
+const server = new Server();
 
 
 // UI classes
@@ -1359,23 +1557,317 @@ const AccountDialog = class {
     constructor() {
         // get important elements
         this.overlay = document.getElementById("dialog-overlay");
-        this.accountDialog = document.getElementById("dialog-account");
+        this.accountDialog = document.getElementById("dialog-account-settings");
         this.accountClose = document.getElementById("btn-account-close");
 
         // set event listeners
         this.accountClose.addEventListener("click", () => {
             this.close();
         });
+
+        const Information = class {
+            constructor() {
+                this.win = document.getElementById("account-information");
+                this.btn = document.getElementById("btn-account-information");
+
+                this.email = document.getElementById("account-email");
+                this.firstName = document.getElementById("account-firstname");
+                this.lastName = document.getElementById("account-lastname");
+
+                server.addEventListener("user-data", (event) => {
+                    const type = event.detail.type;
+                    const value = event.detail.value;
+                    if (type === "email") {
+                        this.email.value = value;
+                    } else if (type === "firstName") {  
+                        this.firstName.value = value;
+                    } else if (type === "lastName") {
+                        this.lastName.value = value;
+                    }
+                });
+            };
+            open = async () => {
+                // display window
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+
+                // subscribe to user info updates
+                const email = await server.getUserData("email");
+                const firstName = await server.getUserData("firstName");
+                const lastName = await server.getUserData("lastName");
+                this.email.value = email || "";
+                this.firstName.value = firstName || "";
+                this.lastName.value = lastName || "";
+            };
+            close = async () => {
+                // hide window
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+
+                //unsubscribe from user info updates
+                await server.unsubscribeUserData("email");
+                await server.unsubscribeUserData("firstName");
+                await server.unsubscribeUserData("lastName");
+            };
+        };
+
+        const Sessions = class {
+            constructor() {
+                this.win = document.getElementById("account-sessions");
+                this.btn = document.getElementById("btn-account-sessions");
+                this.sessionList = document.getElementById("sessions-list");
+
+                this.Session = class extends EventTarget {
+                    constructor(sessionId, lastUsed, ipAddress, userAgent, isLocal) {
+                        super();
+                        this.sessionId = sessionId;
+                        this.el = document.createElement("div");
+                        let localHtml = "";
+                        if (isLocal === true) {
+                            localHtml = `<span> | </span><span class="bold tertiary-text">` + localization.get("account.sessions.this-device") + `</span>`;
+                        }
+                        const html = `
+                            <div class="session-box">
+                                <div>
+                                    <i>computer</i>
+                                    <span class="bold session-platform"></span>
+                                    <span> | </span>
+                                    <span class="tertiary-text session-lastused"></span>
+                                    <span> | </span>
+                                    <span class="tertiary-text session-ip"></span>
+                                    <span class="session-local">`+localHtml+`</span>
+                                </div>
+                                <div>
+                                    <button class="circle large error btn-session-delete">
+                                        <i>delete</i>
+                                        <span class="l m">Delete</span>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                        const div = document.createElement("div");
+                        div.innerHTML = html.trim();
+                        this.el = div.firstChild;
+                        this.elPlatform = this.el.querySelector(".session-platform");
+                        this.elLastUsed = this.el.querySelector(".session-lastused");
+                        this.elIp = this.el.querySelector(".session-ip");
+                        this.changeData(lastUsed, ipAddress, userAgent);
+                        this.btnDelete = this.el.querySelector(".btn-session-delete");
+                        this.btnDelete.addEventListener("click", () => {
+                            this.dispatchEvent(new CustomEvent("delete", {"detail": {"sessionId": this.sessionId}}));
+                        });
+                    };
+                    changeData(lastUsed, ipAddress, userAgent) {
+                        // format data
+                        if (lastUsed !== undefined) {
+                            lastUsed = localization.get("account.sessions.last-active") + ": " + new Date(lastUsed).toLocaleString(localization.getLang(), { timeZone: "UTC" });
+                            this.elLastUsed.innerText = lastUsed;
+                        }
+
+                        if (ipAddress !== undefined) {
+                            ipAddress = localization.get("account.sessions.ip-address") + ": " + ipAddress;
+                            this.elIp.innerText = ipAddress;
+                        }
+
+                        if (userAgent !== undefined && typeof userAgent?.["os"] === "string") {
+                            let platform = "";
+                            if (userAgent["os"] === "win32") {
+                                platform = "Windows";
+                            } else if (userAgent["os"] === "darwin") {
+                                platform = "macOS";
+                            } else if (userAgent["os"] === "linux") {
+                                platform = "Linux";
+                            } else if (userAgent["os"] === "android") {
+                                platform = "Android";
+                            } else if (userAgent["os"] === "ios") {
+                                platform = "iOS";
+                            } else {
+                                platform = "Unknown OS";
+                            }
+                            
+                            
+                            this.elPlatform.innerText = platform;
+                        }
+                        
+                        
+
+                    };
+                };
+
+                this.sessions = [];
+            };
+            onSessionChanged = (event) => {
+                const detail = event.detail;
+                detail["userAgent"] = JSON.parse(detail["userAgent"] || "{}");
+                console.log("Session changed:", detail);
+                for (const session of this.sessions) {
+                    if (session.sessionId === detail["sessionId"]) {
+                        session.changeData(detail["lastUsed"], detail["ipAddress"], detail["userAgent"]);
+                        break;
+                    }
+                }
+            };
+            onSessionAdded = (event) => {
+                const detail = event.detail;
+                detail["userAgent"] = JSON.parse(detail["userAgent"] || "{}");
+                const el = new this.Session(detail["sessionId"], detail["lastUsed"], detail["ipAddress"], detail["userAgent"], false);
+                el.addEventListener("delete", this.onSessionDelete);
+                this.sessions.push(el);
+                this.sessionList.appendChild(el.el);
+            };
+            onSessionRemoved = (event) => {
+                const detail = event.detail;
+                for (const session of this.sessions) {
+                    if (session["sessionId"] === detail) {
+                        session.el.remove();
+                        this.sessions.splice(this.sessions.indexOf(session), 1);
+                        break;
+                    }
+                }
+            };
+            onSessionDelete = async (event) => {
+                const sessionId = event.detail.sessionId;
+                const res = await server.logout(sessionId);
+                if (res === true) {
+                    const el = this.sessions.find(s => s.sessionId === sessionId);
+                    if (el !== undefined) {
+                        el.el.remove();
+                        this.sessions.splice(this.sessions.indexOf(el), 1);
+                    }
+                }
+            };
+            open = async () => {
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+
+                // load sessions
+                for (const session of this.sessions) {
+                    session.el.remove();
+                }
+                this.sessions = [];
+                const sessions = await server.getUserData("sessions");
+                for (const sessionData of sessions) {
+                    sessionData["userAgent"] = JSON.parse(sessionData["userAgent"] || "{}");
+                    if (sessionData["sessionId"] === server.loginState["sessionId"]) {
+                        const el = new this.Session(sessionData["sessionId"], sessionData["lastUsed"], sessionData["ipAddress"], sessionData["userAgent"], true);
+                        el.addEventListener("delete", this.onSessionDelete);
+                        this.sessions.unshift(el);
+                        this.sessionList.prepend(el.el);
+                    } else {
+                        const el = new this.Session(sessionData["sessionId"], sessionData["lastUsed"], sessionData["ipAddress"], sessionData["userAgent"], false);
+                        el.addEventListener("delete", this.onSessionDelete);
+                        this.sessions.push(el);
+                        this.sessionList.appendChild(el.el);
+                    }
+                }
+
+                server.addEventListener("session-changed", this.onSessionChanged);
+                server.addEventListener("session-added", this.onSessionAdded);
+                server.addEventListener("session-removed", this.onSessionRemoved);
+                
+            };
+            close = async () => {
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+
+                await server.unsubscribeUserData("sessions");
+
+                server.removeEventListener("session-removed", this.onSessionRemoved);
+                server.removeEventListener("session-changed", this.onSessionChanged);
+                server.removeEventListener("session-added", this.onSessionAdded);
+
+                
+            };
+        };
+
+        const Delete = class {
+            constructor() {
+                this.win = document.getElementById("account-delete");
+                this.btn = document.getElementById("btn-account-delete");
+
+                this.deleteSend = document.getElementById("btn-account-delete-send");
+                this.deleteSendSuccess = document.getElementById("account-delete-send-success");
+                this.deleteSendError = document.getElementById("account-delete-send-error");
+                this.deleteKey = document.getElementById("account-delete-key");
+                this.deleteConfirm = document.getElementById("btn-account-delete-confirm");
+                this.deleteConfirmError = document.getElementById("account-delete-confirm-error");
+
+                this.deleteSend.addEventListener("click", async () => {
+                    this.deleteSend.disabled = true;
+                    const res = await server.deleteEmail(localization.getLang());
+                    if (res === true) {
+                        this.deleteSendSuccess.classList.remove("hide");
+                        this.deleteSendError.classList.add("hide");
+                    } else {
+                        this.deleteSendSuccess.classList.add("hide");
+                        this.deleteSendError.classList.remove("hide");
+                    }
+                    this.deleteSend.disabled = false;
+                });
+
+                this.deleteConfirm.addEventListener("click", async () => {
+                    const deleteKey = this.deleteKey.value.trim();
+                    const res = await server.deleteAccount(deleteKey);
+                    if (res === true) {
+                        this.deleteConfirmError.classList.add("hide");
+                    } else {
+                        this.deleteConfirmError.classList.remove("hide");
+                    }
+                });
+            };
+            open = () => {
+                this.deleteSend.disabled = false;
+                this.deleteSendSuccess.classList.add("hide");
+                this.deleteSendError.classList.add("hide");
+                this.deleteConfirmError.classList.add("hide");
+
+                this.win.classList.remove("hide");
+                this.btn.classList.add("primary");
+                this.btn.classList.remove("fill");
+            };
+            close = () => {
+                this.win.classList.add("hide");
+                this.btn.classList.remove("primary");
+                this.btn.classList.add("fill");
+            };
+        };
+
+        const informationWindow = new Information();
+        const sessionsWindow = new Sessions();
+        const deleteWindow = new Delete();
+
+        // category change
+        this.currentWindow = informationWindow;
+        informationWindow.btn.addEventListener("click", () => {
+            this.changeWindow(informationWindow);
+        });
+        sessionsWindow.btn.addEventListener("click", () => {
+            this.changeWindow(sessionsWindow);
+        });
+        deleteWindow.btn.addEventListener("click", () => {
+            this.changeWindow(deleteWindow);
+        });
+    };
+    changeWindow(window) {
+        this.currentWindow.close();
+        window.open();
+        this.currentWindow = window;
     };
     open = () => {
         this.overlay.classList.add("active");
         this.accountDialog.classList.add("active");
         this.overlay.addEventListener("click", this.close);
+        this.currentWindow.open();
     };
     close = () => {
         this.overlay.classList.remove("active");
         this.accountDialog.classList.remove("active");
         this.overlay.removeEventListener("click", this.close);
+        this.currentWindow.close();
     };
 };
 
@@ -1613,6 +2105,26 @@ const LoginScreen = class {
     constructor() {
         // get important elements
         this.loginScreen = document.getElementById("screen-login");
+        this.userBtn = document.getElementById("btn-user");
+        this.menuLoggedOut = document.getElementById("btn-user-menu-logged-out");
+        this.menuLoggedIn = document.getElementById("btn-user-menu-logged-in");
+
+        server.addEventListener("user-data", async (event) => {
+            if (event.detail.type === "picture") {
+                this.userBtn.src = server.detail.value;
+            }
+        });
+    };
+    async setupAsLogged() {
+        //this.userBtn.src = server.loginState.picture;
+        this.userBtn.src = await server.getUserData("picture");
+        this.menuLoggedIn.classList.remove("hide");
+        this.menuLoggedOut.classList.add("hide");
+    };
+    setupAsLoggedOut() {
+        this.userBtn.src = "/icons/guest.svg";
+        this.menuLoggedIn.classList.add("hide");
+        this.menuLoggedOut.classList.remove("hide");
     };
     open = () => {
         // open login screen
@@ -1721,19 +2233,16 @@ const GoogleLogin = class extends EventTarget {
         // global callback function
         window.onGoogleLogin = async (response) => {
             //console.log(response);
-            let res;
+            /*let res;
             try {
                 res = await server.authGoogle(response.credential);
             } catch(err) {
                 console.error("Google login failed");
             }
-            /*console.log("https://oauth2.googleapis.com/tokeninfo?id_token=" + response.credential);
+            console.log("https://oauth2.googleapis.com/tokeninfo?id_token=" + response.credential);
             const responsePayload = this.decodeJWT(response.credential);
-            console.log(responsePayload);*/
-            console.log(res);
-            if (typeof res === "undefined") {
-                return;
-            }
+            console.log(responsePayload);
+            console.log(res);*/
             this.dispatchEvent(
                 new CustomEvent("login", {"detail": response})
             );
@@ -1743,6 +2252,7 @@ const GoogleLogin = class extends EventTarget {
         el.innerHTML = "<div data-auto_prompt=false data-callback=onGoogleLogin data-client_id=" + this.clientId + " data-context=signin data-ux_mode=popup id=g_id_onload></div><div class=g_id_signin data-logo_alignment=left data-shape=pill data-size=large data-text=signin_with data-theme=filled_blue data-type=standard></div>";
     };
     decodeJWT(token) {
+        // note: you can extract the credential data but google API guarantees its validity
         let base64Url = token.split(".")[1];
         let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
         let jsonPayload = decodeURIComponent(atob(base64).split("").map(function (c) {
@@ -1757,7 +2267,6 @@ const GoogleLogin = class extends EventTarget {
 
 // Main logic
 const main = async function() {
-
     //load desktop modules if available
     if (typeof require !== "undefined") {
         // load node modules
@@ -1797,10 +2306,11 @@ const main = async function() {
         console.log(desktop);
     }
     
+    // wait for local conf load and DOM ready
     const val = await Promise.all([confLoad, domReady]);
     conf["local"] = val[0];
 
-    // load local conf
+    // load local UI conf
     globalThis.ui("theme", conf["local"]["color"]);
     setTimeout(() => {
         let mode = conf["local"]["mode"];
@@ -1819,15 +2329,20 @@ const main = async function() {
     }
     localization.setLang(lang);
     localization.translate(lang);
-
     if (desktop.isAvailable) {
         desktop.ipcRenderer.invoke("api", "set-lang", lang);
         desktop.ipcRenderer.send("api", "set-tray", conf["local"]["minimizing"]);
     }
-    
-    console.log(conf);
-    globalThis.localization = localization;
 
+    // initialize server connection
+    server.connect("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
+    
+    // expose for debugging
+    console.log(conf);
+    globalThis.conf = conf;
+    globalThis.localization = localization;
+    globalThis.server = server;
+    globalThis.desktop = desktop;
 
     // Search dialog
     const searchDialog = new SearchDialog();
@@ -1849,7 +2364,6 @@ const main = async function() {
 
     // Account dialog
     const accountDialog = new AccountDialog();
-
 
     // New screen
     const newScreen = new NewScreen();
@@ -1878,6 +2392,21 @@ const main = async function() {
     document.getElementById("btn-login").addEventListener("click", () => {
         document.getElementById("btn-user-circle").blur();
         window.history.pushState({}, "", "/" + "login");
+        loadPath();
+    });
+    document.getElementById("btn-logout").addEventListener("click", async () => {
+        await server.logout();
+    });
+    document.getElementById("btn-account-settings").addEventListener("click", () => {
+        switchDialog(accountDialog);
+    });
+
+    server.addEventListener("login", () => {
+        loginScreen.setupAsLogged();
+        loadPath();
+    });
+    server.addEventListener("logout", () => {
+        loginScreen.setupAsLoggedOut();
         loadPath();
     });
     
@@ -1995,6 +2524,9 @@ const main = async function() {
         } else {
             path = [""];
         }
+        if (path[0] === "login" && server.loginState["isLoggedIn"] === true) {
+            path = [""];
+        }
         window.history.replaceState({}, "", "/" + path.join("/"));
 
 
@@ -2029,6 +2561,10 @@ const main = async function() {
             const googleLogin = new GoogleLogin(serverConf["auth"]["google"]["clientId"]);
             googleLogin.createButton(document.getElementById("google-login"));
             document.getElementById("google-login").classList.remove("hide");
+            googleLogin.addEventListener("login", async (event) => {
+                const credential = event.detail.credential;
+                server.loginGoogle(credential);
+            });
         } else {
             document.getElementById("google-login").classList.add("hide");
         }

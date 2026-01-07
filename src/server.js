@@ -19,6 +19,7 @@ import nodemailer from "nodemailer";
 // first-party dependencies
 import Mime from "easy-mime";
 import Communicator from "easy-communicator";
+import { stat } from "node:fs";
 
 const CLIENT_VERSION = "0.1.0";
 const MIN_CLIENT_VERSION = CLIENT_VERSION;
@@ -26,6 +27,15 @@ const MIN_CLIENT_VERSION = CLIENT_VERSION;
 //
 // Helper functions
 //
+
+// generate random ID
+const generateId = function(length=10, chars="1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
+    let id = "";
+    for (let i = 0; i < length; i++) {
+        id += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return id;
+};
 
 // binary search in array [isFound, index]
 const binarySearch = function(arr, x, getVal=function(el) {return el}) {   
@@ -92,6 +102,40 @@ const setAbsolute = function(src, origin) {
         src = path.join(origin, src);
     }
     return path.resolve(src);
+};
+
+// language texts
+const dict = {
+    "delete": {
+        "0": {
+            "en": "Your delete code is for account (",
+            "hu": "A törlőkódod: "
+        },
+        "1": {
+            "en": "). Please use the following code to confirm account deletion:",
+            "hu": "). Kérlek, használd a következő kódot a fiók törlésének megerősítéséhez:"
+        },
+        "2": {
+            "en": " If you did not request account deletion, please ignore this email.",
+            "hu": " Ha nem kérted a fiókod törlését, kérlek, hagyd figyelmen kívül ezt az e-mailt."
+        }
+    }
+};
+
+const getText = (key, lang) => {
+    let current = dict;
+    const original = key;
+    try {
+        key = key.split(".");
+        for (let i = 0; i < key.length; i++) {
+            current = current[key[i]];
+        }
+        return current[lang];
+    } catch (e) {
+        console.warn(`Localization key "${original}" not found!`);
+        return "";
+    }
+    
 };
 
 
@@ -818,10 +862,21 @@ const Server = class {
 
     wsServer = null;
     wsHttpServer = null;
-    clients = new Map();
-    clientsByCallingId = new Map();
+    mailers = [];
     clientConf = {};
     authGoogle = null;
+    domain = "";
+
+    // clients map
+    clients = new Map();            // key-clientId, value-state object of the client
+    sessions = new Map();           // key-sessionId, value-set of clientIds
+    subscriptions = new Map([
+        ["email", new Map()],
+        ["firstName", new Map()],
+        ["lastName", new Map()],
+        ["picture", new Map()],
+        ["sessions", new Map()]
+    ]);      // key-subscription name, value-> Map of "userId" -> Set of "clientId"
 
     isClosing = false;
     constructor() {
@@ -909,7 +964,37 @@ const Server = class {
                 console.error(`Got error: ${error.message}`);
                 reject(error);
             });
-        });       
+        });
+    };
+    async httpsGetImage(url) {
+        return new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                const statusCode = res.statusCode;
+                const contentType = res.headers["content-type"];
+
+                if (statusCode !== 200) {
+                    const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
+                    //console.error(error.message);
+                    // Consume response data to free up memory
+                    res.resume();
+                    reject(error);
+                    return;
+                }
+
+                let rawData = "";
+                res.setEncoding("base64");
+                res.on("data", (chunk) => {
+                    rawData += chunk;
+                });
+                res.on("end", () => {
+                    const data = "data:" + contentType + ";base64," + rawData;
+                    resolve(data);
+                });
+            }).on("error", (error) => {
+                console.error(`Got error: ${error.message}`);
+                reject(error);
+            });
+        });
     };
 
     async start(conf) {
@@ -1050,11 +1135,6 @@ const Server = class {
                 requestHandle = async (req, res) => {
                     let filePath = req.url.slice(1);          // remove start slash
 
-                    // check file in file set cache
-                    if (this.httpCache.has(filePath) === false) {
-                        filePath = "index.html"; 
-                    }
-
                     // check existence of file
                     let fileData = this.httpCache.get(filePath);
                     if (typeof fileData === "undefined") {
@@ -1074,7 +1154,7 @@ const Server = class {
                     });
                     if (typeof fileData["buffer"] !== "undefined") {
                         res.write(fileData["buffer"]);
-                        res.end(); //end the response
+                        res.end();
                     } else {
                         const file = await this.getFileDataStream(fileData["path"]);
                        file["stream"].pipe(res);
@@ -1111,6 +1191,13 @@ const Server = class {
         // Start WebSocket server
         process.stdout.write("Starting WS server...    ");
         if (typeof conf["ws"] === "object") {
+            // copy domain data
+            if (typeof conf["http"]["domain"] === "string") {
+                this.domain = conf["http"]["domain"];
+            } else {
+                this.domain = conf["ws"]["domain"];
+            }
+
             // Connect to mail servers
             for (const smtp of conf["ws"]["emails"]) {
                 if (smtp["auth"]["type"] === "password") {
@@ -1127,7 +1214,8 @@ const Server = class {
                     if (res === false) {
                         throw new Error("Cannot authenticate WS SMTP with provided configuration: " + JSON.stringify(smtp));
                     }
-                } else if (smtp["auth"]["type"] !== "OAuth2") {
+                    this.mailers.push(transporter);
+                } else if (smtp["auth"]["type"] === "OAuth2") {
                     const transporter = nodemailer.createTransport({
                         "host": smtp["host"],
                         "port": smtp["port"],
@@ -1144,7 +1232,11 @@ const Server = class {
                     if (res === false) {
                         throw new Error("Cannot authenticate WS SMTP with provided configuration: " + JSON.stringify(smtp));
                     }
+                    this.mailers.push(transporter);
                 }
+            }
+            if (this.mailers.length === 0) {
+                throw new Error("At least one WS email SMTP server must be configured!");
             }
 
             // Database connect
@@ -1166,81 +1258,84 @@ const Server = class {
             // Create db schema
             if (await this.db.schema.hasTable("users") === false) {
                 await this.db.schema.createTable("users", function (table) {
-                    table.bigint("user_id");
+                    table.string("user_id");
                     table.text("email");
                     table.text("first_name");
                     table.text("last_name");
-                    table.text("password");
-                    table.boolean("is_activated");
                 });
                 await this.db.schema.alterTable("users", function (table) {
                     table.primary("user_id");
                     table.unique("email");
                 });
             }
+            if (await this.db.schema.hasTable("users_google") === false) {
+                await this.db.schema.createTable("users_google", function (table) {
+                    table.string("sub");
+                    table.string("user_id");
+                    table.text("picture");
+                });
+                await this.db.schema.alterTable("users_google", function (table) {
+                    table.primary("sub");
+                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                });
+            }
             if (await this.db.schema.hasTable("sessions") === false) {
                 await this.db.schema.createTable("sessions", function (table) {
-                    table.bigint("session_id");
-                    table.bigint("user_id");
-                    table.bigint("expires");
-                    table.text("details");
+                    table.string("session_id");
+                    table.string("user_id");
+                    table.string("session_key");
+                    table.bigint("expire").unsigned();
+                    table.bigint("last_used").unsigned();
+                    table.text("ip_address");
+                    table.text("user_agent");
                 });
                 await this.db.schema.alterTable("sessions", function (table) {
                     table.primary("session_id");
                     table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                    table.unique("session_key");
                 });
             }
-            if (await this.db.schema.hasTable("login_codes") === false) {
-                await this.db.schema.createTable("login_codes", function (table) {
-                    table.bigint("code_id");
-                    table.bigint("user_id");
-                    table.bigint("client_secret");
-                    table.bigint("expires");
+            if (await this.db.schema.hasTable("delete") === false) {
+                await this.db.schema.createTable("delete", function (table) {
+                    table.string("delete_id");
+                    table.string("user_id");
+                    table.string("delete_key");
+                    table.bigint("expire").unsigned();
                 });
-                await this.db.schema.alterTable("login_codes", function (table) {
-                    table.primary("code_id");
+                await this.db.schema.alterTable("delete", function (table) {
+                    table.primary("delete_id");
                     table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                    table.unique("delete_key");
                 });
             }
-            if (await this.db.schema.hasTable("activate") === false) {
-                await this.db.schema.createTable("activate", function (table) {
-                    table.bigint("activation_id");
-                    table.bigint("user_id");
-                    table.bigint("expires");
-                });
-                await this.db.schema.alterTable("activate", function (table) {
-                    table.primary("activation_id");
-                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
-                });
-            }
+            /*
             if (await this.db.schema.hasTable("rooms") === false) {
                 await this.db.schema.createTable("rooms", function (table) {
-                    table.bigint("room_id");
+                    table.bigint("room_id").unsigned();
                     table.text("host_code");
-                    table.bigint("expires");
+                    table.bigint("expire").unsigned();
                 });
                 await this.db.schema.alterTable("rooms", function (table) {
                     table.primary("room_id");
+                    table.unique("host_code");
                 });
             }
             if (await this.db.schema.hasTable("resources") === false) {
                 await this.db.schema.createTable("resources", function (table) {
-                    table.bigint("resource_id");
-                    table.bigint("parent_id");
-                    table.bigint("room_id");
+                    table.bigint("resource_id").unsigned();
+                    table.bigint("parent_id").unsigned();
+                    table.bigint("room_id").unsigned();
                 });
                 await this.db.schema.alterTable("resources", function (table) {
                     table.primary("resource_id");
-                    table.setNullable("parent_id");
                     table.foreign("parent_id").references("resources.resource_id").onDelete("CASCADE").onUpdate("CASCADE");
-                    table.setNullable("room_id");
                     table.foreign("room_id").references("rooms.room_id").onDelete("CASCADE").onUpdate("CASCADE");
                 });
             }
             if (await this.db.schema.hasTable("permissions") === false) {
                 await this.db.schema.createTable("permissions", function (table) {
-                    table.bigint("permission_id");
-                    table.bigint("user_id");
+                    table.bigint("permission_id").unsigned();
+                    table.bigint("user_id").unsigned();
                     table.boolean("can_share");
                     table.boolean("can_write");
                     table.boolean("is_owner");
@@ -1252,16 +1347,15 @@ const Server = class {
             }
             if (await this.db.schema.hasTable("permission_join") === false) {
                 await this.db.schema.createTable("permission_join", function (table) {
-                    table.bigint("permission_id");
-                    table.bigint("resource_id");
+                    table.bigint("permission_id").unsigned();
+                    table.bigint("resource_id").unsigned();
                 });
                 await this.db.schema.alterTable("permission_join", function (table) {
                     table.index(["permission_id", "resource_id"]);
                     table.foreign("permission_id").references("permissions.permission_id").onDelete("CASCADE").onUpdate("CASCADE");
                     table.foreign("resource_id").references("resources.resource_id").onDelete("CASCADE").onUpdate("CASCADE");
                 });
-            }
-
+            }*/
 
             // Configure auth methods
             if (typeof conf["ws"]["features"]["auth"]["google"] !== "undefined") {
@@ -1270,8 +1364,18 @@ const Server = class {
                     try {
                         const res = await this.httpsGetText("https://oauth2.googleapis.com/tokeninfo?id_token=" + credential);
                         userInfo = JSON.parse(res);
+                        if (userInfo["aud"] !== conf["ws"]["features"]["auth"]["google"]["clientId"]) {
+                            throw new Error("Invalid Google OAuth2 client ID");
+                        }
+                        if (userInfo["email_verified"] !== "true") {
+                            throw new Error("Google OAuth2 email not verified");
+                        }
+                        if (userInfo["exp"] < Date.now() / 1000) {
+                            throw new Error("Google OAuth2 token expired");
+                        }
                     } catch (error) {
                         console.log(error);
+                        return undefined;
                     }
                     return userInfo;
                 };
@@ -1338,11 +1442,734 @@ const Server = class {
         }
 
     };
+    async addSession(userId, ipAddress, userAgent) {
+        // create in db
+        let sessionId = undefined;
+        while (sessionId === undefined) {
+            sessionId = generateId(10);
+            const existing = await this.db.select().table("sessions").where("session_id", sessionId).first();
+            if (existing !== undefined) {
+                sessionId = undefined;
+            }
+        }
+        let sessionKey = undefined;
+        while (sessionKey === undefined) {
+            sessionKey = generateId(10);
+            const existing = await this.db.select().table("sessions").where("session_key", sessionKey).first();
+            if (existing !== undefined) {
+                sessionKey = undefined;
+            }
+        }
+        const expire = Date.now() + 7 * 24 * 60 * 60 * 1000;
+        const lastUsed = Date.now();
+        await this.db.insert({
+            "session_id": sessionId,
+            "user_id": userId,
+            "session_key": sessionKey,
+            "expire": expire,
+            "last_used": lastUsed,
+            "ip_address": ipAddress,
+            "user_agent": userAgent
+        }).into("sessions");
+
+        // notify subscribed clients (same userId) about new session
+        const sessionsSubscription = this.subscriptions.get("sessions").get(userId);
+        if (sessionsSubscription !== undefined) {
+            for (const subClientId of sessionsSubscription) {
+                const com = this.clients.get(subClientId).get("com");
+                com.send({
+                    "timestamp": Date.now(),
+                    "type": "sessions",
+                    "value": {
+                        "sessionId": sessionId,
+                        "lastUsed": lastUsed,
+                        "ipAddress": ipAddress,
+                        "userAgent": userAgent
+                    }
+                });
+            }
+        }
+
+        // return session info
+        return {"sessionId": sessionId, "sessionKey": sessionKey};
+    };
+    async updateSession(userId, sessionId, expire, lastUsed, ipAddress, userAgent) {
+        // check if session exists
+        const session = await this.db.select()
+            .table("sessions")
+            .where("session_id", sessionId)
+            .andWhere("user_id", userId)
+            .andWhere("expire", ">", Date.now())
+            .first();
+
+        if (session === undefined) {
+            return undefined;
+        }
+
+        // update in db
+        let isChanged = false;
+        const change = {
+            "sessionId": sessionId
+        };
+        if (expire !== undefined) {
+            await this.db("sessions")
+                .where({"session_id": sessionId})
+                .andWhereNot({"expire": expire})
+                .update({"expire": expire});
+            // skip notification for expire change
+        }
+
+        if (lastUsed !== undefined) {
+            const update = await this.db("sessions")
+                .where({"session_id": sessionId})
+                .andWhereNot({"last_used": lastUsed})
+                .update({"last_used": lastUsed});
+            if (update !== 0) {
+                isChanged = true;
+                change["lastUsed"] = lastUsed;
+            }
+        }
+
+        if (ipAddress !== undefined) {
+            const update = await this.db("sessions")
+                .where({"session_id": sessionId})
+                .andWhereNot({"ip_address": ipAddress})
+                .update({"ip_address": ipAddress});
+            if (update !== 0) {
+                isChanged = true;
+                change["ipAddress"] = ipAddress;
+            }
+        }
+
+        if (userAgent !== undefined) {
+            const update = await this.db("sessions")
+                .where({"session_id": sessionId})
+                .andWhereNot({"user_agent": userAgent})
+                .update({"user_agent": userAgent});
+            if (update !== 0) {
+                isChanged = true;
+                change["userAgent"] = userAgent;
+            }
+        }
+
+        // broadcast to subscribed clients if changed
+        if (isChanged === true) {
+            const sessionsSubscription = this.subscriptions.get("sessions").get(userId);
+            if (sessionsSubscription !== undefined) {
+                for (const subClientId of sessionsSubscription) {
+                    const com = this.clients.get(subClientId).get("com");
+                    com.send({
+                        "timestamp": Date.now(),
+                        "type": "sessions",
+                        "isChange": true,
+                        "value": change
+                    });
+                }
+            }
+        }
+
+        return isChanged;
+    };
+    async removeSession(userId, sessionId) {
+        // delete from db
+        await this.db("sessions").where({"session_id": sessionId}).delete();
+
+        // remove all clients from session 
+        const clients = this.sessions.get(sessionId);
+        if (clients !== undefined) {
+            for (const clientId of clients) {
+                const com = this.clients.get(clientId).get("com");
+                com.send({
+                    "timestamp": Date.now(),
+                    "type": "logout"
+                });
+            }
+            this.sessions.delete(sessionId);
+
+            // update clients state
+            for (const clientId of clients) {
+                const client = this.clients.get(clientId);
+                client.set("isLoggedIn", false);
+                client.delete("userId");
+                client.delete("sessionId");
+                client.delete("sessionKey");
+            }
+
+            // remove subscriptions from clients in deleted session
+            const it = this.subscriptions.entries();
+            for (const [type, subsMap] of it) {
+                const userSubs = subsMap.get(userId);
+                if (userSubs !== undefined) {
+                    for (const clientId of clients) {
+                        userSubs.delete(clientId);
+                        if (userSubs.size === 0) {
+                            subsMap.delete(userId);
+                        }
+                    }
+                }
+            }
+        }
+
+        // notify other subscribed clients (same userId) about removed session
+        const sessionsSubscription = this.subscriptions.get("sessions").get(userId);
+        if (sessionsSubscription !== undefined) {
+            for (const subClientId of sessionsSubscription) {
+                const com = this.clients.get(subClientId).get("com");
+                com.send({
+                    "timestamp": Date.now(),
+                    "type": "sessions",
+                    "isRemove": true,
+                    "value": sessionId
+                });
+            }
+        }
+
+    };
+    addClientSession(userId, sessionId, clientId) {
+        // add session to sessions map
+        const clientsSet = this.sessions.get(sessionId);
+        if (clientsSet === undefined) {
+            this.sessions.set(sessionId, new Set([clientId]));
+        } else {
+            clientsSet.add(clientId);
+        }
+
+        // update state
+        const client = this.clients.get(clientId);
+        
+        client.set("isLoggedIn", true);
+        client.set("userId", userId);
+        client.set("sessionId", sessionId);
+    };
+    removeClientSession(userId, sessionId, clientId) {
+        // remove from sessions map
+        const clientsSet = this.sessions.get(sessionId);
+        if (clientsSet !== undefined) {
+            clientsSet.delete(clientId);
+            if (clientsSet.size === 0) {
+                this.sessions.delete(sessionId);
+            }
+        }
+
+        // update client state
+        const client = this.clients.get(clientId);
+        client.set("isLoggedIn", false);
+        client.delete("userId");
+        client.delete("sessionId");
+        client.delete("sessionKey");
+
+        // remove subscriptions
+        const it = this.subscriptions.entries();
+        for (const [type, subsMap] of it) {
+            const userSubs = subsMap.get(userId);
+            if (userSubs !== undefined) {
+                userSubs.delete(clientId);
+                if (userSubs.size === 0) {
+                    subsMap.delete(userId);
+                }
+            }
+        }
+        
+    };
+    addClientSubscription(type, userId, clientId) {
+        const subscriptions = this.subscriptions.get(type);
+        const userSubscriptions = subscriptions.get(userId);
+        if (userSubscriptions === undefined) {
+            subscriptions.set(userId, new Set([clientId]));
+        } else {
+            userSubscriptions.add(clientId);
+        }
+    };
+    removeClientSubscription(type, userId, clientId) {
+        const subscriptions = this.subscriptions.get(type);
+        const userSubscriptions = subscriptions.get(userId);
+        if (userSubscriptions !== undefined) {
+            userSubscriptions.delete(clientId);
+            if (userSubscriptions.size === 0) {
+                subscriptions.delete(userId);
+            }
+        }
+    };
+    async updateUserData(userId, type, data) {
+        let subscribedClients;
+        let value;
+        if (type === "picture") {
+            const user = await this.db.select().table("users_google").where("user_id", userId).first();
+            if (typeof user === "undefined" || user["picture"] === data) {
+                return;
+            }
+            await this.db("users_google").where("user_id", userId).update({"picture": data});
+            subscribedClients = this.subscriptions.get("picture").get(userId);
+            const imageData = await this.httpsGetImage(data);
+            value = imageData;
+
+        }  else if (type === "email") {
+            const user = await this.db.select().table("users").where("user_id", userId).first();
+            if (typeof user === "undefined" || user["email"] === data) {
+                return;
+            }
+            await this.db("users").where("user_id", userId).update({"email": data});
+            subscribedClients = this.subscriptions.get("email").get(userId);
+            value = data;
+
+        } else if (type === "firstName") {
+            const user = await this.db.select().table("users").where("user_id", userId).first();
+            if (typeof user === "undefined" || user["first_name"] === data) {
+                return;
+            }
+            await this.db("users").where("user_id", userId).update({"first_name": data});
+            subscribedClients = this.subscriptions.get("firstName").get(userId);
+            value = data;
+
+        } else if (type === "lastName") {
+            const user = await this.db.select().table("users").where("user_id", userId).first();
+            if (typeof user === "undefined" || user["last_name"] === data) {
+                return;
+            }
+            await this.db("users").where("user_id", userId).update({"last_name": data});
+            subscribedClients = this.subscriptions.get("lastName").get(userId);
+            value = data;
+        }
+
+        // broadcast to subscribed clients
+        if (subscribedClients !== undefined) {
+            for (const clientId of subscribedClients) {
+                const com = this.clients.get(clientId).get("com");
+                const messageObj = com.send({
+                    "timestamp": Date.now(),
+                    "type": type,
+                    "value": value
+                });
+                await messageObj.wait();
+            }
+        }
+
+    };
+    async handleAPI(messageObj, clientId) {
+        //check basic structure
+        await messageObj.wait();
+        const message = messageObj.data;
+        if (typeof message !== "object" && typeof message["type"] !== "string") {
+            console.log("Invalid message format", message);
+            messageObj.abort();
+            return;
+        }
+        const client = this.clients.get(clientId);
+
+        // refresh session
+        if (client.get("isLoggedIn") === true) {
+            const ip = client.get("ws")._socket.remoteAddress;
+            const result = await this.updateSession(client.get("userId"), client.get("sessionId"), Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now(), ip, undefined);
+            if (result === undefined) {
+                // session expired
+                await this.removeSession(client.get("userId"), client.get("sessionId"));
+            }
+        }
+        
+        // config getter
+        if (message["type"] === "conf-get") {
+            messageObj.send(this.clientConf);
+            return;
+        }
+        
+        // account management
+        if (message["type"] === "login-google") {
+            /*{
+                "credential": string
+            }*/
+           /*{
+                "success": boolean,
+                "sessionId": string,
+                "sessionKey": string
+            }*/
+            // check inputs
+            const credential = message["credential"];
+            const userAgent = message["userAgent"];
+            if (typeof credential !== "string" || typeof userAgent !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+            
+            // check credential
+            const userInfo = await this.authGoogle(credential);
+            if (typeof userInfo === "undefined") {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check already logged in
+            if (client.get("isLoggedIn") === true) {
+                const exitsUser = await this.db.select().table("users_google").where({"sub": userInfo["sub"], "user_id": client.get("userId")}).first();
+                if (typeof exitsUser !== "undefined") {
+                    const session = await this.db.select().table("sessions").where("session_id", client.get("sessionId")).andWhere("expire", ">", Date.now()).first();
+                    messageObj.send({
+                        "success": true,
+                        "sessionId": session["session_id"],
+                        "sessionKey": session["session_key"]
+                    });
+                    return;
+                }
+                // logout previous session
+                await this.removeSession(client.get("userId"), client.get("sessionId"));
+            }
+
+            // search for existing user
+            let exitsUser = await this.db.select().table("users_google").where("sub", userInfo["sub"]).first();
+
+            // create user if not exists
+            if (typeof exitsUser === "undefined") {
+                // generate new user id
+                let userId = undefined;
+                while (typeof userId === "undefined") {
+                    userId = generateId(10);
+                    const existing = await this.db.select().table("users").where("user_id", userId).first();
+                    if (existing !== undefined) {
+                        userId = undefined;
+                    }
+                }
+
+                // insert into users table
+                await this.db.insert({
+                    "user_id": userId,
+                    "email": userInfo["email"],
+                    "first_name": userInfo["given_name"],
+                    "last_name": userInfo["family_name"]
+                }).into("users");
+
+                // insert into users_google table
+                await this.db.insert({
+                    "sub": userInfo["sub"],
+                    "user_id": userId,
+                    "picture": userInfo["picture"]
+                }).into("users_google");
+
+                exitsUser = {
+                    "user_id": userId
+                };
+            }
+
+            // update account data if changed
+            this.updateUserData(exitsUser["user_id"], "email", userInfo["email"]);
+            this.updateUserData(exitsUser["user_id"], "firstName", userInfo["given_name"]);
+            this.updateUserData(exitsUser["user_id"], "lastName", userInfo["family_name"]);
+            this.updateUserData(exitsUser["user_id"], "picture", userInfo["picture"]);
+
+            // create session
+            const ip = client.get("ws")._socket.remoteAddress;
+            const { sessionId, sessionKey } = await this.addSession(exitsUser["user_id"], ip, userAgent);
+            this.addClientSession(exitsUser["user_id"], sessionId, clientId);
+
+            messageObj.send({
+                "success": true,
+                "sessionId": sessionId,
+                "sessionKey": sessionKey
+            });
+            return;
+        }
+
+        if (message["type"] === "login-session") {
+            /*{
+                "sessionKey": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+            // check inputs
+            const sessionKey = message["sessionKey"];
+            if (typeof sessionKey !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check session in db
+            const session = await this.db.select().table("sessions").where("session_key", sessionKey).andWhere("expire", ">", Date.now()).first();
+            if (session === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+            await this.db.update({"expire": Date.now() + 7 * 24 * 60 * 60 * 1000}).table("sessions").where("session_key", sessionKey);
+
+            // check already logged in
+            if (client.get("isLoggedIn") === true) {
+                if (session["user_id"] === client.get("userId")) {
+                    messageObj.send({
+                        "success": true
+                    });
+                    return;
+                }
+                // logout previous session
+                this.removeClientSession(client.get("userId"), client.get("sessionId"), clientId);
+            }
+
+            // add session to client
+            this.addClientSession(session["user_id"], session["session_id"], clientId);
+
+            messageObj.send({
+                "success": true
+            });
+            return;
+        }
+
+        if (message["type"] === "logout") {
+            /*{
+                "sessionId": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+            // check logged in
+            if (client.get("isLoggedIn") !== true) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check inputs
+            let sessionId = message["sessionId"];
+            if (typeof sessionId !== "string") {
+                sessionId = client.get("sessionId");
+            }
+
+            // check permission
+            const session = await this.db.select().table("sessions")
+                .where({
+                    "session_id": sessionId,
+                    "user_id": client.get("userId")
+                })
+                .andWhere("expire", ">", Date.now()).first();
+            if (session === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            if (sessionId === client.get("sessionId")) {
+                this.removeClientSession(session["user_id"], sessionId, clientId);  // prevent event send 
+            }
+            await this.removeSession(session["user_id"], sessionId);
+            messageObj.send({"success": true});
+            return;
+        }
+
+        if (message["type"] === "user-data-subscribe") {
+            /*{
+                "key": string,
+                "once": boolean
+                ...params
+            }*/
+            /*{
+                "success": boolean,
+                "value": any
+            }*/
+            // check inputs
+            const key = message["key"];
+            if (typeof key !== "string" || !["email", "firstName", "lastName", "picture", "sessions"].includes(key)) {
+                messageObj.send({"success": false});
+                return;
+            }
+            const once = message["once"];
+
+            // check permission
+            if (client.get("isLoggedIn") !== true) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            let value;
+            const user = await this.db.select().table("users").where("user_id", client.get("userId")).first();
+            if (key === "email") {
+                value = user["email"];
+            } else if (key === "firstName") {
+                value = user["first_name"];
+            } else if (key === "lastName") {
+                value = user["last_name"];
+            } else if (key === "picture") {
+                const userGoogle = await this.db.select().table("users_google").where("user_id", client.get("userId")).first();
+                const imageData = await this.httpsGetImage(userGoogle["picture"]);
+                value = imageData;
+            } else if (key === "sessions") {
+                const sessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
+                value = [];
+                for (const session of sessions) {
+                    value.push({
+                        "sessionId": session["session_id"],
+                        "expire": session["expire"],
+                        "lastUsed": session["last_used"],
+                        "ipAddress": session["ip_address"],
+                        "userAgent": session["user_agent"]
+                    });
+                }
+            }
+
+            // subscribe to updates
+            if (once !== true) {
+                this.addClientSubscription(key, client.get("userId"), clientId);
+            }
+
+            // send current data
+            messageObj.send({"success": true, "value": value});
+            return;
+        }
+
+        if (message["type"] === "user-data-unsubscribe") {
+            /*{
+                "key": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+            // check inputs
+            const key = message["key"];
+            if (typeof key !== "string" || !["email", "firstName", "lastName", "picture", "sessions"].includes(key)) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check permission
+            if (client.get("isLoggedIn") !== true) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            this.removeClientSubscription(key, client.get("userId"), clientId);
+            messageObj.send({"success": true});
+            return;
+        }
+
+        if (message["type"] === "delete-email") {
+            /*{
+                "lang": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+            // check permission
+            if (client.get("isLoggedIn") !== true) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check inputs
+            let lang = message["lang"];
+            if (typeof lang !== "string" || !["en", "hu"].includes(lang)) {
+                lang = "en";
+            }
+
+            // generate delete id
+            let deleteId = undefined;
+            while (deleteId === undefined) {
+                deleteId = generateId(10);
+                const existing = await this.db.select().table("delete").where("delete_id", deleteId).first();
+                if (existing !== undefined) {
+                    deleteId = undefined;
+                }
+            }
+
+            // generate delete key
+            let deleteKey = undefined;
+            while (deleteKey === undefined) {
+                deleteKey = generateId(10);
+                const existing = await this.db.select().table("delete").where("delete_key", deleteKey).first();
+                if (existing !== undefined) {
+                    deleteKey = undefined;
+                }
+            }
+
+            // insert into delete table
+            await this.db.insert({
+                "delete_id": deleteId,
+                "user_id": client.get("userId"),
+                "delete_key": deleteKey,
+                "expire": Date.now() + 1 * 60 * 60 * 1000
+            }).into("delete");
+
+            // send delete email
+            const user = await this.db.select().table("users").where("user_id", client.get("userId")).first();
+            try {
+                await this.mailers[0].sendMail({
+                    "from": this.mailers[0].options.auth.user,
+                    "to": user["email"],
+                    "subject": "Account Deletion Request",
+                    "text": 
+                        getText("delete.0", lang) + this.domain + 
+                        getText("delete.1", lang) + "\n\n" + deleteKey + "\n\n" +
+                        getText("delete.2", lang)
+                });
+            } catch (error) {
+                messageObj.send({"success": false});
+                console.log("Error sending delete email:", error);
+                return;
+            }
+            messageObj.send({"success": true});
+            return;
+        }
+
+        if (message["type"] === "delete") {
+            /*{
+                "deleteKey": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+
+            // check inputs
+            const deleteKey = message["deleteKey"];
+            if (typeof deleteKey !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check permission
+            if (client.get("isLoggedIn") !== true) {
+                messageObj.send({"success": false});
+                return;
+            }
+            const userId = client.get("userId");
+            const sessionId = client.get("sessionId");
+            const deleteEntry = await this.db.select().table("delete").where({"user_id": userId, "delete_key": deleteKey}).andWhere("expire", ">", Date.now()).first();
+            if (deleteEntry === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            messageObj.send({"success": true});
+
+            // delete client in sessions and logout other clients
+            this.removeClientSession(userId, sessionId, clientId);
+            const sessions = await this.db.select().table("sessions").where("user_id", userId);
+            if (sessions !== undefined) {
+                for (const session of sessions) {
+                    await this.removeSession(session["user_id"], session["session_id"]);
+                }
+            }
+
+            // delete user from db
+            await this.db("users").where("user_id", userId).delete();
+            return;
+        }
+        /*
+        events:
+        {
+            "timestamp": number,
+            "type": string // "logout" | "email" | "firstName" | "lastName" | "picture" | "sessions"
+            "isChange": boolean,
+            "isAdd": boolean,
+            "isRemove": boolean,
+            "value": any
+        }*/
+
+        // share management
+        // ...
+
+        // unknown API
+        console.log("Invalid request");
+        messageObj.abort();
+        return;
+    };
     async clientConnect(ws) {
+        // generate clientId for connection
         let clientId;
         do {
-            clientId = (Math.floor(Math.random() * 9999) + 1).toString().padStart(4, "0");
-        } while (this.clients.has(clientId));
+            clientId = Math.floor(Math.random() * 9999) + 1;
+        } while (this.clients.has(clientId));  
         
         // create communicator
         const com = new Communicator({
@@ -1377,64 +2204,31 @@ const Server = class {
         });
         await com.sideSync();
         await com.timeSync();
-        this.clients.set(clientId, com);
-        console.log("Client connected (" + clientId + ")");
 
-        // listen messages
+        // create state
+        /*{
+            "com": Communicator,
+            "ws": WebSocket,
+            "isLoggedIn": false,
+            "userId": undefined,
+            "sessionId": undefined
+        }*/
+        const client = new Map([
+            ["com", com],
+            ["ws", ws],
+            ["isLoggedIn", false]
+        ]);
+        this.clients.set(clientId, client);
+
+        // listen messages and handle API
         com.onIncoming(async (messageObj) => {
-            await messageObj.wait();
-            const message = messageObj.data;
-
-            //check basic structure
-            if (typeof message !== "object" && typeof message["type"] !== "string") {
-                console.log("Invalid message format", message);
-                messageObj.abort();
-                return;
+            try {
+                await this.handleAPI(messageObj, clientId);
+            } catch (error) {
+                console.log("Error handling message:", error);
+                client.get("ws").terminate();
             }
-
-            // config check
-            if (message["type"] === "conf-get") {
-                messageObj.send(this.clientConf);
-                return;
-            }
-
-            if (message["type"] === "login-google") {
-                const userInfo = await this.authGoogle(messageObj.data["credential"]);
-                let sessionId = undefined;
-
-                messageObj.send({userInfo});
-                return;
-            }
-
-            if (message["type"] === "login-check") {
-                const sessionId = message["sessionId"];
-                return;
-            }
-
-            if (message["type"] === "get-resources") {
-                return;
-            }
-
-            if (message["type"] === "create-share") {
-                
-                if (typeof message["code"] === "string") {
-                    // create existing
-
-                } else {
-                    // create new
-
-                }
-                return;
-            }
-
-            if (message["type"] === "join-room") {
-
-                return;
-            }
-
-            console.log("Invalid request");
-            messageObj.abort();
-            return;
+            
         });
 
         // listen error
@@ -1444,10 +2238,18 @@ const Server = class {
 
         // listen close
         ws.addEventListener("close", () => {
-            console.log("Client disconnected (" + clientId + ")");
+            // clean up
+            const client = this.clients.get(clientId);
+            if (client.get("isLoggedIn") === true) {
+                this.removeClientSession(client.get("userId"), client.get("sessionId"), clientId);
+            }
             this.clients.delete(clientId);
+            
+            console.log("Client disconnected (" + clientId + ")");
         });
 
+        // debug info
+        console.log("Client connected (" + clientId.toString().padStart(4, "0") + ")");
 
     };
     async stop() {

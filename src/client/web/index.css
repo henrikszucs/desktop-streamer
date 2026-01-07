@@ -159,6 +159,7 @@ body.dark {
     overflow: auto;
     flex: 2;
     padding-right: 12px;
+    min-height: 300px;
 }
 
 @media only screen and (max-width: 720px) {
@@ -319,6 +320,77 @@ body.dark {
     align-self: center;
 }
 
+
+/* Account information */
+.information-box {
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+/* Session information */
+.session-list {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding-top: 16px;
+}
+
+.session-box {
+    display: flex;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+    padding-left: 16px;
+    align-items: center;
+}
+
+.session-box > div:nth-child(1) {
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+/* Delete account */
+.delete-send {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.delete-send-result {
+    margin-top: 10px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.delete-confirm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.delete-confirm-field > div:nth-child(1) {
+    display: flex;
+    align-items: center;
+}
+
+@media only screen and (max-width: 500px) {
+    .delete-confirm-field > div:nth-child(1) {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    #btn-account-delete-confirm {
+        margin-top: 16px;
+        margin-bottom: 16px;
+    }
+}
+
+.delete-confirm-field > div:nth-child(1) > div:nth-child(1) {
+    margin-bottom: 0px;
+}
 
 
 

@@ -59,20 +59,20 @@
             </button>
             <button class="circle large fill" id="btn-user-circle">
                 <img class="responsive" src="/icons/guest.svg" height="32" id="btn-user">
-                <menu class="border left no-wrap " id="btn-user-menu-login">
+                <menu class="border left no-wrap " id="btn-user-menu-logged-out">
                     <li id="btn-login">
                         <i>login</i>
                         <span data-i18n="main.login">Log in</span>
                     </li>
                 </menu>
-                <menu class="border left no-wrap hide" id="btn-user-menu-user">
+                <menu class="border left no-wrap hide" id="btn-user-menu-logged-in">
                     <li id="btn-account-settings">
                         <i>settings</i>
-                        <span>Account settings</span>
+                        <span data-i18n="main.account">Account settings</span>
                     </li>
                     <li id="btn-logout">
                         <i>logout</i>
-                        <span>Sign out</span>
+                        <span data-i18n="main.logout">Sign out</span>
                     </li>
                 </menu>
             </button>
@@ -465,16 +465,12 @@
                         </div>
                     </div>
                 </div>
-                
-
             </div>
-            
-            
         </dialog>
 
         <dialog class="multicolumn-dialog" id="dialog-account-settings">
             <nav>
-                <h5>Account settings</h5>
+                <h5 data-i18n="account.title">Account settings</h5>
                 <div class="max"></div>
                 <button class="circle transparent" id="btn-account-close">
                     <i>close</i>
@@ -482,54 +478,100 @@
             </nav>
             <div class="no-border">
                 <div>
-                    <button class="fill small-margin">
+                    <button class="primary small-margin" id="btn-account-information">
                         <i>info</i>
-                        <span class="l m">Information</span>
+                        <span class="l m" data-i18n="account.information.btn">Information</span>
                     </button>
-                    <br>
-                    <button class="primary small-margin">
-                        <i>lock</i>
-                        <span class="l m">Security</span>
+                    <button class="fill small-margin" id="btn-account-sessions">
+                        <i>devices</i>
+                        <span class="l m" data-i18n="account.sessions.btn">Sessions</span>
+                    </button>
+                    <button class="fill small-margin" id="btn-account-delete">
+                        <i>delete</i>
+                        <span class="l m" data-i18n="account.delete.btn">Delete</span>
                     </button>
                 </div>
-                <!-- Information settings -->
-                <div id="account-information">
-                    <h5 class="small-margin">Information settings</h5>
-                    <div class="small-margin">
-                        <fieldset>
-                            <legend>Theme color</legend>
-                            <nav class="wrap">
-                                <button class="chip circle small">
-                                    <i>dark_mode</i></button>
-                                <button class="chip circle">
-                                    <i>palette</i>
-                                    <input type="color">
-                                </button>
-                                <button class="circle small red"></button>
-                                <button class="circle small pink"></button>
-                                <button class="circle small purple"></button>
-                                <button class="circle small indigo"></button>
-                                <button class="circle small blue"></button>
-                                <button class="circle small green"></button>
-                                <button class="circle small yellow"></button>
-                                <button class="circle small orange"></button>
-                            </nav>
-                        </fieldset>
-                        <fieldset>
-                            <legend>Language</legend>
-                            <div class="field suffix border round">
-                                <select>
-                                    <option>English</option>
-                                    <option>Magyar</option>
-                                </select>
-                                <i>arrow_drop_down</i>
-                            </div>
-                        </fieldset>
+                <div>
+                    <!-- Information settings -->
+                    <div id="account-information">
+                        <h5 class="small-margin" data-i18n="account.information.title">Information</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="account.information.account-data">Account data</legend>
+                                <nav class="wrap">
+                                    <div class="field label border round information-box">
+                                        <input type="text" id="account-email" disabled/>
+                                        <label data-i18n="account.information.email">Email</label>
+                                    </div>
+                                    <div class="field label border round information-box">
+                                        <input type="text" id="account-firstname" disabled/>
+                                        <label data-i18n="account.information.first-name">First name</label>
+                                    </div>
+                                    <div class="field label border round information-box">
+                                        <input type="text" id="account-lastname" disabled/>
+                                        <label data-i18n="account.information.last-name">Last name</label>
+                                    </div>
+                                </nav>
+                            </fieldset>
+                        </div>
                     </div>
-                </div>
-                <!-- Security settings -->
-                <div id="account-security">
-                    <h5 class="small-margin">Security settings</h5>
+                    <!-- Sessions settings -->
+                    <div id="account-sessions" class="hide">
+                        <h5 class="small-margin" data-i18n="account.sessions.title">Sessions</h5>
+                        <div id="sessions-list" class="session-list">
+                            <!--<div class="session-box">
+                                <div>
+                                    <i>computer</i>
+                                    <span class="bold">Windows</span>
+                                    <span> | </span>
+                                    <span class="tertiary-text">Last active: 2024-01-01 12:00</span>
+                                    <span> | </span>
+                                    <span class="tertiary-text">IP address: 192.168.1.1</span>
+                                    <span>
+                                        <span> | </span>
+                                        <span class="primary-text">This device</span>
+                                    </span>
+                                </div>
+                                <div>
+                                    <button class="circle large error">
+                                        <i>delete</i>
+                                        <span class="l m">Delete</span>
+                                    </button>
+                                </div>
+                            </div>-->
+                        </div>
+                    </div>
+                    <!-- Delete account -->
+                    <div id="account-delete" class="hide">
+                        <h5 class="small-margin" data-i18n="account.delete.title">Delete account</h5>
+                        <div class="small-margin">
+                            <p data-i18n="account.delete.warning">Deleting your account will remove all your data from our servers. This action is irreversible.</p>
+                            <div class="delete-send">
+                                <button class="tertiary" id="btn-account-delete-send">
+                                    <i>send</i>
+                                    <span data-i18n="account.delete.send-key">Send delete key</span>
+                                </button>
+                                <span class="tertiary-text delete-send-result hide" data-i18n="account.delete.send-success" id="account-delete-send-success">You will receive a delete key in your email.</span>
+                                <span class="error-text delete-send-result hide" data-i18n="account.delete.send-error" id="account-delete-send-error">Error sending delete key. Please try again later.</span>
+                            </div>
+                            <div class="delete-confirm-field">
+                                <div>
+                                    <div class="field label border round">
+                                        <input type="text" id="account-delete-key"/>
+                                        <label data-i18n="account.delete.delete-key">Delete key</label>
+                                    </div>
+                                    <div>
+                                        <button class="error" id="btn-account-delete-confirm">
+                                            <i>delete</i>
+                                            <span data-i18n="account.delete.confirm">Delete my account</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <span class="error-text" data-i18n="account.delete.confirm-error" id="account-delete-confirm-error">Error confirming delete key. Please try with other code.</span>
+                            </div>
+                            
+                        </div>
+                    </div>
                 </div>
             </div>
         </dialog>
@@ -539,16 +581,6 @@
         <main class="surface-container round padding bottom-margin center-align" id="screen-main">
             <!-- New screen -->
             <div class="" id="screen-new">
-                <h5>Add connection</h5>
-                <div class="space"></div>
-                <nav class="center-align">
-                    <button class="large">
-                        <i>add_circle</i>
-                        Share this device
-                    </button>
-                </nav>
-                <div class="large-space"></div>
-                <div class="divider margin-top margin-bottom"></div>
                 <h5>Join room</h5>
                 <nav class="no-space center-align">
                     <div class="field label border left-round">
@@ -560,7 +592,7 @@
                         Join
                     </button>
                 </nav>
-                <nav class="center-align">
+                <!--<nav class="center-align">
                     <button class="large">
                         <i>qr_code_scanner</i>
                         Read QR code
@@ -568,6 +600,16 @@
                     <button class="large">
                         <i>qr_code</i>
                         Invitation QR code
+                    </button>
+                </nav>-->
+                <div class="large-space"></div>
+                <div class="divider margin-top margin-bottom"></div>
+                <h5>Share device</h5>
+                <div class="space"></div>
+                <nav class="center-align">
+                    <button class="large">
+                        <i>add_circle</i>
+                        Generate join code
                     </button>
                 </nav>
             </div>
@@ -617,7 +659,6 @@
                 <h5>Log in to your account</h5>
                 <div class="space"></div>
                 <div class="center-align" style="display: flex; justify-content: center;" id="google-login"></div>
-                
             </div>
 
             <!-- Services page -->
