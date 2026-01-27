@@ -42,7 +42,7 @@ const Communicator = class {
     ERROR = errors;     //error constants
 
     // Public
-    // setup API: configure, release, timeSyncStart, timeSyncStop, timeSync
+    // setup API: configure, release, timeSyncStart, timeSyncStop, timeSync, sideSync
     // com API: send, invoke, receive
     // trigger API: onIncoming, onSend, onInvoke
     constructor(config) {
@@ -60,7 +60,7 @@ const Communicator = class {
         }
 
         //set required params and static params
-        if (config["sender"] !== "undefined") {
+        if (typeof config["sender"] !== "undefined") {
             if (typeof config["sender"] === "function") {
                 this.sender = config["sender"];
             } else {
@@ -96,7 +96,7 @@ const Communicator = class {
             if (typeof config["packetTimeout"] === "number") {
                 this.packetTimeout = config["packetTimeout"];
             } else {
-                throw new Error("'packetRetry' option must be number");
+                throw new Error("'packetTimeout' option must be number");
             }
         }
         if (typeof config["packetRetry"] !== "undefined") {
@@ -125,6 +125,9 @@ const Communicator = class {
     release() {
         //free up every pointer that point to non internal variables
         clearInterval(this.timeSyncIntervalId);
+        for (const [key, message] of this.messages) {
+            message.abort();
+        }
         this.sender = async function(data, transfer, message) {};
         this.messages = new Map();
     };
@@ -161,7 +164,7 @@ const Communicator = class {
                 this.timeSyncResolve(resolve, patience);
 
                 //send
-                const buffer = new ArrayBuffer(17);
+                const buffer = new ArrayBuffer(25);
                 const view = new DataView(buffer);
                 view.setUint8(view.byteLength - 1, 1); //time sync flag
                 view.setFloat64(view.byteLength - 9, Date.now()); //my time
@@ -283,6 +286,7 @@ const Communicator = class {
         if (typeof timeout !== "number") {
             timeout = this.timeout;
         }
+        clearTimeout(messageObj.timeoutId);
         messageObj.timeoutId = setTimeout(() => {
             messageObj.error = this.ERROR.TIMEOUT;
             for (const cb of messageObj.onaborts) {
@@ -293,7 +297,6 @@ const Communicator = class {
         //send data
         await this.messageSend(messageObj, msg, transfer);
         if (messageObj.error === this.ERROR.ABORT) {
-            console.log(messageObj.error)
             const sendTime = (Date.now() + this.timeOffset) % 4294967295; //32 bit time
             const data = new Uint8Array(9);
             const view = new DataView(data.buffer);
@@ -333,6 +336,7 @@ const Communicator = class {
             if (typeof timeout !== "number") {
                 timeout = this.timeout;
             }
+            clearTimeout(messageObj.timeoutId);
             messageObj.timeoutId = setTimeout(() => {
                 messageObj.error = this.ERROR.TIMEOUT;
                 for (const cb of messageObj.onaborts) {
@@ -489,7 +493,6 @@ const Communicator = class {
                 time1 = view.getFloat64(view.byteLength - offset);
                 offset += 8;
                 time2 = view.getFloat64(view.byteLength - offset);
-
             } else if (isSideSync) {
                 offset += 4;
                 time = view.getUint32(view.byteLength - offset);
@@ -582,6 +585,7 @@ const Communicator = class {
         // delete outdated packets
         const now = Date.now() % 4294967295 - 100;
         if (sendTime < now || now - sendTime > this.interactTimeout) {
+            console.warn("outdated packet", sendTime, now);
             return;
         }
 
@@ -617,13 +621,14 @@ const Communicator = class {
                 //console.log(isAnswer);
                 // check the parent object (and not moved yet)
                 messageObj = this.messages.get(answerFor);
-
+                
                 // exit if no parent
                 if (messageObj === undefined) {
+                    
                     return;
                 }
 
-                // finsh outgoing sendings
+                // finish outgoing sendings
                 const iterator1 = messageObj.onpackets[Symbol.iterator]();
                 for (const [key, val] of iterator1) {
                     val();
@@ -631,7 +636,7 @@ const Communicator = class {
 
                 // move message object
                 messageObj.messageId = messageId;
-                messageObj.isInvoke = (isInvoke === 1 ? true : false);
+                messageObj.isInvoke = isInvoke;
                 messageObj.isAnswer = true;
                 messageObj.packetCount = Infinity;
                 messageObj.packets = new Map();
@@ -881,8 +886,12 @@ const Communicator = class {
             this.messages.set(messageObj.messageId, messageObj);
         }
     };
+    test = 0;
     async messageSend(messageObj, msg, transfer) {
         //initial interactivity
+        const test = Date.now();
+        const test0 = this.test;
+        this.test++;
         const abort = () => {
             messageObj.error = this.ERROR.INACTIVE;
             for (const cb of messageObj.onaborts) {
@@ -891,7 +900,7 @@ const Communicator = class {
         };
         clearTimeout(messageObj.interactTimeoutId);
         messageObj.interactTimeoutId = setTimeout(abort, this.interactTimeout);
-
+    
         //message listener
         messageObj.onreceive = (isAbort, packetId) => {
             //no communication if error
@@ -1130,6 +1139,8 @@ const Communicator = class {
         });
     };
     async messageFree(messageObj) {
+        const messageId = messageObj.messageId;
+
         //stop timers
         clearTimeout(messageObj.timeoutId);
         clearTimeout(messageObj.interactTimeoutId);
@@ -1140,7 +1151,7 @@ const Communicator = class {
         });
 
         //free from global stack
-        this.messages.delete(messageObj.messageId);
+        this.messages.delete(messageId);
     };
 };
 

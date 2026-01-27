@@ -169,7 +169,6 @@ const Server = class extends EventTarget {
         this.communicator = new Communicator({
             "sender": function() {},
             "interactTimeout": 3000,    //the max timeout between two packet arrive
-        
             "timeout": 5000,            //the time for transmit message
             "packetSize": 1000,         //the maximum size of one packet in bytes (only for ArrayBuffer)
             "packetTimeout": 1000,      //the max timeout for packets
@@ -324,6 +323,35 @@ const Server = class extends EventTarget {
                 "detail": message["value"]
             }));
         }
+
+        // pair request
+        if (message["type"] === "pair-request") {
+            const showRemember = message["details"]["isUser"] === true || this.loginState["isLoggedIn"] === true;
+            this.dispatchEvent(new CustomEvent("pair-request", {
+                "detail": {
+                    "showRemember": showRemember,
+                    "details": message["details"],
+                    "timeout": message["timeout"]
+                }
+            }));
+            return;
+        }
+
+        // pair accept
+        if (message["type"] === "pair-accept") {
+            this.dispatchEvent(new CustomEvent("pair-accept", {
+                "detail": {
+                    "joinCode": message["joinCode"]
+                }
+            }));
+            return;
+        }
+
+        // pair reject
+        if (message["type"] === "pair-reject") {
+            this.dispatchEvent(new CustomEvent("pair-reject"));
+            return;
+        }
     };
     async loginGoogle(credential) {
         const userAgent = {};
@@ -420,6 +448,41 @@ const Server = class extends EventTarget {
         } else {
             this.dispatchEvent(new CustomEvent("logout"));
         }
+    };
+    async createPairCode() {
+        const message = this.communicator.invoke({"type":"pair-create"});
+        await message.wait();
+        if (message.error !== "" || message.data["success"] !== true) {
+            throw new Error("Failed to create pair code");
+        }
+        return message.data["pairCode"];
+    };
+    async pairRequest(pairCode) {
+        const messageObj = this.communicator.invoke({"type":"pair-request", "pairCode": pairCode});
+        await messageObj.wait();
+        return messageObj.data;
+    }
+    async pairAccept(isRemember=false) {
+        const messageObj = this.communicator.invoke({"type":"pair-accept", "remember": isRemember});
+        await messageObj.wait();
+        if (messageObj.error !== "" || messageObj.data["success"] !== true) {
+            throw new Error("Failed to accept pair request");
+        }
+        this.dispatchEvent(new CustomEvent("pair-accept"));
+        return messageObj.data["joinCode"];
+    };
+    async pairReject() {
+        const messageObj = this.communicator.invoke({"type":"pair-reject"});
+        await messageObj.wait();
+        this.dispatchEvent(new CustomEvent("pair-reject"));
+    };
+    async deletePairCode() {
+        const messageObj = this.communicator.invoke({"type":"pair-delete"});
+        await messageObj.wait();
+        if (messageObj.error !== "" || messageObj.data["success"] !== true) {
+            throw new Error("Failed to delete pair code");
+        }
+        return true;
     };
 };
 const server = new Server();
@@ -1607,6 +1670,9 @@ const AccountDialog = class {
                 this.btn.classList.add("fill");
 
                 //unsubscribe from user info updates
+                this.email.value = "";
+                this.firstName.value = "";
+                this.lastName.value = "";
                 await server.unsubscribeUserData("email");
                 await server.unsubscribeUserData("firstName");
                 await server.unsubscribeUserData("lastName");
@@ -1774,6 +1840,10 @@ const AccountDialog = class {
                 this.btn.classList.remove("primary");
                 this.btn.classList.add("fill");
 
+                for (const session of this.sessions) {
+                    session.el.remove();
+                }
+                this.sessions = [];
                 await server.unsubscribeUserData("sessions");
 
                 server.removeEventListener("session-removed", this.onSessionRemoved);
@@ -1824,12 +1894,15 @@ const AccountDialog = class {
                 this.deleteSendSuccess.classList.add("hide");
                 this.deleteSendError.classList.add("hide");
                 this.deleteConfirmError.classList.add("hide");
+                this.deleteKey.value = "";
 
                 this.win.classList.remove("hide");
                 this.btn.classList.add("primary");
                 this.btn.classList.remove("fill");
             };
             close = () => {
+                this.deleteKey.value = "";
+                
                 this.win.classList.add("hide");
                 this.btn.classList.remove("primary");
                 this.btn.classList.add("fill");
@@ -1871,15 +1944,216 @@ const AccountDialog = class {
     };
 };
 
-const NewScreen = class {
+const RoomCreateDialog = class extends EventTarget {
     constructor() {
+        super();
         // get important elements
-        this.newScreen = document.getElementById("screen-new");
+        this.overlay = document.getElementById("dialog-overlay");
+        this.dialog = document.getElementById("dialog-room-create");
+        this.closeBtn = document.getElementById("btn-room-create-close");
+
+        this.closingSubDialog = null;
+
+        this.codeInput = document.getElementById("input-room-create-code");
+        this.copyBtn = document.getElementById("btn-room-create-copy");
+        this.copyBtn.addEventListener("click", () => {
+            if (!navigator.clipboard) {
+                this.codeInput.select();
+                document.execCommand("copy");
+                return;
+            }
+            this.codeInput.select();
+            this.codeInput.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(this.codeInput.value);
+        });
+        this.closeBtn.addEventListener("click", () => {
+            this.close();
+        });
+    };
+    createJoin = async () => {
+        const code = await server.createPairCode();
+        this.codeInput.value = code;
+    };
+    show = () => {
+        this.overlay.classList.add("active");
+        this.dialog.classList.add("active");
+        this.overlay.addEventListener("click", this.close);
+    };
+    hide = () => {
+        this.overlay.classList.remove("active");
+        this.dialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.close);
     };
     open = () => {
+        this.overlay.classList.add("active");
+        this.dialog.classList.add("active");
+        this.overlay.addEventListener("click", this.close);
+
+        this.createJoin();
+    };
+    close = () => {
+        this.closingSubDialog?.close();
+
+        this.overlay.classList.remove("active");
+        this.dialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.close);
+
+        this.codeInput.value = "";
+        server.deletePairCode();
+    };
+};
+
+const RoomRequestDialog = class extends EventTarget  {
+    constructor() {
+        super();
+        // get important elements
+        this.overlay = document.getElementById("dialog-overlay");
+        this.dialog = document.getElementById("dialog-room-request");
+        this.rejectBtn = document.getElementById("btn-request-reject");
+        this.acceptBtn = document.getElementById("btn-request-accept");
+        this.rejectBar = document.getElementById("room-request-reject-bar");
+
+        // timeout and auto updates
+        this.timeout = 1000;
+        this.startTime = -1;
+        this.updateIntervalId = -1;
+        this.timeoutId = -1;
+
+        this.rejectBtn.addEventListener("click", () => {
+            this.close();
+        });
+
+        this.acceptBtn.addEventListener("click", () => {
+            server.pairAccept();
+        });
+
+    };
+    open = () => {
+        this.overlay.classList.add("active");
+        this.dialog.classList.add("active");
+
+        this.startTime = Date.now();
+        this.updateIntervalId = setInterval(() => {
+            const progress = (Date.now() - this.startTime) / this.timeout * 10000;
+            this.rejectBar.value = progress;
+        }, 16);
+
+        this.timeoutId = setTimeout(() => {
+            this.close();
+        }, this.timeout);
+    };
+    close = () => {
+        if (server.isOnline === true) {
+            server.pairReject();
+        }
+        this.overlay.classList.remove("active");
+        this.dialog.classList.remove("active");
+        clearInterval(this.updateIntervalId);
+        clearTimeout(this.timeoutId);
+    };
+};
+
+const RoomJoiningDialog = class extends EventTarget {
+    constructor() {
+        super();
+
+        // get important elements
+        this.overlay = document.getElementById("dialog-overlay");
+        this.dialog = document.getElementById("dialog-room-joining");
+        this.closeBtn = document.getElementById("btn-room-joining-close");
+        this.progressBar = document.getElementById("room-joining-progress");
+
+        this.timeout = 1000;
+        this.startTime = -1;
+        this.updateIntervalId = -1;
+
+        this.closeBtn.addEventListener("click", () => {
+            this.cancel();
+        });
+    };
+    cancel = () => {
+        server.deletePairCode();
+        this.close();
+    };
+    open = () => {
+        this.overlay.classList.add("active");
+        this.dialog.classList.add("active");
+        this.overlay.addEventListener("click", this.cancel);
+
+        this.startTime = Date.now();
+        this.updateIntervalId = setInterval(() => {
+            const progress = (Date.now() - this.startTime) / this.timeout * 10000;
+            this.progressBar.value = progress;
+        }, 16);
+            
+    };
+    close = () => {
+        this.overlay.classList.remove("active");
+        this.dialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.cancel);
+        clearInterval(this.progressIntervalId);
+    };
+};
+
+const RoomSettingsDialog = class {
+    constructor() {
+        // get important elements
+        this.overlay = document.getElementById("dialog-overlay");
+        this.dialog = document.getElementById("dialog-room-settings");
+    };
+    open = () => {
+        this.overlay.classList.add("active");
+        this.dialog.classList.add("active");
+        this.overlay.addEventListener("click", this.close);
+    };
+    close = () => {
+        this.overlay.classList.remove("active");
+        this.dialog.classList.remove("active");
+        this.overlay.removeEventListener("click", this.close);
+    };
+};
+
+
+const NewScreen = class extends EventTarget {
+    constructor() {
+        super();
+
+        // get important elements
+        this.newScreen = document.getElementById("screen-new");
+        this.joinCode = document.getElementById("input-new-code");
+        this.joinBtn = document.getElementById("btn-new-join");
+        this.createBtn = document.getElementById("btn-new-create");
+
+        // set event listeners
+        this.joinBtn.addEventListener("click", async () => {
+            const code = this.joinCode.value.trim();
+            this.dispatchEvent(new CustomEvent("join", {"detail": {"code": code}}));
+        });
+        this.createBtn.addEventListener("click", () => {
+            this.dispatchEvent(new Event("create"));
+        });
+
+    };
+    displayJoinError = (message) => {
+        const field = this.joinCode.parentElement;
+        if (message === "") {
+            field.classList.remove("invalid");
+            field.children.item(2).classList.add("hide");
+            return;
+        }
+        field.classList.add("invalid");
+        field.children.item(2).classList.remove("hide");
+        field.children.item(2).innerText = message;
+        console.error("Join room error:", message);
+    };
+    open = () => {
+        this.joinCode.value = "";
+        this.displayJoinError("");
         this.newScreen.classList.remove("hide");
     };
     close = () => {
+        this.joinCode.value = "";
+        this.displayJoinError("");
         this.newScreen.classList.add("hide");
     };
 };
@@ -2375,6 +2649,59 @@ const main = async function() {
         window.history.pushState({}, "", "/" + "new");
         loadPath();
     });
+    
+    const roomCreateDialog = new RoomCreateDialog();
+    const roomRequestDialog = new RoomRequestDialog();
+    roomCreateDialog.closingSubDialog = roomRequestDialog;
+    newScreen.addEventListener("create", () => {
+        switchDialog(roomCreateDialog);
+    });
+    server.addEventListener("pair-request", (event) => {
+        const detail = event.detail;
+        console.log("Paired to room:", detail);
+        roomCreateDialog.hide();
+        roomRequestDialog.timeout = detail["timeout"];
+        roomRequestDialog.open();
+
+        const pairRejectHandler = () => {
+            console.log("Pair reject");
+            server.removeEventListener("pair-reject", pairRejectHandler);
+            server.removeEventListener("pair-accept", pairAcceptHandler);
+
+            roomRequestDialog.close();
+            roomCreateDialog.show();
+        };
+        const pairAcceptHandler = () => {
+            console.log("Pair accept");
+            server.removeEventListener("pair-reject", pairRejectHandler);
+            server.removeEventListener("pair-accept", pairAcceptHandler);
+
+            switchDialog(emptyDialog);
+            // todo: open room screen
+        };
+        server.addEventListener("pair-reject", pairRejectHandler);
+        server.addEventListener("pair-accept", pairAcceptHandler);
+    });
+
+    const roomJoiningDialog = new RoomJoiningDialog();
+    newScreen.addEventListener("join", async (event) => {
+        const res = await server.pairRequest(event.detail.code);
+        if (res["success"] !== true) {
+            newScreen.displayJoinError("Cannot join");
+            return;
+        }
+        const timeout = res["timeout"];
+        roomJoiningDialog.timeout = timeout;
+        switchDialog(roomJoiningDialog);
+        server.addEventListener("pair-accept", () => {
+            switchDialog(emptyDialog);
+        });
+        server.addEventListener("pair-reject", () => {
+            switchDialog(emptyDialog);
+        });
+        console.log("Join room result:", res);
+    });
+    
 
     // Download screen
     const downloadScreen = new DownloadScreen(conf["http"]["clients"]);
@@ -2538,7 +2865,13 @@ const main = async function() {
         } else if (path[0] === "login") {
             switchScreen(loginScreen);
         } else if (path[0] === "services") {
-            switchScreen(serviceScreen);
+            if (typeof conf["ws"]["remote"]["serviceSharing"] !== "undefined") {
+                switchScreen(serviceScreen);
+            } else {
+                path = [""];
+                window.history.replaceState({}, "", "/" + path.join("/"));
+            }
+            
         } else if (path[0] === "devices") {
             switchScreen(deviceScreen);
         } else if (path[0] === "outgoings") {
@@ -2567,6 +2900,14 @@ const main = async function() {
             });
         } else {
             document.getElementById("google-login").classList.add("hide");
+        }
+
+        if (typeof serverConf["serviceSharing"] === "undefined") {
+            document.getElementById("btn-services").classList.add("hide");
+            document.getElementById("btn-services-2").classList.add("hide");
+        } else {
+            document.getElementById("btn-services").classList.remove("hide");
+            document.getElementById("btn-services-2").classList.remove("hide");
         }
 
         loadingDialog.close();

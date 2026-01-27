@@ -19,7 +19,7 @@ import nodemailer from "nodemailer";
 // first-party dependencies
 import Mime from "easy-mime";
 import Communicator from "easy-communicator";
-import { stat } from "node:fs";
+import { time } from "node:console";
 
 const CLIENT_VERSION = "0.1.0";
 const MIN_CLIENT_VERSION = CLIENT_VERSION;
@@ -867,8 +867,9 @@ const Server = class {
     authGoogle = null;
     domain = "";
 
-    // clients map
+    // clients store memory variables
     clients = new Map();            // key-clientId, value-state object of the client
+    events = new Map();             // key-clientId, value->EventTarget ("login", "logout", "disconnect")
     sessions = new Map();           // key-sessionId, value-set of clientIds
     subscriptions = new Map([
         ["email", new Map()],
@@ -876,8 +877,12 @@ const Server = class {
         ["lastName", new Map()],
         ["picture", new Map()],
         ["sessions", new Map()]
-    ]);      // key-subscription name, value-> Map of "userId" -> Set of "clientId"
+    ]);                             // key-subscription name, value-> Map of "userId" -> Set of "clientId"
+    pairs = new Map();              // key-pairCode, value-> {hostClientId, peerClientId, timeoutId}
+    joinHosts = new Map();          // key-joinHostCode, value-> {joinPeerCode, hostClientIds, peerClientIds}
+    joinPeers = new Map();          // key-joinPeerCode, value-> joinHostCode
 
+    // utility things
     isClosing = false;
     constructor() {
 
@@ -997,6 +1002,7 @@ const Server = class {
         });
     };
 
+    // behavior methods
     async start(conf) {
         process.stdout.write("Starting HTTP server...    ");
         // Start HTTP server
@@ -1308,54 +1314,23 @@ const Server = class {
                     table.unique("delete_key");
                 });
             }
-            /*
-            if (await this.db.schema.hasTable("rooms") === false) {
-                await this.db.schema.createTable("rooms", function (table) {
-                    table.bigint("room_id").unsigned();
-                    table.text("host_code");
-                    table.bigint("expire").unsigned();
+            if (await this.db.schema.hasTable("joins") === false) {
+                await this.db.schema.createTable("joins", function (table) {
+                    table.string("join_id");
+                    table.string("host_code");
+                    table.string("peer_code");
+                    table.string("host_user_id");
+                    table.string("peer_user_id");
                 });
-                await this.db.schema.alterTable("rooms", function (table) {
-                    table.primary("room_id");
+                await this.db.schema.alterTable("joins", function (table) {
+                    table.primary("join_id");
                     table.unique("host_code");
+                    table.unique("peer_code");
+                    table.foreign("host_user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                    table.foreign("peer_user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
                 });
             }
-            if (await this.db.schema.hasTable("resources") === false) {
-                await this.db.schema.createTable("resources", function (table) {
-                    table.bigint("resource_id").unsigned();
-                    table.bigint("parent_id").unsigned();
-                    table.bigint("room_id").unsigned();
-                });
-                await this.db.schema.alterTable("resources", function (table) {
-                    table.primary("resource_id");
-                    table.foreign("parent_id").references("resources.resource_id").onDelete("CASCADE").onUpdate("CASCADE");
-                    table.foreign("room_id").references("rooms.room_id").onDelete("CASCADE").onUpdate("CASCADE");
-                });
-            }
-            if (await this.db.schema.hasTable("permissions") === false) {
-                await this.db.schema.createTable("permissions", function (table) {
-                    table.bigint("permission_id").unsigned();
-                    table.bigint("user_id").unsigned();
-                    table.boolean("can_share");
-                    table.boolean("can_write");
-                    table.boolean("is_owner");
-                });
-                await this.db.schema.alterTable("permissions", function (table) {
-                    table.primary("permission_id");
-                    table.foreign("user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
-                });
-            }
-            if (await this.db.schema.hasTable("permission_join") === false) {
-                await this.db.schema.createTable("permission_join", function (table) {
-                    table.bigint("permission_id").unsigned();
-                    table.bigint("resource_id").unsigned();
-                });
-                await this.db.schema.alterTable("permission_join", function (table) {
-                    table.index(["permission_id", "resource_id"]);
-                    table.foreign("permission_id").references("permissions.permission_id").onDelete("CASCADE").onUpdate("CASCADE");
-                    table.foreign("resource_id").references("resources.resource_id").onDelete("CASCADE").onUpdate("CASCADE");
-                });
-            }*/
+           
 
             // Configure auth methods
             if (typeof conf["ws"]["features"]["auth"]["google"] !== "undefined") {
@@ -1395,11 +1370,17 @@ const Server = class {
                     "allowGuestShare": conf["ws"]["features"]["screenSharing"]["allowGuestShare"],
                     "allowGuestJoin": conf["ws"]["features"]["screenSharing"]["allowGuestJoin"]
                 },
-                "serviceSharing": {
-                    "isHomePage": conf["ws"]["features"]["serviceSharing"]["isHomePage"]
-                },
                 "auth": {}
             };
+            if (typeof conf["ws"]["features"]["serviceSharing"] !== "undefined") {
+                this.clientConf["serviceSharing"] = {
+                };
+                if (typeof conf["ws"]["features"]["serviceSharing"]["isHomePage"] === "boolean") {
+                    this.clientConf["serviceSharing"]["isHomePage"] = conf["ws"]["features"]["serviceSharing"]["isHomePage"];
+                } else {
+                    this.clientConf["serviceSharing"]["isHomePage"] = false;
+                }
+            }
             if (typeof conf["ws"]["features"]["auth"]["google"] !== "undefined") {
                 this.clientConf["auth"]["google"] = {};
                 this.clientConf["auth"]["google"]["clientId"] = conf["ws"]["features"]["auth"]["google"]["clientId"];
@@ -1442,6 +1423,7 @@ const Server = class {
         }
 
     };
+
     async addSession(userId, ipAddress, userAgent) {
         // create in db
         let sessionId = undefined;
@@ -1577,6 +1559,7 @@ const Server = class {
         // remove all clients from session 
         const clients = this.sessions.get(sessionId);
         if (clients !== undefined) {
+            // notify clients about logout
             for (const clientId of clients) {
                 const com = this.clients.get(clientId).get("com");
                 com.send({
@@ -1584,29 +1567,10 @@ const Server = class {
                     "type": "logout"
                 });
             }
-            this.sessions.delete(sessionId);
 
-            // update clients state
+            // update internal state of clients
             for (const clientId of clients) {
-                const client = this.clients.get(clientId);
-                client.set("isLoggedIn", false);
-                client.delete("userId");
-                client.delete("sessionId");
-                client.delete("sessionKey");
-            }
-
-            // remove subscriptions from clients in deleted session
-            const it = this.subscriptions.entries();
-            for (const [type, subsMap] of it) {
-                const userSubs = subsMap.get(userId);
-                if (userSubs !== undefined) {
-                    for (const clientId of clients) {
-                        userSubs.delete(clientId);
-                        if (userSubs.size === 0) {
-                            subsMap.delete(userId);
-                        }
-                    }
-                }
+                this.removeClientSession(userId, sessionId, clientId);
             }
         }
 
@@ -1625,6 +1589,7 @@ const Server = class {
         }
 
     };
+
     addClientSession(userId, sessionId, clientId) {
         // add session to sessions map
         const clientsSet = this.sessions.get(sessionId);
@@ -1636,10 +1601,15 @@ const Server = class {
 
         // update state
         const client = this.clients.get(clientId);
-        
         client.set("isLoggedIn", true);
         client.set("userId", userId);
         client.set("sessionId", sessionId);
+
+        // remove pair code
+        this.removePairCode(clientId, false, true);
+
+        // send event
+        this.events.get(clientId).dispatchEvent(new Event("login"));
     };
     removeClientSession(userId, sessionId, clientId) {
         // remove from sessions map
@@ -1653,6 +1623,7 @@ const Server = class {
 
         // update client state
         const client = this.clients.get(clientId);
+        const isLoggedIn = client.get("isLoggedIn");
         client.set("isLoggedIn", false);
         client.delete("userId");
         client.delete("sessionId");
@@ -1669,8 +1640,16 @@ const Server = class {
                 }
             }
         }
-        
+
+        // remove pair code
+        this.removePairCode(clientId, false, true);
+
+        // send event
+        if (isLoggedIn === true) {
+            this.events.get(clientId).dispatchEvent(new Event("logout"));
+        }
     };
+
     addClientSubscription(type, userId, clientId) {
         const subscriptions = this.subscriptions.get(type);
         const userSubscriptions = subscriptions.get(userId);
@@ -1690,6 +1669,200 @@ const Server = class {
             }
         }
     };
+
+    addPairCode(clientId) {
+        let pairCode = undefined;
+        while (pairCode === undefined) {
+            pairCode = generateId(6, "0123456789");
+            if (this.pairs.has(pairCode) === true) {
+                pairCode = undefined;
+            }
+        }
+
+        // create pair entry
+        const initState = new Map([
+            ["hostClientId", clientId]
+        ]);
+        this.pairs.set(pairCode, initState);
+
+        // update client state (for backward lookup)
+        this.clients.get(clientId).set("pairCode", pairCode);
+
+        return pairCode;
+    };
+    removePairCode(clientId, notifySelf=false, notifyOther=false) {
+        // check pair code
+        const client = this.clients.get(clientId);
+        const pairCode = client.get("pairCode");
+        if (pairCode === undefined) {
+            return;
+        }
+        const pair = this.pairs.get(pairCode);
+
+        // remove timeout
+        clearTimeout(pair.get("timeoutId"));
+        pair.set("timeoutId", -1);
+
+        //notify clients
+        const hostClientId = pair.get("hostClientId");
+        const peerClientId = pair.get("peerClientId");
+        if ((notifySelf === true && hostClientId === clientId) || (notifyOther === true && hostClientId !== clientId)) {
+            const hostClient = this.clients.get(hostClientId);
+            hostClient.get("com").send({
+                "timestamp": Date.now(),
+                "type": "pair-reject",
+            });
+        }
+        if (peerClientId !== undefined) {
+            if (notifySelf === true && peerClientId === clientId || (notifyOther === true && peerClientId !== clientId)) {
+                const peerClient = this.clients.get(peerClientId);
+                peerClient.get("com").send({
+                    "timestamp": Date.now(),
+                    "type": "pair-reject",
+                });
+            }
+        }
+
+        // remove data
+        if (hostClientId === clientId) {
+            // delete host
+            const hostClient = this.clients.get(hostClientId);
+            hostClient.delete("pairCode");
+            //delete peer
+            const peerClient = this.clients.get(peerClientId);
+            if (peerClient !== undefined) {
+                peerClient.delete("pairCode");
+            }
+            //delete pair
+            this.pairs.delete(pairCode);
+        } else {
+            // delete peer
+            const peerClient = this.clients.get(peerClientId);
+            peerClient.delete("pairCode");
+            //delete pair peer side
+            pair.delete("peerClientId");
+        }
+    };
+    async addJoin(hostUserId, peerUserId, isRemembered) {
+        // create unique join codes (for host)
+        let joinHostCode = undefined;
+        while (joinHostCode === undefined) {
+            joinHostCode = generateId(10);
+            // check memory
+            if (this.joinHosts.has(joinHostCode) === true) {
+                joinHostCode = undefined;
+                continue;
+            }
+            // check database
+            const existing = await this.db.select().table("joins").where("host_code", joinHostCode).first();
+            if (existing !== undefined) {
+                joinHostCode = undefined;
+                continue;
+            }
+        }
+        // create unique join codes (for peer)
+        let joinPeerCode = undefined;
+        while (joinPeerCode === undefined) {
+            joinPeerCode = generateId(10);
+            // check memory
+            if (this.joinPeers.has(joinPeerCode) === true) {
+                joinPeerCode = undefined;
+                continue;
+            }
+            // check database
+            const existing = await this.db.select().table("joins").where("peer_code", joinPeerCode).first();
+            if (existing !== undefined) {
+                joinPeerCode = undefined;
+                continue;
+            }
+        }
+
+        // put codes to database
+        if (isRemembered === true) {
+            // create unique join ID
+            let joinId = undefined;
+            while (joinId === undefined) {
+                joinId = generateId(10);
+                const existing = await this.db.select().table("joins").where("join_id", joinId).first();
+                if (existing !== undefined) {
+                    joinId = undefined;
+                }
+            }
+            // insert into db
+            const row = {
+                "join_id": joinId,
+                "host_code": joinHostCode,
+                "peer_code": joinPeerCode
+            };
+            if (hostUserId !== undefined) {
+                row["host_user_id"] = hostUserId;
+            }
+            if (peerUserId !== undefined) {
+                row["peer_user_id"] = peerUserId;
+            }
+            await this.db.insert(row).into("joins");
+        }
+
+        return {"joinHostCode": joinHostCode, "joinPeerCode": joinPeerCode};
+    };
+    removeJoin(joinId) {
+        // get join codes
+        const res = this.db.select().table("joins").where("join_id", joinId).first();
+
+        // remove from memory
+        const hostCode = res["host_code"];
+        const peerCode = res["peer_code"];
+        const host = this.joinHosts.get(hostCode);
+        if (host !== undefined) {
+            const hostClientId = host.get("hostClientId");
+            if (hostClientId !== undefined) {
+                this.removeClientJoin(hostCode, hostClientId, undefined, undefined);
+            }
+            const peerClientIds = host.get("peerClientIds");
+            for (const peerClientId of peerClientIds) {
+                this.removeClientJoin(undefined, undefined, peerCode, peerClientId);
+            }
+        }
+
+        // cleanup
+        this.joinHosts.delete(hostCode);
+        this.joinPeers.delete(peerCode);
+        this.db("joins").where("join_id", joinId).delete();
+    };
+    addClientJoin(joinHostCode, joinPeerCode, hostClientId, peerClientId) {
+        // add join entry
+        const host = this.joinHosts.get(joinHostCode);
+        if (host === undefined) {
+            this.joinHosts.set(joinHostCode, new Map([
+                ["joinPeerCode", joinPeerCode],
+            ]));
+        }
+        const peer = this.joinPeers.get(joinPeerCode);
+        if (peer === undefined) {
+            this.joinPeers.set(joinPeerCode, new Map([
+                ["joinHostCode", joinHostCode]
+            ]));
+        }
+
+        // add user
+        if (hostClientId !== undefined) {
+            this.joinHosts.get(joinHostCode).set("hostClientId", hostClientId);
+        }
+        if (peerClientId !== undefined) {
+            let peerClientIds = host.get("peerClientIds");
+            if (peerClientIds === undefined) {
+                host.set("peerClientIds", new Set());
+            }
+            host.get("peerClientIds").add(peerClientId);
+        }
+
+        // broadcast changes
+
+    };
+    removeClientJoin(joinHostCode, hostClientId, joinPeerCode, peerClientId) {
+
+    };
+    
     async updateUserData(userId, type, data) {
         let subscribedClients;
         let value;
@@ -1903,6 +2076,10 @@ const Server = class {
 
             // add session to client
             this.addClientSession(session["user_id"], session["session_id"], clientId);
+
+            // update ip address and expire time
+            const ip = client.get("ws")._socket.remoteAddress;
+            await this.updateSession(session["user_id"], session["session_id"], Date.now() + 7 * 24 * 60 * 60 * 1000, Date.now(), ip, undefined);
 
             messageObj.send({
                 "success": true
@@ -2145,19 +2322,462 @@ const Server = class {
             await this.db("users").where("user_id", userId).delete();
             return;
         }
+
         /*
         events:
         {
             "timestamp": number,
-            "type": string // "logout" | "email" | "firstName" | "lastName" | "picture" | "sessions"
+            "type": string // "logout" | "email" | "firstName" | "lastName" | "picture" | "sessions" | "devices" | "shares"
             "isChange": boolean,
-            "isAdd": boolean,
             "isRemove": boolean,
             "value": any
         }*/
 
-        // share management
-        // ...
+        // pairing management
+        if (message["type"] === "pair-create") {
+            /*{
+                "success": boolean,
+                "pairCode": string
+            }*/
+
+            // check if already has pair code
+            if (client.get("pairCode") !== undefined) {
+                this.removePairCode(clientId, false, true);
+            }
+
+            // create pair code
+            const pairCode = this.addPairCode(clientId);
+            messageObj.send({"success": true, "pairCode": pairCode});
+
+            return;
+        }
+        if (message["type"] === "pair-request") {
+            /*{
+                "pairCode": string
+            }*/
+            /*{
+                "success": boolean,
+                "isBusy": boolean,
+                "timeout": number,
+                "details": {"ipAddress": string, "isUser": boolean, "firstName"?: string, "lastName"?: string}
+            }*/
+
+            // check inputs
+            const pairCode = message["pairCode"];
+            if (typeof pairCode !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // delete already pair
+            if (client.get("pairCode") !== undefined) {
+                this.removePairCode(clientId, false, true);
+            }
+
+            // check pair
+            const pair = this.pairs.get(pairCode);
+            if (pair === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // lock pair
+            const pairPeerClientId = pair.get("peerClientId");
+            if (pairPeerClientId !== undefined) {
+                messageObj.send({"success": false, "isBusy": true});
+                return;
+            }
+            pair.set("peerClientId", clientId);
+            this.clients.get(clientId).set("pairCode", pairCode);
+
+            // send request event to host client
+            const details = {
+                "ipAddress": client.get("ws")._socket.remoteAddress,
+                "isUser": client.get("isLoggedIn") === true
+            };
+            if (client.get("isLoggedIn") === true) {
+                details["firstName"] = (await this.db.select().table("users").where("user_id", client.get("userId")).first())["first_name"];
+                details["lastName"] = (await this.db.select().table("users").where("user_id", client.get("userId")).first())["last_name"];
+            }
+
+            const timeout = 10000;
+            // send pair request to host
+            const hostClientId = pair.get("hostClientId");
+            const hostClient = this.clients.get(hostClientId);
+            const hostMessageObj = hostClient.get("com").send({
+                "timestamp": Date.now(),
+                "type": "pair-request",
+                "details": details,
+                "timeout": timeout
+            });
+            await hostMessageObj.wait();
+
+            if (hostMessageObj.error !== "") {
+                messageObj.send({"success": false});
+                pair.delete("peerClientId");
+                return;
+            }
+
+            // start host timeout
+            const timeoutId = setTimeout(() => {
+                const peerClientId = pair.get("peerClientId");
+                // remove timeouId
+                pair.set("timeoutId", -1);
+                // remove peer
+                this.removePairCode(peerClientId, true, true);
+            }, 10000);
+            pair.set("timeoutId", timeoutId);
+            messageObj.send({"success": true, "timeout": timeout, "details": details});
+            return;
+        }
+        if (message["type"] === "pair-accept") {
+            /*{
+                "isRemember": boolean
+            }*/
+            /*{
+                "success": boolean
+                "joinCode": string
+            }*/
+
+            let isRemember = message["isRemember"];
+            if (typeof isRemember !== "boolean") {
+                isRemember = false;
+            }
+
+            // check permission
+            const pairCode = client.get("pairCode");
+            if (pairCode === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // get pair
+            const pair = this.pairs.get(pairCode);
+
+            // check host client
+            if (pair.get("hostClientId") !== clientId) {
+                messageObj.send({"success": false});
+                return;
+            }
+            // check peer client
+            const peerClientId = pair.get("peerClientId");
+            if (peerClientId === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // create join codes
+            /*
+            const {hostCode, peerCode} = await this.addJoin(
+                client.get("isLoggedIn") === true ? client.get("userId") : undefined,
+                this.clients.get(peerClientId).get("isLoggedIn") === true ? this.clients.get(peerClientId).get("userId") : undefined,
+                false
+            );*/
+            const hostCode = "0000";
+            const peerCode = "1111";
+
+            // send to host
+            messageObj.send({"success": true, "joinCode": hostCode});
+
+            // send accept to peer
+            const peerClient = this.clients.get(peerClientId);
+            peerClient.get("com").send({
+                "timestamp": Date.now(),
+                "type": "pair-accept",
+                "joinCode": peerCode
+            });
+            
+            // cleanup
+            peerClient.delete("pairCode");
+            client.delete("pairCode");
+            clearTimeout(pair.get("timeoutId"));
+            this.pairs.delete(pairCode);
+            return;
+
+        }
+        if (message["type"] === "pair-reject") {
+            /*{
+                "success": boolean
+            }*/
+            // check permission
+            const pairCode = client.get("pairCode");
+            if (pairCode === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // get pair
+            const pair = this.pairs.get(pairCode);
+
+            // check host client
+            if (pair.get("hostClientId") !== clientId) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check peer client
+            const peerClientId = pair.get("peerClientId");
+            if (peerClientId === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // delete peer
+            this.removePairCode(peerClientId, true, false);
+            messageObj.send({"success": true});
+            return;
+            
+        }
+        if (message["type"] === "pair-delete") {
+            /*{
+                "success": boolean
+            }*/
+            this.removePairCode(clientId, false, true);
+            messageObj.send({"success": true});
+            return;
+        }
+        /*
+        events:
+        {
+            "timestamp": number,
+            "type": string // "pair-request"
+            "details": {"ipAddress": string, "isUser": boolean, "firstName"?: string, "lastName"?: string},
+            "timeout": number
+        }
+        {
+            "timestamp": number,
+            "type": string // "pair-reject"
+        }
+        {
+            "timestamp": number,
+            "type": string // "pair-accept"
+            "joinCode": string
+        }*/
+
+        // join management
+        if (message["type"] === "join-connect") {
+            /*{
+                "key": string,
+                "once": boolean,
+                "codes": []
+            }*/
+            /*{
+                "success": boolean,
+                "value": any
+            }*/
+            const key = message["key"];
+            if (typeof key !== "string" || !["devices", "shares"].includes(key)) {
+                messageObj.send({"success": false});
+                return;
+            }
+            const once = message["once"];
+
+            // guest request
+            const codes = message["codes"];
+            if (codes !== undefined && Array.isArray(codes)) {
+                const results = [];
+                for (const code of codes) {
+                    if (typeof code !== "string") {
+                        continue;
+                    }
+
+                    // get peer entries
+                    if (key === "devices") {
+                        // search in db or memory
+                        const existDatabase = await this.db.select().table("joins").where("peer_code", code).first();
+                        const existMemory = this.joinPeers.get(code);
+                        if (existDatabase === undefined  && existMemory === undefined) {
+                            continue;
+                        }
+
+                        //check DB permission (if db entry exists)
+                        if (existDatabase !== undefined && existDatabase["peer_user_id"] !== null) {
+                            continue;
+                        }
+
+                        // create result entry
+                        const result = {
+                            "code": code,
+                            "isOnline": existMemory.get("hostClientId") !== undefined
+                        };
+                        results.push(result);
+
+                        // subscribe to updates
+                        if (once !== true) {
+                            this.addClientJoin(existMemory.get("hostCode"), code, undefined, clientId);
+                        }
+                    }
+
+                    // get host entries
+                    if (key === "shares") {
+                        // search in db or memory
+                        const existDatabase = await this.db.select().table("joins").where("host_code", code).first();
+                        const existMemory = this.joinHosts.get(code);
+                        if (existDatabase === undefined  && existMemory === undefined) {
+                            continue;
+                        }
+
+                        //check DB permission (if db entry exists)
+                        if (existDatabase !== undefined && existDatabase["host_user_id"] !== null) {
+                            continue;
+                        }
+                        
+                        // register for updates and availability for peers
+                        if (once !== true) {
+                            this.addClientJoin(code, existMemory.get("joinPeerCode"), clientId, undefined);
+                        }
+
+                        // create result entry
+                        const result = {
+                            "code": code,
+                            "isOnline": existMemory.get("hostClientId") !== undefined
+                        };
+                        results.push(result);
+                    }
+                }
+                messageObj.send({"success": true, "value": results});
+                return;
+            }
+
+            // user request
+            if (client.get("isLoggedIn") !== true) {
+                messageObj.send({"success": false});
+                return;
+            }
+            const userCodes = new Map();
+            if (key === "devices") {
+                // get permanent devices from db
+                const joins = await this.db.select().table("joins").where("peer_user_id", client.get("userId"));
+                for (const join of joins) {
+                    userCodes.set(join["peer_code"], join["host_code"]);
+                }
+
+                // get temporary devices from memory sessions -> clients -> joinPeerCodes
+                const userSessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
+                for (const session of userSessions) {
+                    const clientSet = this.sessions.get(session["session_id"]);
+                    if (clientSet === undefined) {
+                        continue;
+                    }
+                    for (const client of clientSet) {
+                        const clientInfo = this.clients.get(client);
+                        const joinCodes = clientInfo.get("joinPeerCodes");
+                        if (joinCodes === undefined) {
+                            continue;
+                        }
+                        for (const joinCode of joinCodes) {
+                            userCodes.set(joinCode, this.joinPeers.get(joinCode).get("hostCode"));
+                        }
+                    }
+                }
+
+                // register for updates
+                if (once !== true) {
+                    for (const code of userCodes) {
+                        this.addClientJoin(userCodes.get(code), code, undefined, clientId);
+                    }
+                }
+            
+                // send results
+
+                return;
+
+            } else if (key === "shares") {
+                // get permanent shares from db
+                const joins = await this.db.select().table("joins").where("host_user_id", client.get("userId"));
+                for (const join of joins) {
+                    userCodes.set(join["host_code"], join["peer_code"]);
+                }
+
+                // get temporary shares from memory sessions -> clients -> joinHostCodes
+                const userSessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
+                for (const session of userSessions) {
+                    const clientSet = this.sessions.get(session["session_id"]);
+                    if (clientSet === undefined) {
+                        continue;
+                    }
+                    for (const client of clientSet) {
+                        const clientInfo = this.clients.get(client);
+                        const joinCodes = clientInfo.get("joinHostCodes");
+                        if (joinCodes === undefined) {
+                            continue;
+                        }
+                        for (const joinCode of joinCodes) {
+                            userCodes.set(joinCode, this.joinHosts.get(joinCode).get("joinPeerCode"));
+                        }
+                    }
+                }
+
+                // register for updates
+                if (once !== true) {
+                    for (const code of userCodes) {
+                        this.addClientJoin(code, userCodes.get(code), clientId, undefined);
+                    }
+                }
+
+                // send results
+
+                return;
+            }
+            
+        }
+
+        if (message["type"] === "join-disconnect") {
+            /*{
+                "key": string,
+                "codes": []
+            }*/
+            /*{
+                "success": boolean,
+                "value": any
+            }*/
+
+        }
+
+        if (message["type"] === "join") {
+            /*{
+                "joinCode": string
+            }*/
+            /*
+                 Client1                     Server                      Client2
+                    |                           |                           |
+                    |         {joinCode}        |         {details}         |
+                    |-------------------------->|-------------------------->|
+                    |                           |                           |
+                    |     {success,accepted}    |         {success}         |
+                    |<--------------------------|<--------------------------|
+                    |                           |                           |
+                    |          {webrtc}         |          {webrtc}         |
+                    |-------------------------->|-------------------------->|
+                    |                           |                           |
+                    |          ........         |          ........         |
+                    |<--------------------------|<--------------------------|
+                    |                           |                           |
+                    |          {finish}         |          {finish}         |
+                    |<------------------------->|<------------------------->|
+                    |                           |                           |
+            */
+
+            
+        }
+
+        if (message["type"] === "join-rehost") {
+
+        }
+
+        if (message["type"] === "join-delete") {
+            
+        }
+        /*
+        events:
+        {
+            "timestamp": number,
+            "type": string // "share" | "device"
+            "isChange": boolean,
+            "isRemove": boolean,
+            "value": any
+        }*/
+
 
         // unknown API
         console.log("Invalid request");
@@ -2211,7 +2831,10 @@ const Server = class {
             "ws": WebSocket,
             "isLoggedIn": false,
             "userId": undefined,
-            "sessionId": undefined
+            "sessionId": undefined,
+            "pairCode": undefined,
+            "joinHostCodes": undefined,
+            "joinPeerCodes": undefined
         }*/
         const client = new Map([
             ["com", com],
@@ -2219,6 +2842,7 @@ const Server = class {
             ["isLoggedIn", false]
         ]);
         this.clients.set(clientId, client);
+        this.events.set(clientId, new EventTarget());
 
         // listen messages and handle API
         com.onIncoming(async (messageObj) => {
@@ -2240,9 +2864,14 @@ const Server = class {
         ws.addEventListener("close", () => {
             // clean up
             const client = this.clients.get(clientId);
+            client.get("com").release();
             if (client.get("isLoggedIn") === true) {
                 this.removeClientSession(client.get("userId"), client.get("sessionId"), clientId);
+            } else {
+                this.removePairCode(clientId, false, true);
             }
+            this.events.get(clientId).dispatchEvent(new Event("disconnect")); 
+            this.events.delete(clientId);
             this.clients.delete(clientId);
             
             console.log("Client disconnected (" + clientId + ")");

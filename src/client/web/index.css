@@ -392,7 +392,22 @@ body.dark {
     margin-bottom: 0px;
 }
 
+/* Room create */
+.room-create-fields {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 16px;
+    margin-bottom: 16px;
+}
 
+.room-create-fields > div:nth-child(1) {
+    margin-bottom: 0px;
+}
+
+#btn-room-create-copy {
+    flex-shrink: 0;
+}
 
 /* Room dialog */
 .room-layout {

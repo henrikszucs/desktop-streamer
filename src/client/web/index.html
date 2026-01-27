@@ -97,7 +97,10 @@
                 <div data-i18n="main.devices">Devices</div>
             </a>
             <a id="btn-outgoings">
-                <i>upload</i>
+                <div>
+                    <i>upload</i>
+                    <div class="badge min top left hide" id="badge-outgoings"></div>
+                </div>
                 <div data-i18n="main.outgoings">Outgoing shares</div>
             </a>
             <div class="max"></div>
@@ -173,7 +176,10 @@
                         <span data-i18n="main.devices">Devices</span>
                     </li>
                     <li class="wave round" id="btn-outgoings-2">
-                        <i>upload</i>
+                        <div>
+                            <i>upload</i>
+                            <div class="badge min top left hide" id="badge-outgoings-2"></div>
+                        </div>
                         <span data-i18n="main.outgoings">Outgoing shares</span>
                     </li>
                 </ul>
@@ -576,19 +582,111 @@
             </div>
         </dialog>
 
+        <dialog class="" id="dialog-room-create">
+            <nav>
+                <h5>Waiting for join...</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-create-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <p>Share this join code with someone you want to invite:</p>
+                <div class="space"></div>
+                <div class="room-create-fields">
+                    <div class="field label border round">
+                        <input type="text" id="input-room-create-code" readonly/>
+                        <label>Invite code</label>
+                    </div>
+                    <button class="primary circle transparent suffix" id="btn-room-create-copy">
+                        <i>content_copy</i>
+                    </button>
+                </div>
+                <div class="space"></div>
+                <p>A popup will appear when someone wants to join your device.</p>
+            </div>
+        </dialog>
+
+        <dialog class="" id="dialog-room-request">
+            <h5>Join request</h5>
+            <div class="space"></div>
+            <p>User <span id="join-username" class="bold">username</span> wants to join your device.</p>
+            <div class="space"></div>
+            <label class="checkbox">
+                <input type="checkbox">
+                <span>Share for long term.</span>
+            </label>
+            <div class="space"></div>
+            <button class="tertiary round" id="btn-request-reject">
+                <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
+                <i>close</i>
+                Decline
+            </button>
+            <button class="primary round" id="btn-request-accept">
+                <i>check</i>
+                Accept
+            </button>
+        </dialog>
+
+        <dialog class="" id="dialog-room-joining">
+            <nav>
+                <h5>Joining...</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-joining-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <p>Establishing connection to host device. Please wait...</p>
+                <progress min="0" max="10000" id="room-joining-progress"></progress>
+            </div>
+        </dialog>
+
+        <dialog class="multicolumn-dialog" id="dialog-room-settings">
+            <nav>
+                <h5>Room settings</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-settings-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <div>
+                    <button class="primary small-margin">
+                        <i>info</i>
+                        <span class="l m">Information</span>
+                    </button>
+                    <button class="fill small-margin">
+                        <i>token</i>
+                        <span class="l m">Resources</span>
+                    </button>
+                    <button class="fill small-margin">
+                        <i>share</i>
+                        <span class="l m">Users</span>
+                    </button>
+                </div>
+                <div>
+                    <!-- Information settings -->
+                    <div id="account-information">
+                    </div>
+                </div>
+            </div>
+        </dialog>
 
         <!-- Surfaces -->
         <main class="surface-container round padding bottom-margin center-align" id="screen-main">
             <!-- New screen -->
             <div class="" id="screen-new">
+                <!-- Start screen -->
                 <h5>Join room</h5>
                 <nav class="no-space center-align">
-                    <div class="field label border left-round">
-                        <input type="text" />
+                    <div class="field label border left-round" >
+                        <input type="text" id="input-new-code"/>
                         <label>Room id</label>
+                        <output class="invalid error-text hide">Error text</output>
                     </div>
-                    <button class="large right-round">
-                        <i>attachment</i>
+                    <button class="large right-round" id="btn-new-join">
+                        <i>cast</i>
                         Join
                     </button>
                 </nav>
@@ -607,9 +705,9 @@
                 <h5>Share device</h5>
                 <div class="space"></div>
                 <nav class="center-align">
-                    <button class="large">
+                    <button class="large" id="btn-new-create">
                         <i>add_circle</i>
-                        Generate join code
+                        Share this device
                     </button>
                 </nav>
             </div>
