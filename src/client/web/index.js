@@ -2009,6 +2009,9 @@ const RoomRequestDialog = class extends EventTarget  {
         // get important elements
         this.overlay = document.getElementById("dialog-overlay");
         this.dialog = document.getElementById("dialog-room-request");
+        this.info = document.getElementById("dialog-room-request-info");
+        this.rememberBtn = document.getElementById("btn-request-remember");
+        this.rememberLabel = document.getElementById("btn-request-remember-label");
         this.rejectBtn = document.getElementById("btn-request-reject");
         this.acceptBtn = document.getElementById("btn-request-accept");
         this.rejectBar = document.getElementById("room-request-reject-bar");
@@ -2024,7 +2027,7 @@ const RoomRequestDialog = class extends EventTarget  {
         });
 
         this.acceptBtn.addEventListener("click", () => {
-            server.pairAccept();
+            server.pairAccept(this.rememberBtn.checked);
         });
 
     };
@@ -2062,16 +2065,21 @@ const RoomJoiningDialog = class extends EventTarget {
         this.dialog = document.getElementById("dialog-room-joining");
         this.closeBtn = document.getElementById("btn-room-joining-close");
         this.progressBar = document.getElementById("room-joining-progress");
-
+        this.info = document.getElementById("dialog-room-joining-info");
+        
+        // timeout and auto updates
         this.timeout = 1000;
         this.startTime = -1;
         this.updateIntervalId = -1;
+
+        this.wasClosed = false;
 
         this.closeBtn.addEventListener("click", () => {
             this.cancel();
         });
     };
     cancel = () => {
+        this.wasClosed = true;
         server.deletePairCode();
         this.close();
     };
@@ -2079,6 +2087,8 @@ const RoomJoiningDialog = class extends EventTarget {
         this.overlay.classList.add("active");
         this.dialog.classList.add("active");
         this.overlay.addEventListener("click", this.cancel);
+
+        this.wasClosed = false;
 
         this.startTime = Date.now();
         this.updateIntervalId = setInterval(() => {
@@ -2091,7 +2101,6 @@ const RoomJoiningDialog = class extends EventTarget {
         this.overlay.classList.remove("active");
         this.dialog.classList.remove("active");
         this.overlay.removeEventListener("click", this.cancel);
-        clearInterval(this.progressIntervalId);
     };
 };
 
@@ -2661,6 +2670,30 @@ const main = async function() {
         console.log("Paired to room:", detail);
         roomCreateDialog.hide();
         roomRequestDialog.timeout = detail["timeout"];
+        let fullName = "";
+        if (detail["details"]["isUser"]) {
+            const loc = localization.get("new.share.fullname");
+            fullName = localization.putParameters(loc, new Map([
+                ["firstName", detail["details"]["firstName"]],
+                ["lastName", detail["details"]["lastName"]]
+            ]));
+        } else {
+            fullName = localization.get("new.share.guest");
+        }
+        let infoText = localization.get("new.share.request-info");
+        infoText = localization.putParameters(infoText, new Map([
+            ["fullName", fullName],
+            ["ipAddress", detail["details"]["ipAddress"]]
+        ]));
+        roomRequestDialog.info.innerHTML = infoText;
+        const showRemember = detail["details"]["isUser"] === true || server.loginState.isLogged === true;
+        roomRequestDialog.rememberBtn.checked = false;
+        if (showRemember) {
+            roomRequestDialog.rememberLabel.classList.remove("hide");
+        } else {
+            roomRequestDialog.rememberLabel.classList.add("hide");
+        }
+
         roomRequestDialog.open();
 
         const pairRejectHandler = () => {
@@ -2685,18 +2718,38 @@ const main = async function() {
 
     const roomJoiningDialog = new RoomJoiningDialog();
     newScreen.addEventListener("join", async (event) => {
+        newScreen.displayJoinError("");
         const res = await server.pairRequest(event.detail.code);
         if (res["success"] !== true) {
-            newScreen.displayJoinError("Cannot join");
+            newScreen.displayJoinError(localization.get("new.join.code-invalid"));
             return;
         }
         const timeout = res["timeout"];
+        let fullName = "";
+        if (res["details"]["isUser"]) {
+            const loc = localization.get("new.join.fullname");
+            fullName = localization.putParameters(loc, new Map([
+                ["firstName", res["details"]["firstName"]],
+                ["lastName", res["details"]["lastName"]]
+            ]));
+        } else {
+            fullName = localization.get("new.join.guest");
+        }
+        let infoText = localization.get("new.join.dialog-info");
+        infoText = localization.putParameters(infoText, new Map([
+            ["fullName", fullName],
+            ["ipAddress", res["details"]["ipAddress"]]
+        ]));
+        roomJoiningDialog.info.innerHTML = infoText;
         roomJoiningDialog.timeout = timeout;
         switchDialog(roomJoiningDialog);
         server.addEventListener("pair-accept", () => {
             switchDialog(emptyDialog);
         });
         server.addEventListener("pair-reject", () => {
+            if (roomJoiningDialog.wasClosed === false) {
+                newScreen.displayJoinError(localization.get("new.join.code-rejected"));
+            }
             switchDialog(emptyDialog);
         });
         console.log("Join room result:", res);
@@ -2803,10 +2856,32 @@ const main = async function() {
             menuBtn.parentElement.parentElement.classList.add("max");
             document.getElementById("btn-download").classList.add("primary");
             document.getElementById("btn-download").children[0].classList.remove("primary");
+            // fix point in shares
+            const btnOutgoings = document.getElementById("btn-outgoings");
+            if (btnOutgoings.children.item(0).tagName !== "DIV") {
+                const icon = btnOutgoings.children.item(0);
+                const badge = btnOutgoings.children.item(1);
+                const div = document.createElement("div");
+                div.prepend(badge);
+                div.prepend(icon);
+                btnOutgoings.prepend(div);
+            }
         } else {
             menuBtn.parentElement.parentElement.classList.remove("max");
             document.getElementById("btn-download").classList.remove("primary");
             document.getElementById("btn-download").children[0].classList.add("primary");
+
+            // fix point in shares
+            const btnOutgoings = document.getElementById("btn-outgoings");
+            console.log(btnOutgoings.children.item(0).tagName);
+            if (btnOutgoings.children.item(0).tagName === "DIV") {
+                const div = btnOutgoings.children.item(0);
+                const icon = div.children.item(0);
+                const badge = div.children.item(1);
+                div.remove();
+                btnOutgoings.prepend(badge);
+                btnOutgoings.prepend(icon);
+            }
         }
     };
     if (sizeS < width) {

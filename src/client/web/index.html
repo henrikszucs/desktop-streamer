@@ -584,60 +584,62 @@
 
         <dialog class="" id="dialog-room-create">
             <nav>
-                <h5>Waiting for join...</h5>
+                <h5 data-i18n="new.share.dialog-title">Waiting for join...</h5>
                 <div class="max"></div>
                 <button class="circle transparent" id="btn-room-create-close">
                     <i>close</i>
                 </button>
             </nav>
             <div class="no-border">
-                <p>Share this join code with someone you want to invite:</p>
+                <p data-i18n="new.share.dialog-info">Share this join code with someone you want to invite:</p>
                 <div class="space"></div>
                 <div class="room-create-fields">
                     <div class="field label border round">
                         <input type="text" id="input-room-create-code" readonly/>
-                        <label>Invite code</label>
+                        <label data-i18n="new.share.join-code">Join code</label>
                     </div>
                     <button class="primary circle transparent suffix" id="btn-room-create-copy">
                         <i>content_copy</i>
                     </button>
                 </div>
                 <div class="space"></div>
-                <p>A popup will appear when someone wants to join your device.</p>
+                <p data-i18n="new.share.dialog-info-2">A popup will appear when someone wants to join your device.</p>
             </div>
         </dialog>
 
         <dialog class="" id="dialog-room-request">
-            <h5>Join request</h5>
+            <h5 data-i18n="new.share.request-title">Join request</h5>
             <div class="space"></div>
-            <p>User <span id="join-username" class="bold">username</span> wants to join your device.</p>
+            <p id="dialog-room-request-info"></p>
             <div class="space"></div>
-            <label class="checkbox">
-                <input type="checkbox">
-                <span>Share for long term.</span>
+            <label class="checkbox" id="btn-request-remember-label">
+                <input type="checkbox" id="btn-request-remember">
+                <span data-i18n="new.share.request-long">Share for long term.</span>
             </label>
             <div class="space"></div>
-            <button class="tertiary round" id="btn-request-reject">
-                <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
-                <i>close</i>
-                Decline
-            </button>
-            <button class="primary round" id="btn-request-accept">
-                <i>check</i>
-                Accept
-            </button>
+            <div style="display: flex; justify-content: center;">
+                <button class="tertiary round" id="btn-request-reject">
+                    <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
+                    <i>close</i>
+                    <span data-i18n="new.share.reject">Decline</span>
+                </button>
+                <button class="primary round" id="btn-request-accept">
+                    <i>check</i>
+                    <span data-i18n="new.share.accept">Accept</span>
+                </button>
+            </div>
         </dialog>
 
         <dialog class="" id="dialog-room-joining">
             <nav>
-                <h5>Joining...</h5>
+                <h5 data-i18n="new.join.dialog-title">Joining...</h5>
                 <div class="max"></div>
                 <button class="circle transparent" id="btn-room-joining-close">
                     <i>close</i>
                 </button>
             </nav>
             <div class="no-border">
-                <p>Establishing connection to host device. Please wait...</p>
+                <p id="dialog-room-joining-info">Establishing connection to host device as <span class="bold">Guest</span> from <span class="bold">192.168.0.1</span> ip address. Please wait...</p>
                 <progress min="0" max="10000" id="room-joining-progress"></progress>
             </div>
         </dialog>
@@ -678,16 +680,16 @@
             <!-- New screen -->
             <div class="" id="screen-new">
                 <!-- Start screen -->
-                <h5>Join room</h5>
+                <h5 data-i18n="new.join.title">Join room</h5>
                 <nav class="no-space center-align">
                     <div class="field label border left-round" >
                         <input type="text" id="input-new-code"/>
-                        <label>Room id</label>
+                        <label data-i18n="new.join.join-code">Join code</label>
                         <output class="invalid error-text hide">Error text</output>
                     </div>
                     <button class="large right-round" id="btn-new-join">
                         <i>cast</i>
-                        Join
+                        <span data-i18n="new.join.btn">Join</span>
                     </button>
                 </nav>
                 <!--<nav class="center-align">
@@ -702,12 +704,12 @@
                 </nav>-->
                 <div class="large-space"></div>
                 <div class="divider margin-top margin-bottom"></div>
-                <h5>Share device</h5>
+                <h5 data-i18n="new.share.title">Share device</h5>
                 <div class="space"></div>
                 <nav class="center-align">
                     <button class="large" id="btn-new-create">
                         <i>add_circle</i>
-                        Share this device
+                        <span data-i18n="new.share.btn">Share this device</span>
                     </button>
                 </nav>
             </div>

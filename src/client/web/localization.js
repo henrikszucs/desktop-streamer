@@ -469,6 +469,100 @@ const dict = {
                 "hu": "Hiba történt a törlési kulcs megerősítése során. Kérlek próbáld meg más kóddal."
             }
         }
+    },
+    "new": {
+        "share": {
+            "title": {
+                "en": "Share device",
+                "hu": "Eszköz megosztása"
+            },
+            "btn": {
+                "en": "Share this device",
+                "hu": "Eszköz megosztása"
+            },
+            "dialog-title": {
+                "en": "Waiting for join...",
+                "hu": "Csatlakozásra várás..."
+            },
+            "dialog-info": {
+                "en": "Share this join code with someone you want to invite:",
+                "hu": "Oszd meg ezt a csatlakozási kódot azzal, akit meghívni szeretnél:"
+            },
+            "join-code": {
+                "en": "Join code",
+                "hu": "Csatlakozási kód"
+            },
+            "dialog-info-2": {
+                "en": "A popup will appear when someone wants to join your device.",
+                "hu": "Egy felugró ablak jelenik meg, amikor valaki csatlakozni szeretne az eszközödhöz."
+            },
+            "request-title": {
+                "en": "Join request",
+                "hu": "Csatlakozási kérelem"
+            },
+            "full-name": {
+                "en": "{firstName} {lastName}",
+                "hu": "{lastName} {firstName}"
+            },
+            "guest": {
+                "en": "Guest",
+                "hu": "Vendég"
+            },
+            "request-info": {
+                "en": "<span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address wants to join your device.",
+                "hu": "<span class=\"bold\">{fullName}</span> a(z) <span class=\"bold\">{ipAddress}</span> IP címről csatlakozni szeretne az eszközödhöz."
+            },
+            "request-long": {
+                "en": "Share for long term",
+                "hu": "Hosszú távú megosztás"
+            },
+            "accept": {
+                "en": "Accept",
+                "hu": "Elfogadás"
+            },
+            "reject": {
+                "en": "Reject",
+                "hu": "Elutasítás"
+            }
+        },
+        "join": {
+            "title": {
+                "en": "Join a room",
+                "hu": "Csatlakozás egy szobához"
+            },
+            "join-code": {
+                "en": "Join code",
+                "hu": "Csatlakozási kód"
+            },
+            "btn": {
+                "en": "Join",
+                "hu": "Csatlakozás"
+            },
+            "code-invalid": {
+                "en": "Invalid room code.",
+                "hu": "Érvénytelen kód."
+            },
+            "code-rejected": {
+                "en": "Connenction rejected.",
+                "hu": "A csatlakozási elutasítva."
+            },
+            "dialog-title": {
+                "en": "Joining room...",
+                "hu": "Szobához csatlakozás..."
+            },
+            "full-name": {
+                "en": "{firstName} {lastName}",
+                "hu": "{lastName} {firstName}"
+            },
+            "guest": {
+                "en": "Guest",
+                "hu": "Vendég"
+            },
+            "dialog-info": {
+                "en": "Establishing connection to host device as <span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address. Please wait...",
+                "hu": "Kapcsolódás a kiszolgáló eszközhöz <span class=\"bold\">{fullName}</span> néven, <span class=\"bold\">{ipAddress}</span> IP címről. Kérlek várj..."
+            },
+        }
     }
 };
 
@@ -528,11 +622,37 @@ const getSupportedLanguages = () => {
     return Object.keys(prevObj);
 };
 
+const escapeRegex = (str) => {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+const putParameters = (str, params=new Map(), charStart="{", charEnd="}", charStartEscape="\\{", charEndEscape="\\}") => {
+    // First, replace escaped characters with temporary placeholders
+    const startPlaceholder = "\x00START\x00";
+    const endPlaceholder = "\x00END\x00";
+    
+    let result = str.replace(new RegExp(escapeRegex(charStartEscape), 'g'), startPlaceholder);
+    result = result.replace(new RegExp(escapeRegex(charEndEscape), 'g'), endPlaceholder);
+    
+    // Replace parameters
+    params.forEach((value, key) => {
+        const pattern = new RegExp(escapeRegex(charStart) + escapeRegex(key) + escapeRegex(charEnd), 'g');
+        result = result.replace(pattern, value);
+    });
+    
+    // Restore escaped characters to their literal form (without the backslash)
+    result = result.replace(new RegExp(escapeRegex(startPlaceholder), 'g'), charStart);
+    result = result.replace(new RegExp(escapeRegex(endPlaceholder), 'g'), charEnd);
+    
+    return result;
+};
+
 export default {
     "getLang": getLang,
     "setLang": setLang,
     "dict": dict,
     "get": get,
     "translate": translate,
-    "supportedLanguages": getSupportedLanguages()
+    "supportedLanguages": getSupportedLanguages(),
+    "putParameters": putParameters
 };
