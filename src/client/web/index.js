@@ -11,7 +11,6 @@ import conf from "./conf.js";
 import localization from "./localization.js";
 
 
-
 // desktop enviroment
 const desktop = {
     "isAvailable": false
@@ -105,9 +104,14 @@ const sizeM = 993;
 // Load local configuration from disk
 const DATABBASE = "desktop_streamer";
 const CONF_TABLE = "configuration";
+const GUEST_TABLE = "guest";
+const USER_TABLE = "user";
 let DB = null;
 const confLoad = new Promise(async function(resolve) {
     await IDB.TableSet(DATABBASE, CONF_TABLE);
+    await IDB.TableSet(DATABBASE, GUEST_TABLE);
+    await IDB.TableSet(DATABBASE, USER_TABLE);
+    
     DB = await IDB.DatabaseGet(DATABBASE);
     const table = IDB.TableGet(DB, CONF_TABLE);
 
@@ -131,7 +135,6 @@ const confLoad = new Promise(async function(resolve) {
     }
     const res = await IDB.RowGet(table, search);
     const result = {};
-    let i = 0;
     for (let i = 0, length = keys.length; i < length; i++) {
         result[keys[i]] = res[i];
     }
@@ -255,7 +258,36 @@ const Server = class extends EventTarget {
                 } else {
                     this.dispatchEvent(new CustomEvent("login"));
                 }
-            }            
+            }
+            
+            // try share on host joins (guest)
+            const guestJoins = await IDB.RowEntries(IDB.TableGet(DB, GUEST_TABLE))
+            for (let guestJoin of guestJoins) {
+                const joinId = guestJoin[0];
+                const hostCode = guestJoin[1]["hostCode"];
+                if (hostCode === undefined) {
+                    continue;
+                }
+                const connect = this.subscribeJoin(joinId, undefined, hostCode);
+                if (connect["success"] === false) {
+                    await IDB.RowDel(IDB.TableGet(DB, GUEST_TABLE), joinId);
+                }
+            }
+
+            // try share on host joins (users)
+            const hostJoins = await IDB.RowEntries(IDB.TableGet(DB, USER_TABLE))
+            for (let hostJoin of hostJoins) {
+                const joinId = hostJoin[0];
+                const hostCode = hostJoin[1]["hostCode"];
+                if (hostCode === undefined) {
+                    continue;
+                }
+                const connect = this.subscribeJoin(joinId, undefined, hostCode);
+                if (connect["success"] === false) {
+                    await IDB.RowDel(IDB.TableGet(DB, USER_TABLE), joinId);
+                }
+            }
+
         }, { "once": true });
 
         // handle disconnection
@@ -339,9 +371,27 @@ const Server = class extends EventTarget {
 
         // pair accept
         if (message["type"] === "pair-accept") {
+            // save pairing
+            let table;
+            if (this.loginState["isLoggedIn"] === false) {
+                table = IDB.TableGet(DB, GUEST_TABLE);
+            } else {
+                table = IDB.TableGet(DB, USER_TABLE);
+            }
+            await IDB.RowSet(table, [
+                message["joinId"],
+                {
+                    "peerCode": message["peerCode"]
+                }
+            ]);
+
+            // send event
             this.dispatchEvent(new CustomEvent("pair-accept", {
                 "detail": {
-                    "joinCode": message["joinCode"]
+                    "joinId": message["joinId"],
+                    "peerCode": message["peerCode"],
+                    "isRemember": message["isRemember"],
+                    "peerName": message["peerName"]
                 }
             }));
             return;
@@ -351,6 +401,41 @@ const Server = class extends EventTarget {
         if (message["type"] === "pair-reject") {
             this.dispatchEvent(new CustomEvent("pair-reject"));
             return;
+        }
+
+        // devices
+        if (message["type"] === "devices") {
+            this.dispatchEvent(new CustomEvent("devices", {
+                "detail": {
+                    "isChange": message["isChange"],
+                    "isRemove": message["isRemove"],
+                    "value": message["value"]
+                }
+            }));
+        }
+
+        // shares
+        if (message["type"] === "shares") {
+            this.dispatchEvent(new CustomEvent("shares", {
+                "detail": {
+                    "isChange": message["isChange"],
+                    "isRemove": message["isRemove"],
+                    "value": message["value"]
+                }
+            }));
+        }
+    };
+    async saveSession() {
+        conf["local"]["sessionId"] = this.loginState["sessionId"];
+        conf["local"]["sessionKey"] = this.loginState["sessionKey"];
+        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [
+            ["sessionId", this.loginState["sessionId"]],
+            ["sessionKey", this.loginState["sessionKey"]]
+        ]);
+        if (this.loginState["isLoggedIn"]) {
+            this.dispatchEvent(new CustomEvent("login"));
+        } else {
+            this.dispatchEvent(new CustomEvent("logout"));
         }
     };
     async loginGoogle(credential) {
@@ -376,11 +461,13 @@ const Server = class extends EventTarget {
                 this.loginState["isLoggedIn"] = false;
                 this.loginState["sessionId"] = "";
                 this.loginState["sessionKey"] = "";
+                await IDB.TableClear(IDB.TableGet(DB, USER_TABLE));
                 await this.saveSession();
             }
         }
         return message.data["success"];
     };
+
     async getUserData(type, once=false) {
         if (this.isOnline === false) {
             throw new Error("Offline");
@@ -436,19 +523,7 @@ const Server = class extends EventTarget {
         }
         return success;
     };
-    async saveSession() {
-        conf["local"]["sessionId"] = this.loginState["sessionId"];
-        conf["local"]["sessionKey"] = this.loginState["sessionKey"];
-        await IDB.RowSet(IDB.TableGet(DB, CONF_TABLE), [
-            ["sessionId", this.loginState["sessionId"]],
-            ["sessionKey", this.loginState["sessionKey"]]
-        ]);
-        if (this.loginState["isLoggedIn"]) {
-            this.dispatchEvent(new CustomEvent("login"));
-        } else {
-            this.dispatchEvent(new CustomEvent("logout"));
-        }
-    };
+
     async createPairCode() {
         const message = this.communicator.invoke({"type":"pair-create"});
         await message.wait();
@@ -468,8 +543,29 @@ const Server = class extends EventTarget {
         if (messageObj.error !== "" || messageObj.data["success"] !== true) {
             throw new Error("Failed to accept pair request");
         }
-        this.dispatchEvent(new CustomEvent("pair-accept"));
-        return messageObj.data["joinCode"];
+        // save
+        let table;
+        if (this.loginState["isLoggedIn"] === false) {
+            table = IDB.TableGet(DB, GUEST_TABLE);
+        } else {
+            table = IDB.TableGet(DB, USER_TABLE);
+        }
+        await IDB.RowSet(table, [
+            messageObj.data["joinId"],
+            {
+                "hostCode": messageObj.data["hostCode"]
+            }
+        ]);
+
+        // broadcast result
+        const obj = {
+            "joinId": messageObj.data["joinId"],
+            "hostCode": messageObj.data["hostCode"],
+            "isRemember": messageObj.data["isRemember"],
+            "hostName": messageObj.data["hostName"]
+        };
+        this.dispatchEvent(new CustomEvent("pair-accept", {"detail": obj}));
+        return obj;
     };
     async pairReject() {
         const messageObj = this.communicator.invoke({"type":"pair-reject"});
@@ -484,6 +580,39 @@ const Server = class extends EventTarget {
         }
         return true;
     };
+
+    async subscribeJoin(joinId="", peerCode=undefined, hostCode=undefined) {
+        const msg = {
+            "type":"join-connect",
+            "joinId": joinId
+        };
+        if (peerCode !== undefined) {
+            msg["peerCode"] = peerCode;
+        }
+        if (hostCode !== undefined) {
+            msg["hostCode"] = hostCode;
+        }
+        const messageObj = this.communicator.invoke(msg);
+        await messageObj.wait();
+        return messageObj.data;
+    };
+    async unsubscribeJoin(joinId="", peerCode=undefined, hostCode=undefined) {
+        const msg = {
+            "type":"join-disconnect",
+            "joinId": joinId
+        };
+        if (peerCode !== undefined) {
+            msg["peerCode"] = peerCode;
+        }
+        if (hostCode !== undefined) {
+            msg["hostCode"] = hostCode;
+        }
+        const messageObj = this.communicator.invoke(msg);
+        await messageObj.wait();
+        return messageObj.data["success"];
+    };
+
+
 };
 const server = new Server();
 
@@ -2153,7 +2282,6 @@ const NewScreen = class extends EventTarget {
         field.classList.add("invalid");
         field.children.item(2).classList.remove("hide");
         field.children.item(2).innerText = message;
-        console.error("Join room error:", message);
     };
     open = () => {
         this.joinCode.value = "";
@@ -2444,35 +2572,302 @@ const DeviceScreen = class {
         this.deviceScreen = document.getElementById("screen-devices");
         this.deviceBtn = document.getElementById("btn-devices");
         this.deviceBtn2 = document.getElementById("btn-devices-2");
+        this.areaUser = document.getElementById("screen-devices-user");
+        this.areaGuest = document.getElementById("screen-devices-guest");
+        this.area = document.getElementById("devices-area");
+        this.area2 = document.getElementById("devices-area-2");
+
+        this.DeviceBox = class extends EventTarget {
+            constructor(peerId="") {
+                super();
+                const div = document.createElement("div");
+                const html = `
+                    <div class="s12 m6 l3">
+                        <article class="padding devices-article">
+                            <div class="max bold">
+                                <span class="device-name">Default name</span>
+                                <button class="circle transparent">
+                                    <i>more_vert</i>
+                                    <menu class="left no-wrap">
+                                        <li class="btn-device-settings">
+                                            <i>settings</i>
+                                            Settings
+                                        </li>
+                                        <li class="btn-device-delete">
+                                            <i>delete</i>
+                                            Delete
+                                        </li>
+                                    </menu>
+                                </button>
+                            </div>
+                            <a class="wave">
+                                <img class="responsive" src="/icons/wallpaper.png">
+                            </a>
+                            <div class="small-padding">
+                                <nav>
+                                    <div> 
+                                        <button class="primary btn-device-connect">
+                                            <i>play_arrow</i>
+                                            <span>Connect</span>
+                                        </button>
+                                    </div>
+                                </nav>
+                            </div>
+                        </article>
+                    </div>
+                `.trim();
+                div.innerHTML = html;
+                this.el = div.firstChild;
+
+                this.peerId = peerId;
+
+                this.nameEl = this.el.querySelector(".device-name");
+                this.connectBtn = this.el.querySelector(".btn-device-connect");
+                this.settingsBtn = this.el.querySelector(".btn-device-settings");
+                this.deleteBtn = this.el.querySelector(".btn-device-delete");
+
+                this.connectBtn.addEventListener("click", () => {
+                    this.dispatchEvent(new CustomEvent("connect", {"detail": {"peerId": this.peerId}}));
+                });
+
+                this.settingsBtn.addEventListener("click", () => {
+                    this.dispatchEvent(new CustomEvent("settings", {"detail": {"peerId": this.peerId}}));
+                });
+
+                this.deleteBtn.addEventListener("click", () => {
+                    this.dispatchEvent(new CustomEvent("delete", {"detail": {"peerId": this.peerId}}));
+                });
+
+            };
+            setName(name="") {
+                this.nameEl.textContent = name;
+            };
+            setActive(isActive=true) {
+                if (isActive) {
+                    this.connectBtn.classList.remove("secondary");
+                    this.connectBtn.classList.add("primary");
+                    this.connectBtn.disabled = false;
+                    this.connectBtn.children.item(0).innerHTML = "play_arrow";
+                    this.connectBtn.children.item(1).innerText = "Connect";
+                } else {
+                    this.connectBtn.classList.remove("primary");
+                    this.connectBtn.classList.add("secondary");
+                    this.connectBtn.disabled = true;
+                    this.connectBtn.children.item(0).innerHTML = "pause";
+                    this.connectBtn.children.item(1).innerText = "Offline";
+                }
+            };
+        };
     };
-    open = () => {
+    open = async () => {
         this.deviceScreen.classList.remove("hide");
         this.deviceBtn.classList.add("active");
         this.deviceBtn2.classList.add("fill");
+
+        // clear areas
+        this.area.innerHTML = "";
+        this.area2.innerHTML = "";
+
+        // get local devices
+        const devicesLocal = await IDB.RowEntries(IDB.TableGet(DB, GUEST_TABLE));
+        if (devicesLocal.length === 0) {
+            this.areaGuest.classList.add("hide");
+        } else {
+            this.areaGuest.classList.remove("hide");
+            for (const deviceData of devicesLocal) {
+                // get data from server
+                const joinId = deviceData[0];
+                const peerCode = deviceData[1]["peerCode"];
+                if (peerCode === undefined) {
+                    continue;
+                }
+                const answer = server.subscribeJoin(joinId, peerCode);
+                const deviceEl = new this.DeviceBox(joinId);
+                deviceEl.setName(answer["value"]["name"]);
+                this.area2.appendChild(deviceEl.el);
+            }
+        }
+
+        // get user devices
+        if (server.loginState["isLoggedIn"] === false) {
+            this.areaUser.classList.add("hide");
+        } else {
+            this.areaUser.classList.remove("hide");
+            const devices = await server.getUserData("devices");
+            console.log(devices);
+        }
+        return;
+        const testEl = new this.DeviceBox();
+        this.area.appendChild(testEl.el);
+        const testEl2 = new this.DeviceBox();
+        testEl2.setName("My phone");
+        testEl2.setActive(false);
+        this.area.appendChild(testEl2.el);
+
+        const testEl3 = new this.DeviceBox();
+        this.area2.appendChild(testEl3.el);
+        
+        
+        
     };
-    close = () => {
+    close = async () => {
+        this.area.innerHTML = "";
+        this.area2.innerHTML = "";
         this.deviceScreen.classList.add("hide");
         this.deviceBtn.classList.remove("active");
         this.deviceBtn2.classList.remove("fill");
+
+        // unsubscribe local devices
+        const devicesLocal = await IDB.RowEntries(IDB.TableGet(DB, GUEST_TABLE));
+        if (devicesLocal.length > 0) {
+            for (const deviceData of devicesLocal) {
+                const joinId = deviceData[0];
+                const peerCode = deviceData[1]["peerCode"];
+                if (peerCode === undefined) {
+                    continue;
+                }
+                server.unsubscribeJoin(joinId, peerCode);
+            }
+        }
+
+        // unsubscribe user
+        if (server.loginState["isLoggedIn"] === true) {
+            server.unsubscribeUserData("devices");
+        }
     };
 };
 
-const OutgoingScreen = class {
+const SharesScreen = class {
     constructor() {
         // get important elements
-        this.outgoingScreen = document.getElementById("screen-outgoings");
-        this.outgoingBtn = document.getElementById("btn-outgoings");
-        this.outgoingBtn2 = document.getElementById("btn-outgoings-2");
+        this.sharesScreen = document.getElementById("screen-shares");
+        this.sharesBtn = document.getElementById("btn-shares");
+        this.sharesBtn2 = document.getElementById("btn-shares-2");
+        this.areaClient = document.getElementById("screen-shares-user");
+        this.areaGuest = document.getElementById("screen-shares-guest");
+        this.area = document.getElementById("shares-area");
+        this.area2 = document.getElementById("shares-area-2");
+
+        this.ShareBox = class extends EventTarget {
+            constructor() {
+                super();
+                const div = document.createElement("div");
+                const html = `
+                    <div class="s12 m6 l3">
+                        <article class="padding shares-article">
+                            <div class="max bold">
+                                <span class="share-name">Default name</span>
+                                <button class="circle transparent">
+                                    <i>more_vert</i>
+                                    <menu class="left no-wrap">
+                                        <li class="btn-share-settings">
+                                            <i>settings</i>
+                                            Settings
+                                        </li>
+                                        <li class="btn-share-delete">
+                                            <i>delete</i>
+                                            Delete
+                                        </li>
+                                    </menu>
+                                </button>
+                            </div>
+                            <a class="wave">
+                                <img class="responsive" src="/icons/wallpaper.png">
+                            </a>
+                            <div class="small-padding">
+                                <nav>
+                                    <div>
+                                        <button class="chip small-elevate error-text share-tag-local hide">
+                                            <i>screen_record</i>
+                                            <span>Local</span>
+                                        </button>
+                                        <button class="chip small-elevate primary-text share-tag-active hide">
+                                            <i>done</i>
+                                            <span>Online</span>
+                                        </button>
+                                        <button class="chip small-elevate share-tag-temporary hide">
+                                            <i>today</i>
+                                            <span>Temporary</span>
+                                        </button>
+                                        <button class="chip small-elevate secondary-text share-tag-inactive hide">
+                                            <i>close</i>
+                                            <span>Offline</span>
+                                        </button>
+                                    </div>
+                                </nav>
+                            </div>
+                        </article>
+                    </div>
+                `.trim();
+                div.innerHTML = html;
+                this.el = div.firstChild;
+
+                this.nameEl = this.el.querySelector(".share-name");
+                this.settingsBtn = this.el.querySelector(".btn-share-settings");
+                this.deleteBtn = this.el.querySelector(".btn-share-delete");
+                this.tagLocal = this.el.querySelector(".share-tag-local");
+                this.tagActive = this.el.querySelector(".share-tag-active");
+                this.tagTemporary = this.el.querySelector(".share-tag-temporary");
+                this.tagInactive = this.el.querySelector(".share-tag-inactive");
+            };
+            setName(name="") {
+                this.nameEl.textContent = name;
+            };
+            setTag(tag, isActive=true) {
+                let interactEl = null;
+                if (tag === "local") {
+                    interactEl = this.tagLocal;
+                } else if (tag === "active") {
+                    interactEl = this.tagActive;
+                } else if (tag === "temporary") {
+                    interactEl = this.tagTemporary;
+                } else if (tag === "inactive") {
+                    interactEl = this.tagInactive;
+                }
+
+                let callName = "";
+                if (isActive === true) {
+                    callName = "remove";
+                } else {
+                    callName = "add";
+                }
+
+                interactEl.classList[callName]("hide");
+            };
+        };
     };
     open = () => {
-        this.outgoingScreen.classList.remove("hide");
-        this.outgoingBtn.classList.add("active");
-        this.outgoingBtn2.classList.add("fill");
+        this.area.innerHTML = "";
+        this.area2.innerHTML = "";
+
+        this.sharesScreen.classList.remove("hide");
+        this.sharesBtn.classList.add("active");
+        this.sharesBtn2.classList.add("fill");
+
+        const testEl = new this.ShareBox();
+        testEl.setName("My PC");
+        testEl.setTag("local", true);
+        testEl.setTag("active", true);
+        testEl.setTag("temporary", true);
+        this.area.appendChild(testEl.el);
+        const testEl2 = new this.ShareBox();
+        testEl2.setName("My phone");
+        testEl2.setTag("inactive", true);
+        this.area.appendChild(testEl2.el);
+
+        const testEl3 = new this.ShareBox();
+        testEl3.setName("Shared PC");
+        testEl3.setTag("local", true);
+        testEl3.setTag("active", true);
+        this.area2.appendChild(testEl3.el);
     };
     close = () => {
-        this.outgoingScreen.classList.add("hide");
-        this.outgoingBtn.classList.remove("active");
-        this.outgoingBtn2.classList.remove("fill");
+        this.area.innerHTML = "";
+        this.area2.innerHTML = "";
+
+        this.sharesScreen.classList.add("hide");
+        this.sharesBtn.classList.remove("active");
+        this.sharesBtn2.classList.remove("fill");
     };
 };
 
@@ -2598,7 +2993,7 @@ const main = async function() {
     setTimeout(() => {
         let mode = conf["local"]["mode"];
         if (mode === "auto") {
-            mode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? "dark" : "light";
+            mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         }
         globalThis.ui("mode", mode);
     }, 1);
@@ -2627,6 +3022,7 @@ const main = async function() {
     globalThis.server = server;
     globalThis.desktop = desktop;
 
+    /*
     // Search dialog
     const searchDialog = new SearchDialog();
     document.getElementById("btn-search").addEventListener("click", () => {
@@ -2638,6 +3034,7 @@ const main = async function() {
         const value = event.detail.value;
         console.log("Search for:", value);
     });
+    */
 
     // Settings dialog
     const settingsDialog = new SettingsDialog();
@@ -2672,7 +3069,7 @@ const main = async function() {
         roomRequestDialog.timeout = detail["timeout"];
         let fullName = "";
         if (detail["details"]["isUser"]) {
-            const loc = localization.get("new.share.fullname");
+            const loc = localization.get("new.share.full-name");
             fullName = localization.putParameters(loc, new Map([
                 ["firstName", detail["details"]["firstName"]],
                 ["lastName", detail["details"]["lastName"]]
@@ -2700,20 +3097,30 @@ const main = async function() {
             console.log("Pair reject");
             server.removeEventListener("pair-reject", pairRejectHandler);
             server.removeEventListener("pair-accept", pairAcceptHandler);
+            server.removeEventListener("offline", offlineHandler);
 
             roomRequestDialog.close();
             roomCreateDialog.show();
         };
-        const pairAcceptHandler = () => {
+        const pairAcceptHandler = (event) => {
             console.log("Pair accept");
+            console.log(event.detail);
             server.removeEventListener("pair-reject", pairRejectHandler);
             server.removeEventListener("pair-accept", pairAcceptHandler);
+            server.removeEventListener("offline", offlineHandler);
 
             switchDialog(emptyDialog);
             // todo: open room screen
+
+        };
+        const offlineHandler = () => {
+            server.removeEventListener("pair-reject", pairRejectHandler);
+            server.removeEventListener("pair-accept", pairAcceptHandler);
+            server.removeEventListener("offline", offlineHandler);
         };
         server.addEventListener("pair-reject", pairRejectHandler);
         server.addEventListener("pair-accept", pairAcceptHandler);
+        server.addEventListener("offline", offlineHandler);
     });
 
     const roomJoiningDialog = new RoomJoiningDialog();
@@ -2727,7 +3134,7 @@ const main = async function() {
         const timeout = res["timeout"];
         let fullName = "";
         if (res["details"]["isUser"]) {
-            const loc = localization.get("new.join.fullname");
+            const loc = localization.get("new.join.full-name");
             fullName = localization.putParameters(loc, new Map([
                 ["firstName", res["details"]["firstName"]],
                 ["lastName", res["details"]["lastName"]]
@@ -2743,15 +3150,30 @@ const main = async function() {
         roomJoiningDialog.info.innerHTML = infoText;
         roomJoiningDialog.timeout = timeout;
         switchDialog(roomJoiningDialog);
-        server.addEventListener("pair-accept", () => {
+        const pairAcceptHandler = (event) => {
+            console.log(event.detail);
             switchDialog(emptyDialog);
-        });
-        server.addEventListener("pair-reject", () => {
+            server.removeEventListener("pair-reject", pairRejectHandler);
+            server.removeEventListener("pair-accept", pairAcceptHandler);
+            server.removeEventListener("offline", offlineHandler);
+        };
+        const pairRejectHandler = () => {
             if (roomJoiningDialog.wasClosed === false) {
                 newScreen.displayJoinError(localization.get("new.join.code-rejected"));
             }
             switchDialog(emptyDialog);
-        });
+            server.removeEventListener("pair-reject", pairRejectHandler);
+            server.removeEventListener("pair-accept", pairAcceptHandler);
+            server.removeEventListener("offline", offlineHandler);
+        };
+        const offlineHandler = () => {
+            server.removeEventListener("pair-reject", pairRejectHandler);
+            server.removeEventListener("pair-accept", pairAcceptHandler);
+            server.removeEventListener("offline", offlineHandler);
+        };
+        server.addEventListener("pair-accept", pairAcceptHandler);
+        server.addEventListener("pair-reject", pairRejectHandler);
+        server.addEventListener("offline", offlineHandler);
         console.log("Join room result:", res);
     });
     
@@ -2812,14 +3234,14 @@ const main = async function() {
         loadPath();
     });
 
-    // Outgoings screen
-    const outgoingScreen = new OutgoingScreen();
-    document.getElementById("btn-outgoings").addEventListener("click", () => {
-        window.history.pushState({}, "", "/" + "outgoings");
+    // Shares screen
+    const sharesScreen = new SharesScreen();
+    document.getElementById("btn-shares").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "shares");
         loadPath();
     });
-    document.getElementById("btn-outgoings-2").addEventListener("click", () => {
-        window.history.pushState({}, "", "/" + "outgoings");
+    document.getElementById("btn-shares-2").addEventListener("click", () => {
+        window.history.pushState({}, "", "/" + "shares");
         loadPath();
     });
 
@@ -2827,8 +3249,11 @@ const main = async function() {
     const roomScreen = new RoomScreen();
 
 
-
-    
+    // badge update
+    const badgeShares = document.getElementById("badge-shares");
+    const badgeShares2 = document.getElementById("badge-shares-2");
+    badgeShares.classList.remove("hide");
+    badgeShares2.classList.remove("hide");
 
     // Dialog and screen management
     const emptyDialog = new EmptyDialog();
@@ -2857,14 +3282,14 @@ const main = async function() {
             document.getElementById("btn-download").classList.add("primary");
             document.getElementById("btn-download").children[0].classList.remove("primary");
             // fix point in shares
-            const btnOutgoings = document.getElementById("btn-outgoings");
-            if (btnOutgoings.children.item(0).tagName !== "DIV") {
-                const icon = btnOutgoings.children.item(0);
-                const badge = btnOutgoings.children.item(1);
+            const btnShares = document.getElementById("btn-shares");
+            if (btnShares.children.item(0).tagName !== "DIV") {
+                const icon = btnShares.children.item(0);
+                const badge = btnShares.children.item(1);
                 const div = document.createElement("div");
                 div.prepend(badge);
                 div.prepend(icon);
-                btnOutgoings.prepend(div);
+                btnShares.prepend(div);
             }
         } else {
             menuBtn.parentElement.parentElement.classList.remove("max");
@@ -2872,15 +3297,14 @@ const main = async function() {
             document.getElementById("btn-download").children[0].classList.add("primary");
 
             // fix point in shares
-            const btnOutgoings = document.getElementById("btn-outgoings");
-            console.log(btnOutgoings.children.item(0).tagName);
-            if (btnOutgoings.children.item(0).tagName === "DIV") {
-                const div = btnOutgoings.children.item(0);
+            const btnShares = document.getElementById("btn-shares");
+            if (btnShares.children.item(0).tagName === "DIV") {
+                const div = btnShares.children.item(0);
                 const icon = div.children.item(0);
                 const badge = div.children.item(1);
                 div.remove();
-                btnOutgoings.prepend(badge);
-                btnOutgoings.prepend(icon);
+                btnShares.prepend(badge);
+                btnShares.prepend(icon);
             }
         }
     };
@@ -2917,8 +3341,8 @@ const main = async function() {
         path = path.slice(1);
         path = path.split("/");
 
-        const singleRoutes = ["new", "downloads", "outgoings", "login"];
-        const doubleRoutes = ["services", "devices", "search", "room"];
+        const singleRoutes = ["new", "downloads", "devices", "shares", "login"];
+        const doubleRoutes = ["room"];
         if (singleRoutes.includes(path[0])) {
             path = [path[0]];
         } else if (doubleRoutes.includes(path[0])) {
@@ -2949,8 +3373,8 @@ const main = async function() {
             
         } else if (path[0] === "devices") {
             switchScreen(deviceScreen);
-        } else if (path[0] === "outgoings") {
-            switchScreen(outgoingScreen);
+        } else if (path[0] === "shares") {
+            switchScreen(sharesScreen);
         } else {
             switchScreen(newScreen);
         }

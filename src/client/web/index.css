@@ -128,7 +128,6 @@ body.dark {
 }
 
 /* Settings dialog */
-
 .multicolumn-dialog {
     max-width: 720px;
     display: flex;
@@ -320,6 +319,12 @@ body.dark {
     align-self: center;
 }
 
+/* About */
+.about-box {
+    display: flex;
+    flex-direction: column;
+}
+
 
 /* Account information */
 .information-box {
@@ -407,6 +412,136 @@ body.dark {
 
 #btn-room-create-copy {
     flex-shrink: 0;
+}
+
+.dialog-room-request-buttons {
+    display: flex;
+    justify-content: center;
+}
+
+
+
+/* Devices screen */
+#screen-devices {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.devices-article {
+    height: -webkit-fill-available;
+    height: -moz-available;
+    height: 100%;
+}
+
+.devices-article > :nth-child(1) {
+    display: flex;
+    justify-content: space-between;
+}
+
+.devices-article > :nth-child(1) > :nth-child(1) {
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+}
+
+.devices-article > :nth-child(1) > :nth-child(2) {
+    margin-right: 0px;
+}
+
+.devices-article > :nth-child(2) > :nth-child(1) {
+    aspect-ratio: 4/3;
+}
+
+.devices-article > :nth-child(3) > :nth-child(1) {
+    flex-wrap: wrap;
+    flex-direction: row;
+}
+
+.devices-article > :nth-child(3) > :nth-child(1) > :nth-child(1) {
+    flex-shrink: 1;
+}
+
+/* Shares screen */
+#screen-shares {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.shares-article {
+    height: -webkit-fill-available;
+    height: -moz-available;
+    height: 100%;
+}
+
+.shares-article > :nth-child(1) {
+    display: flex;
+    justify-content: space-between;
+}
+
+.shares-article > :nth-child(1) > :nth-child(1) {
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+}
+
+.shares-article > :nth-child(1) > :nth-child(2) {
+    margin-right: 0px;
+}
+
+.shares-article > :nth-child(2) > :nth-child(1) {
+    aspect-ratio: 4/3;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) {
+    flex-wrap: wrap;
+    flex-direction: row;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) > :nth-child(1) {
+    flex-shrink: 1;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) > :nth-child(1) > button {
+    margin: 8px;
+}
+
+
+/* Room resources */
+.room-settings-resource-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.room-settings-fieldset-box {
+    margin: 0px;
+    height: max-content;
+}
+
+.room-settings-fieldset-add {
+    width: -moz-available;
+    width: -webkit-fill-available;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.room-settings-fieldset-refresh {
+    margin-top: 16px;
+}
+
+/* Login */
+#google-login {
+    display: flex;
+    justify-content: center;
+}
+
+/* Main */
+#screen-main {
+    padding-bottom: 48px !important;
 }
 
 /* Room dialog */

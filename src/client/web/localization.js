@@ -34,7 +34,7 @@ const dict = {
             "en": "Devices",
             "hu": "Eszközök"
         },
-        "outgoings": {
+        "shares": {
             "en": "Shares",
             "hu": "Megosztások"
         },

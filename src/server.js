@@ -19,7 +19,6 @@ import nodemailer from "nodemailer";
 // first-party dependencies
 import Mime from "easy-mime";
 import Communicator from "easy-communicator";
-import { time } from "node:console";
 
 const CLIENT_VERSION = "0.1.0";
 const MIN_CLIENT_VERSION = CLIENT_VERSION;
@@ -119,6 +118,10 @@ const dict = {
             "en": " If you did not request account deletion, please ignore this email.",
             "hu": " Ha nem kérted a fiókod törlését, kérlek, hagyd figyelmen kívül ezt az e-mailt."
         }
+    },
+    "room": {
+        "en": " room",
+        "hu": " szoba"
     }
 };
 
@@ -869,18 +872,18 @@ const Server = class {
 
     // clients store memory variables
     clients = new Map();            // key-clientId, value-state object of the client
-    events = new Map();             // key-clientId, value->EventTarget ("login", "logout", "disconnect")
     sessions = new Map();           // key-sessionId, value-set of clientIds
     subscriptions = new Map([
         ["email", new Map()],
         ["firstName", new Map()],
         ["lastName", new Map()],
         ["picture", new Map()],
-        ["sessions", new Map()]
+        ["sessions", new Map()],
+        ["devices", new Map()],
+        ["shares", new Map()]
     ]);                             // key-subscription name, value-> Map of "userId" -> Set of "clientId"
     pairs = new Map();              // key-pairCode, value-> {hostClientId, peerClientId, timeoutId}
-    joinHosts = new Map();          // key-joinHostCode, value-> {joinPeerCode, hostClientIds, peerClientIds}
-    joinPeers = new Map();          // key-joinPeerCode, value-> joinHostCode
+    joins = new Map();              // key-joinId, value-> {peerCode, hostCode, peerUserId, hostUserId, peerName, hostName, isRemember, peerClientIds, hostClientIds}
 
     // utility things
     isClosing = false;
@@ -1317,17 +1320,18 @@ const Server = class {
             if (await this.db.schema.hasTable("joins") === false) {
                 await this.db.schema.createTable("joins", function (table) {
                     table.string("join_id");
-                    table.string("host_code");
                     table.string("peer_code");
-                    table.string("host_user_id");
+                    table.string("host_code");
                     table.string("peer_user_id");
+                    table.string("host_user_id");
+                    table.string("peer_name");
+                    table.string("host_name");
+                    
                 });
                 await this.db.schema.alterTable("joins", function (table) {
                     table.primary("join_id");
-                    table.unique("host_code");
-                    table.unique("peer_code");
-                    table.foreign("host_user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
                     table.foreign("peer_user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
+                    table.foreign("host_user_id").references("users.user_id").onDelete("CASCADE").onUpdate("CASCADE");
                 });
             }
            
@@ -1604,12 +1608,10 @@ const Server = class {
         client.set("isLoggedIn", true);
         client.set("userId", userId);
         client.set("sessionId", sessionId);
+        client.set("joinIds", new Set());
 
         // remove pair code
         this.removePairCode(clientId, false, true);
-
-        // send event
-        this.events.get(clientId).dispatchEvent(new Event("login"));
     };
     removeClientSession(userId, sessionId, clientId) {
         // remove from sessions map
@@ -1621,9 +1623,21 @@ const Server = class {
             }
         }
 
+        // remove joins
+        const joinIds = this.clients.get(clientId).get("joinIds");
+        for (const joinId of joinIds) {
+            const join = this.joins.get(joinId);
+            if (join.get("peerClientIds").has(clientId) === true && join.get("peerUserId") === userId) {
+                this.removeClientJoin(joinId, clientId);
+                client.get("joinIds").delete(joinId);
+            } else if (join.get("hostClientIds").has(clientId) === true && join.get("hostUserId") === userId) {
+                this.removeClientJoin(joinId, undefined, clientId);
+                client.get("joinIds").delete(joinId);
+            }
+        }
+
         // update client state
         const client = this.clients.get(clientId);
-        const isLoggedIn = client.get("isLoggedIn");
         client.set("isLoggedIn", false);
         client.delete("userId");
         client.delete("sessionId");
@@ -1643,11 +1657,6 @@ const Server = class {
 
         // remove pair code
         this.removePairCode(clientId, false, true);
-
-        // send event
-        if (isLoggedIn === true) {
-            this.events.get(clientId).dispatchEvent(new Event("logout"));
-        }
     };
 
     addClientSubscription(type, userId, clientId) {
@@ -1743,56 +1752,97 @@ const Server = class {
             pair.delete("peerClientId");
         }
     };
-    async addJoin(hostUserId, peerUserId, isRemembered) {
-        // create unique join codes (for host)
-        let joinHostCode = undefined;
-        while (joinHostCode === undefined) {
-            joinHostCode = generateId(10);
-            // check memory
-            if (this.joinHosts.has(joinHostCode) === true) {
-                joinHostCode = undefined;
-                continue;
-            }
-            // check database
-            const existing = await this.db.select().table("joins").where("host_code", joinHostCode).first();
-            if (existing !== undefined) {
-                joinHostCode = undefined;
-                continue;
+    
+    async broadcastJoin(joinId, msg, containDevices, containShares, containPeers, containHost, callerClientId) {
+        const clientIdSet = new Set();
+        const join = this.joins.get(joinId);
+
+        // add "devices"
+        if (containDevices === true) {
+            const peerUserId = join.get("peerUserId");
+            const joinSubscription = this.subscriptions.get("devices").get(peerUserId);
+            if (joinSubscription !== undefined) {
+                for (const subClientId of joinSubscription) {
+                    clientIdSet.add(subClientId);
+                }
             }
         }
-        // create unique join codes (for peer)
-        let joinPeerCode = undefined;
-        while (joinPeerCode === undefined) {
-            joinPeerCode = generateId(10);
+
+        // add "shares"
+        if (containShares === true) {
+            const hostUserId = join.get("hostUserId");
+            const joinSubscription = this.subscriptions.get("shares").get(hostUserId);
+            if (joinSubscription !== undefined) {
+                for (const subClientId of joinSubscription) {
+                    clientIdSet.add(subClientId);
+                }
+            }
+        }
+
+        // add peer clients
+        if (containPeers === true) {
+            const peerClientIds = join.get("peerClientIds");
+            for (const peerClientId of peerClientIds) {
+                clientIdSet.add(peerClientId);
+            }
+        }
+
+        // add host clients
+        if (containHost === true) {
+            const hostClientIds = join.get("hostClientIds");
+            for (const hostClientId of hostClientIds) {
+                clientIdSet.add(hostClientId);
+            }
+        }
+
+        // send message to clients
+        const pendings = [];
+        clientIdSet.delete(callerClientId);
+        for (const clientId of clientIdSet) {
+            const com = this.clients.get(clientId).get("com");
+            const messageObj = com.send(msg);
+            pendings.push(messageObj.wait());
+        }
+        await Promise.allSettled(pendings);
+
+    };
+    async addJoin(lang, peerUserId, hostUserId, isRemember, peerClientId, hostClientId) {
+        // create unique joinId
+        let joinId = undefined;
+        while (joinId === undefined) {
+            joinId = generateId(10);
             // check memory
-            if (this.joinPeers.has(joinPeerCode) === true) {
-                joinPeerCode = undefined;
+            if (this.joins.has(joinId) === true) {
+                joinId = undefined;
                 continue;
             }
             // check database
-            const existing = await this.db.select().table("joins").where("peer_code", joinPeerCode).first();
+            const existing = await this.db.select().table("joins").where("join_id", joinId).first();
             if (existing !== undefined) {
-                joinPeerCode = undefined;
+                joinId = undefined;
                 continue;
             }
         }
 
-        // put codes to database
-        if (isRemembered === true) {
-            // create unique join ID
-            let joinId = undefined;
-            while (joinId === undefined) {
-                joinId = generateId(10);
-                const existing = await this.db.select().table("joins").where("join_id", joinId).first();
-                if (existing !== undefined) {
-                    joinId = undefined;
-                }
-            }
+        // create peerCode/hostCode
+        let peerCode = generateId(10);
+        let hostCode = generateId(10);
+        while (hostCode === peerCode) {
+            hostCode = generateId(10);
+        }
+
+        // create random name
+        const name = generateId(3, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") + getText("room", lang);
+
+        // add to database
+        if (isRemember === true) {
             // insert into db
             const row = {
                 "join_id": joinId,
-                "host_code": joinHostCode,
-                "peer_code": joinPeerCode
+                "peer_code": peerCode,
+                "host_code": hostCode,
+                "host_name": name,
+                "peer_name": name
             };
             if (hostUserId !== undefined) {
                 row["host_user_id"] = hostUserId;
@@ -1803,64 +1853,434 @@ const Server = class {
             await this.db.insert(row).into("joins");
         }
 
-        return {"joinHostCode": joinHostCode, "joinPeerCode": joinPeerCode};
+        // add to memory
+        this.addJoinMemory(joinId, peerCode, hostCode, peerUserId, hostUserId, name, name, isRemember);
+        this.addClientJoin(joinId, peerClientId, hostClientId, false)
+
+        // notify registered users (peers)
+        const msg = {
+            "timestamp": Date.now(),
+            "type": "devices",
+            "value": {
+                "joinId": joinId,
+                "isRemember": isRemember,
+                "name": name,
+                "isOnline": true
+            }
+        };
+        this.broadcastJoin(joinId, msg, true, false, false, false, peerClientId);
+
+        // notify registered users (hosts)
+        const msg2 = {
+            "timestamp": Date.now(),
+            "type": "shares",
+            "value": {
+                "joinId": joinId,
+                "isRemember": isRemember,
+                "name": name,
+                "isOnline": true
+            }
+        };
+        this.broadcastJoin(joinId, msg2, false, true, false, false, hostClientId);
+
+        return {"joinId": joinId, "peerCode": peerCode, "hostCode": hostCode};
     };
-    removeJoin(joinId) {
-        // get join codes
-        const res = this.db.select().table("joins").where("join_id", joinId).first();
+    async updateJoin(joinId, key, value, peerClientId, hostClientId) {
+        let isInMemory = false;
+        let isInDatabase = false;
+        // get join data in memory
+        let join = this.joins.get(joinId);
+        if (join !== undefined) {
+            isInMemory = true;
+        }
+        // index db exist (or load data if memory data not exist)
+        if (isInMemory === false || join.get("isRemember") === true) {
+            isInDatabase = true;
+            // create fake join object
+            if (join === undefined) {
+                const dbEntry = await this.db.select().table("joins").where("join_id", joinId).first();
+                if (dbEntry === undefined) {
+                    return;
+                }
+                join = new Map();
+                join.set("peerCode", dbEntry["peer_code"]);
+                join.set("hostCode", dbEntry["host_code"]);
+                if (dbEntry["peer_user_id"] !== null) {
+                    join.set("peerUserId", dbEntry["peer_user_id"]);
+                }
+                if (dbEntry["host_user_id"] !== null) {
+                    join.set("hostUserId", dbEntry["host_user_id"]);
+                }
+                join.set("peerName", dbEntry["peer_name"]);
+                join.set("hostName", dbEntry["host_name"]);
+                join.set("isRemember", true);
+                join.set("peerClientIds", new Set());
+                join.set("hostClientIds", new Set());
+            }
+        }
+
+        // edit data
+        if (key === "name") {
+            // check value and skip if not changed
+            if ((peerClientId !== undefined && join.get("peerName") === value) || (hostClientId !== undefined && join.get("hostName") === value)) {
+                return;
+            }
+
+            let isCommonUserId = false;
+            if (join.get("peerUserId") === join.get("hostUserId")) {
+                isCommonUserId = true;
+            }
+
+            // set memory data
+            if (isInMemory === true) {
+                if (isCommonUserId === true) {
+                    join.set("peerName", value);
+                    join.set("hostName", value);
+                } else if (peerClientId !== undefined) {
+                    join.set("peerName", value);
+                } else {
+                    join.set("hostName", value);
+                }
+            }
+
+            // update database
+            if (isInDatabase === true) {
+                if (isCommonUserId === true) {
+                    await this.db.where("join_id", joinId).update({"peer_name": value, "host_name": value});
+                } else if (peerClientId !== undefined) {
+                    await this.db.where("join_id", joinId).update({"peer_name": value});
+                } else {
+                    await this.db.where("join_id", joinId).update({"host_name": value});   
+                }
+            }
+
+            // broadcast change to connected clients
+            if (peerClientId !== undefined || isCommonUserId === true) {
+                const msg = {
+                    "timestamp": Date.now(),
+                    "type": "devices",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "name": value
+                    }
+                };
+                // notify to devices and peers
+                this.broadcastJoin(joinId, msg, true, false, true, false, peerClientId);
+            }
+            if (hostClientId !== undefined || isCommonUserId === true) {
+                const msg = {
+                    "timestamp": Date.now(),
+                    "type": "shares",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "name": value
+                    }
+                };
+                // notify to shares and hosts
+                this.broadcastJoin(joinId, msg, false, true, false, true, hostClientId);
+            }
+            
+        } else if (key === "isRemember") {
+            // check value and skip if not changed
+            if (join.get("isRemember") === value) {
+                return;
+            }
+
+            // set memory data
+            if (isInMemory === true) {
+                join.set("isRemember", value);
+            }
+
+            // update database
+            if (isInDatabase === true) {
+                if (value === true) {
+                    // add to database
+                   const newObj = {
+                        "join_id": joinId,
+                        "peer_code": join.get("peerCode"),
+                        "host_code": join.get("hostCode"),
+                        "peer_name": join.get("peerName"),
+                        "host_name": join.get("hostName")
+                    };
+                    if (join.get("peerUserId") !== undefined) {
+                        newObj["peer_user_id"] = join.get("peerUserId");
+                    }
+                    if (join.get("hostUserId") !== undefined) {
+                        newObj["host_user_id"] = join.get("hostUserId");
+                    }
+                    await this.db.insert(newObj).into("joins");
+                } else {
+                    // remove from database
+                    await this.db.where("join_id", joinId).del();
+                }
+            }
+            
+            // in that case remove broadcast
+            if (isInMemory === false && value === false) {
+                // broadcast devices and peers
+                const msg = {
+                    "timestamp": Date.now(),
+                    "type": "devices",
+                    "isRemove": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isRemember": value
+                    }
+                };
+                this.broadcastJoin(joinId, msg, true, false, false, false, peerClientId);
+
+                // broadcast shares and hosts
+                const msg2 = {
+                    "timestamp": Date.now(),
+                    "type": "shares",
+                    "isRemove": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isRemember": value
+                    }
+                };
+                this.broadcastJoin(joinId, msg2, false, true, false, false, hostClientId);
+
+            } else {
+                // broadcast devices and peers
+                const msg = {
+                    "timestamp": Date.now(),
+                    "type": "devices",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isRemember": value
+                    }
+                };
+                this.broadcastJoin(joinId, msg, true, false, true, false, peerClientId);
+
+                // broadcast shares and hosts
+                const msg2 = {
+                    "timestamp": Date.now(),
+                    "type": "shares",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isRemember": value
+                    }
+                };
+                this.broadcastJoin(joinId, msg2, false, true, false, true, hostClientId);
+            }
+            
+        } else if (key === "rehost") {
+            // check if new host is same with current host
+            if (join.get("hostClientIds").has(peerClientId) === true) {
+                return;
+            }
+
+            // create unique hostCode
+            let hostCode = undefined;
+            while (hostCode === join.get("peerCode")) {
+                hostCode = generateId(10);
+            }
+
+            // broadcast change to old host clients
+            const msg = {
+                "timestamp": Date.now(),
+                "type": "shares",
+                "isChange": true,
+                "value": {
+                    "joinId": joinId,
+                    "hostCode": true    // host code is secret but we can notify host change by this flag
+                }
+            };
+            this.broadcastJoin(joinId, msg, false, false, false, true, hostClientId);
+
+            // set memory
+            if (isInMemory === true) {
+                const hostClientIds = join.get("hostClientIds");
+                for (const hostClientId of hostClientIds) {
+                    this.removeClientJoin(joinId, undefined, hostClientId, false);
+                }
+                hostClientIds.add(hostClientId);
+                join.set("hostCode", hostCode);
+            }
+
+            // set db
+            if (isInDatabase === true) {
+                await this.db.where("join_id", joinId).update({"host_code": hostCode});
+            }
+
+            // broadcast change to peer devices
+            const msg2 = {
+                "timestamp": Date.now(),
+                "type": "devices",
+                "isChange": true,
+                "value": {
+                    "joinId": joinId,
+                    "hostCode": true
+                }
+            };
+            this.broadcastJoin(joinId, msg2, true, false, true, false, hostClientId);
+
+            return hostCode;
+        }
+    };
+    addJoinMemory(joinId, peerCode, hostCode, peerUserId, hostUserId, peerName, hostName, isRemember) {
+        // add join to memory (if not exists)
+        let join = this.joins.get(joinId);
+        if (join !== undefined) {
+            return;
+        }
+        join = new Map([
+            ["peerCode", peerCode],
+            ["hostCode", hostCode],
+            ["peerName", peerName],
+            ["hostName", hostName],
+            ["isRemember", isRemember],
+            ["peerClientIds", new Set()],
+            ["hostClientIds", new Set()]
+        ]);
+        if (peerUserId !== undefined) {
+            join.set("peerUserId", peerUserId);
+        }
+        if (hostUserId !== undefined) {
+            join.set("hostUserId", hostUserId);
+        }
+        this.joins.set(joinId, join);
+    };
+    async removeJoin(joinId, callerClientId) {
+        const join = this.joins.get(joinId);
+
+        // collect clientIds to notify
+        const msg = {
+            "timestamp": Date.now(),
+            "type": "devices",
+            "isRemove": true,
+            "value": {
+                "joinId": joinId
+            }
+        };
+        this.broadcastJoin(joinId, msg, true, false, true, false, callerClientId);
+
+        const msg2 = {
+            "timestamp": Date.now(),
+            "type": "shares",
+            "isRemove": true,
+            "value": {
+                "joinId": joinId
+            }
+        };
+        this.broadcastJoin(joinId, msg2, false, true, false, true, callerClientId);
+
+        // remove from database
+        await this.db("joins").where("join_id", joinId).delete();
 
         // remove from memory
-        const hostCode = res["host_code"];
-        const peerCode = res["peer_code"];
-        const host = this.joinHosts.get(hostCode);
-        if (host !== undefined) {
-            const hostClientId = host.get("hostClientId");
-            if (hostClientId !== undefined) {
-                this.removeClientJoin(hostCode, hostClientId, undefined, undefined);
-            }
-            const peerClientIds = host.get("peerClientIds");
-            for (const peerClientId of peerClientIds) {
-                this.removeClientJoin(undefined, undefined, peerCode, peerClientId);
-            }
+        const peerClientIds = join.get("peerClientIds");
+        for (const peerClientId of peerClientIds) {
+            this.removeClientJoin(joinId, peerClientId, undefined, false);
         }
-
-        // cleanup
-        this.joinHosts.delete(hostCode);
-        this.joinPeers.delete(peerCode);
-        this.db("joins").where("join_id", joinId).delete();
+        const hostClientIds = join.get("hostClientIds");
+        for (const hostClientId of hostClientIds) {
+            this.removeClientJoin(joinId, undefined, hostClientId, false);
+        }
     };
-    addClientJoin(joinHostCode, joinPeerCode, hostClientId, peerClientId) {
-        // add join entry
-        const host = this.joinHosts.get(joinHostCode);
-        if (host === undefined) {
-            this.joinHosts.set(joinHostCode, new Map([
-                ["joinPeerCode", joinPeerCode],
-            ]));
-        }
-        const peer = this.joinPeers.get(joinPeerCode);
-        if (peer === undefined) {
-            this.joinPeers.set(joinPeerCode, new Map([
-                ["joinHostCode", joinHostCode]
-            ]));
-        }
+    addClientJoin(joinId, peerClientId, hostClientId, notifyOthers=false) {
+        const join = this.joins.get(joinId);
 
-        // add user
-        if (hostClientId !== undefined) {
-            this.joinHosts.get(joinHostCode).set("hostClientId", hostClientId);
-        }
+        // add peer
         if (peerClientId !== undefined) {
-            let peerClientIds = host.get("peerClientIds");
-            if (peerClientIds === undefined) {
-                host.set("peerClientIds", new Set());
+            join.get("peerClientIds").add(peerClientId);
+            const peerJoinSet = this.clients.get(peerClientId).get("joinIds");
+            if (peerJoinSet === undefined) {
+                this.clients.get(peerClientId).set("joinIds", new Set());
             }
-            host.get("peerClientIds").add(peerClientId);
+            peerJoinSet.add(joinId);
         }
 
-        // broadcast changes
+        // add host
+        if (hostClientId !== undefined) {
+            join.get("hostClientIds").add(hostClientId);
+            const hostJoinSet = this.clients.get(hostClientId).get("joinIds");
+            if (hostJoinSet === undefined) {
+                this.clients.get(hostClientId).set("joinIds", new Set());
+            }
+            hostJoinSet.add(joinId);
+
+            // broadcast (only host add)
+            if (notifyOthers === true && join.get("hostClientIds").size === 1) {
+                // notify registered users (peers) and connected clients (peers)
+                const msg = {
+                    "timestamp": Date.now(),
+                    "type": "devices",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isOnline": true
+                    }
+                };
+                this.broadcastJoin(joinId, msg, true, false, true, false, peerClientId);
+                
+                // notify registered non-local users (hosts)
+                const msg2 = {
+                    "timestamp": Date.now(),
+                    "type": "shares",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isOnline": true
+                    }
+                };
+                this.broadcastJoin(joinId, msg2, false, true, false, false, hostClientId);
+            }
+        }
 
     };
-    removeClientJoin(joinHostCode, hostClientId, joinPeerCode, peerClientId) {
+    removeClientJoin(joinId, peerClientId, hostClientId, notifyOthers=false) {
+        const join = this.joins.get(joinId);
 
+        // remove peer
+        if (peerClientId !== undefined) {
+            this.clients.get(peerClientId).get("joinIds").delete(joinId);
+            join.get("peerClientIds").delete(peerClientId);
+        }
+
+        // remove host
+        if (hostClientId !== undefined) {
+            // remove host
+            this.joins.get(hostClientId).get("joinIds").delete(joinId);
+            join.get("hostClientIds").delete(hostClientId);
+            // notifiy if 
+            if (notifyOthers && join.get("hostClientIds").size === 0) {
+                // notify registered users (peers) and connected clients (peers)
+                const msg = {
+                    "timestamp": Date.now(),
+                    "type": "devices",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isOnline": false
+                    }
+                };
+                this.broadcastJoin(joinId, msg, true, false, true, false, peerClientId);
+                
+                // notify registered non-local users (hosts)
+                const msg2 = {
+                    "timestamp": Date.now(),
+                    "type": "shares",
+                    "isChange": true,
+                    "value": {
+                        "joinId": joinId,
+                        "isOnline": false
+                    }
+                };
+                this.broadcastJoin(joinId, msg2, false, true, false, false, hostClientId);
+            }
+        }
+
+        // cleanup form memory if no client
+        const clientCount = join.get("hostClientIds").size + join.get("peerClientIds").size;
+        if (clientCount === 0) {
+            this.joins.delete(joinId);
+        }
     };
     
     async updateUserData(userId, type, data) {
@@ -2138,7 +2558,7 @@ const Server = class {
             }*/
             // check inputs
             const key = message["key"];
-            if (typeof key !== "string" || !["email", "firstName", "lastName", "picture", "sessions"].includes(key)) {
+            if (typeof key !== "string" || !["email", "firstName", "lastName", "picture", "sessions", "devices", "shares"].includes(key)) {
                 messageObj.send({"success": false});
                 return;
             }
@@ -2174,6 +2594,135 @@ const Server = class {
                         "userAgent": session["user_agent"]
                     });
                 }
+            } else if (key === "devices") {
+                const joinsSet = new Set();
+                // get all sessions
+                const sessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
+                for (const session of sessions) {
+                    // get all clientId in sessions
+                    const clientIds = this.sessions.get(session["session_id"]);
+                    if (clientIds === undefined) {
+                        continue;
+                    }
+                    for (const clientId of clientIds) {
+                        // get all joinIds
+                        const joinIds = this.clients.get(clientId).get("joinIds");
+                        for (const joinId of joinIds) {
+                            // get peer joins
+                            const join = this.joins.get(joinId);
+                            if (join !== undefined && join.get("peerUserId") === client.get("userId")) {
+                                joinsSet.add(joinId);
+                            } 
+                        }
+                    }
+                }
+                
+                // query permanent joins from db
+                const joinsRememberMap = new Map();
+                const joinsRemember = await this.db.select().table("joins").where("peer_user_id", client.get("userId"));
+                if (joinsRemember !== undefined) {
+                    for (const join of joinsRemember) {
+                        joinsSet.add(join["join_id"]);
+                        joinsRememberMap.set(join["join_id"], new Map([
+                            ["peerCode", join["peer_code"]],
+                            ["peerName", join["peer_name"]]
+                        ]));
+                    }
+                }
+
+                // return getted joins
+                value = [];
+                for (const joinId of joinsSet) {
+                    const join = this.joins.get(joinId);
+                    // peerCode, name
+                    let peerCode = "";
+                    let name = "";
+                    if (joinsRememberMap.has(joinId)) {
+                        peerCode = joinsRememberMap.get(joinId).get("peerCode");
+                        name = joinsRememberMap.get(joinId).get("peerName");
+                    } else if (join !== undefined) {
+                        peerCode = join.get("peerCode");
+                        name = join.get("peerName");
+                    }
+                    // is remember
+                    let isRemember = false;
+                    if (joinsRememberMap.has(joinId)) {
+                        isRemember = true;
+                    }
+                    // check if is online
+                    let isOnline = false;
+                    if (join !== undefined && join.get("hostClientIds").size > 0) {
+                        isOnline = true;
+                    }
+                    value.push({
+                        "joinId": joinId,
+                        "name": name,
+                        "isRemember": isRemember,
+                        "isOnline": isOnline
+                    });
+                }
+
+            } else if (key === "shares") {
+                const joinsSet = new Set();
+                // get all sessions
+                const sessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
+                for (const session of sessions) {
+                    // get all clientId in sessions
+                    const clientIds = this.sessions.get(session["session_id"]);
+                    if (clientIds === undefined) {
+                        continue;
+                    }
+                    for (const clientId of clientIds) {
+                        // get all joinIds
+                        const joinIds = this.clients.get(clientId).get("joinIds");
+                        for (const joinId of joinIds) {
+                            // get peer joins
+                            const join = this.joins.get(joinId);
+                            if (join !== undefined && join.get("hostUserId") === client.get("userId")) {
+                                joinsSet.add(joinId);
+                            } 
+                        }
+                    }
+                }
+
+                // query permanent joins from db
+                const joinsRememberMap = new Map();
+                const joinsRemember = await this.db.select().table("joins").where("host_user_id", client.get("userId"));
+                if (joinsRemember !== undefined) {
+                    for (const join of joinsRemember) {
+                        joinsSet.add(join["join_id"]);
+                        joinsRememberMap.set(join["join_id"], join["host_name"]);
+                    }
+                }
+
+                // return getted joins
+                value = [];
+                for (const joinId of joinsSet) {
+                    const join = this.joins.get(joinId);
+                    // name
+                    let name = "";
+                    if (joinsRememberMap.has(joinId)) {
+                        name = joinsRememberMap.get(joinId);
+                    } else if (join !== undefined) {
+                        name = join.get("hostName");
+                    }
+                    // is remember
+                    let isRemember = false;
+                    if (joinsRememberMap.has(joinId)) {
+                        isRemember = true;
+                    }
+                     // check if is online
+                    let isOnline = false;
+                    if (join !== undefined && join.get("hostClientIds").size > 0) {
+                        isOnline = true;
+                    }
+                    value.push({
+                        "joinId": joinId,
+                        "name": name,
+                        "isOnline": isOnline,
+                        "isRemember": isRemember
+                    });
+                }
             }
 
             // subscribe to updates
@@ -2195,7 +2744,7 @@ const Server = class {
             }*/
             // check inputs
             const key = message["key"];
-            if (typeof key !== "string" || !["email", "firstName", "lastName", "picture", "sessions"].includes(key)) {
+            if (typeof key !== "string" || !["email", "firstName", "lastName", "picture", "sessions", "devices", "shares"].includes(key)) {
                 messageObj.send({"success": false});
                 return;
             }
@@ -2432,7 +2981,8 @@ const Server = class {
         }
         if (message["type"] === "pair-accept") {
             /*{
-                "isRemember": boolean
+                "isRemember": boolean,
+                "lang": string          // for default room name
             }*/
             /*{
                 "success": boolean
@@ -2442,6 +2992,10 @@ const Server = class {
             let isRemember = message["isRemember"];
             if (typeof isRemember !== "boolean") {
                 isRemember = false;
+            }
+            let lang = message["lang"];
+            if (typeof lang !== "string" || !["en", "hu"].includes(lang)) {
+                lang = "en";
             }
 
             // check permission
@@ -2459,6 +3013,7 @@ const Server = class {
                 messageObj.send({"success": false});
                 return;
             }
+
             // check peer client
             const peerClientId = pair.get("peerClientId");
             if (peerClientId === undefined) {
@@ -2466,25 +3021,34 @@ const Server = class {
                 return;
             }
 
-            // create join codes
-            /*
-            const {hostCode, peerCode} = await this.addJoin(
-                client.get("isLoggedIn") === true ? client.get("userId") : undefined,
-                this.clients.get(peerClientId).get("isLoggedIn") === true ? this.clients.get(peerClientId).get("userId") : undefined,
-                false
-            );*/
-            const hostCode = "0000";
-            const peerCode = "1111";
+            // check remember permission
+            const peerClient = this.clients.get(peerClientId);
+            const hostClient = this.clients.get(clientId);
+            if (isRemember === true && peerClient.get("isLoggedIn") === false && hostClient.get("isLoggedIn") === false) {
+                isRemember = false;  // cannot remember if both sides are not logged in
+            }
+
+            // create join and register in memory
+            const {joinId, peerCode, hostCode} = await this.addJoin(lang, peerClient.get("userId"), hostClient.get("userId"), isRemember, peerClientId, clientId);
+            // const joinId = "0000"; const peerCode = "1111"; const hostCode = "2222";
 
             // send to host
-            messageObj.send({"success": true, "joinCode": hostCode});
+            messageObj.send({
+                "success": true,
+                "joinId": joinId,
+                "hostCode": hostCode,
+                "isRemember": isRemember,
+                "hostName": this.joins.get(joinId).get("hostName")
+            });
 
             // send accept to peer
-            const peerClient = this.clients.get(peerClientId);
             peerClient.get("com").send({
                 "timestamp": Date.now(),
                 "type": "pair-accept",
-                "joinCode": peerCode
+                "joinId": joinId,
+                "peerCode": peerCode,
+                "isRemember": isRemember,
+                "peerName": this.joins.get(joinId).get("peerName")
             });
             
             // cleanup
@@ -2493,7 +3057,6 @@ const Server = class {
             clearTimeout(pair.get("timeoutId"));
             this.pairs.delete(pairCode);
             return;
-
         }
         if (message["type"] === "pair-reject") {
             /*{
@@ -2557,191 +3120,156 @@ const Server = class {
         // join management
         if (message["type"] === "join-connect") {
             /*{
-                "key": string,
-                "once": boolean,
-                "codes": []
+                "joinId": string,
+                "peerCode" | "hostCode": string
             }*/
             /*{
                 "success": boolean,
-                "value": any
+                "values": {
+                    "name": string,
+                    "isOnline": boolean,
+                    "isRemember": boolean
+                }
             }*/
-            const key = message["key"];
-            if (typeof key !== "string" || !["devices", "shares"].includes(key)) {
+            //get input and check
+            const joinId = message["joinId"];
+            const peerCode = message["peerCode"];
+            const hostCode = message["hostCode"];
+            if (typeof joinId !== "string") {
                 messageObj.send({"success": false});
                 return;
             }
-            const once = message["once"];
-
-            // guest request
-            const codes = message["codes"];
-            if (codes !== undefined && Array.isArray(codes)) {
-                const results = [];
-                for (const code of codes) {
-                    if (typeof code !== "string") {
-                        continue;
-                    }
-
-                    // get peer entries
-                    if (key === "devices") {
-                        // search in db or memory
-                        const existDatabase = await this.db.select().table("joins").where("peer_code", code).first();
-                        const existMemory = this.joinPeers.get(code);
-                        if (existDatabase === undefined  && existMemory === undefined) {
-                            continue;
-                        }
-
-                        //check DB permission (if db entry exists)
-                        if (existDatabase !== undefined && existDatabase["peer_user_id"] !== null) {
-                            continue;
-                        }
-
-                        // create result entry
-                        const result = {
-                            "code": code,
-                            "isOnline": existMemory.get("hostClientId") !== undefined
-                        };
-                        results.push(result);
-
-                        // subscribe to updates
-                        if (once !== true) {
-                            this.addClientJoin(existMemory.get("hostCode"), code, undefined, clientId);
-                        }
-                    }
-
-                    // get host entries
-                    if (key === "shares") {
-                        // search in db or memory
-                        const existDatabase = await this.db.select().table("joins").where("host_code", code).first();
-                        const existMemory = this.joinHosts.get(code);
-                        if (existDatabase === undefined  && existMemory === undefined) {
-                            continue;
-                        }
-
-                        //check DB permission (if db entry exists)
-                        if (existDatabase !== undefined && existDatabase["host_user_id"] !== null) {
-                            continue;
-                        }
-                        
-                        // register for updates and availability for peers
-                        if (once !== true) {
-                            this.addClientJoin(code, existMemory.get("joinPeerCode"), clientId, undefined);
-                        }
-
-                        // create result entry
-                        const result = {
-                            "code": code,
-                            "isOnline": existMemory.get("hostClientId") !== undefined
-                        };
-                        results.push(result);
-                    }
-                }
-                messageObj.send({"success": true, "value": results});
-                return;
-            }
-
-            // user request
-            if (client.get("isLoggedIn") !== true) {
+            if (peerCode === undefined && hostCode === undefined) {
                 messageObj.send({"success": false});
                 return;
             }
-            const userCodes = new Map();
-            if (key === "devices") {
-                // get permanent devices from db
-                const joins = await this.db.select().table("joins").where("peer_user_id", client.get("userId"));
-                for (const join of joins) {
-                    userCodes.set(join["peer_code"], join["host_code"]);
-                }
-
-                // get temporary devices from memory sessions -> clients -> joinPeerCodes
-                const userSessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
-                for (const session of userSessions) {
-                    const clientSet = this.sessions.get(session["session_id"]);
-                    if (clientSet === undefined) {
-                        continue;
-                    }
-                    for (const client of clientSet) {
-                        const clientInfo = this.clients.get(client);
-                        const joinCodes = clientInfo.get("joinPeerCodes");
-                        if (joinCodes === undefined) {
-                            continue;
-                        }
-                        for (const joinCode of joinCodes) {
-                            userCodes.set(joinCode, this.joinPeers.get(joinCode).get("hostCode"));
-                        }
-                    }
-                }
-
-                // register for updates
-                if (once !== true) {
-                    for (const code of userCodes) {
-                        this.addClientJoin(userCodes.get(code), code, undefined, clientId);
-                    }
-                }
             
-                // send results
+            // check memory
+            let isInMemory = true;
+            let join = this.joins.get(joinId);
 
-                return;
-
-            } else if (key === "shares") {
-                // get permanent shares from db
-                const joins = await this.db.select().table("joins").where("host_user_id", client.get("userId"));
-                for (const join of joins) {
-                    userCodes.set(join["host_code"], join["peer_code"]);
+            // check db (fallback)
+            if (join === undefined) {
+                isInMemory = false;
+                const dbEntry = await this.db.select().table("joins").where("join_id", joinId)
+                if (dbEntry === undefined) {
+                    messageObj.send({"success": false});
+                    return;
                 }
-
-                // get temporary shares from memory sessions -> clients -> joinHostCodes
-                const userSessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
-                for (const session of userSessions) {
-                    const clientSet = this.sessions.get(session["session_id"]);
-                    if (clientSet === undefined) {
-                        continue;
-                    }
-                    for (const client of clientSet) {
-                        const clientInfo = this.clients.get(client);
-                        const joinCodes = clientInfo.get("joinHostCodes");
-                        if (joinCodes === undefined) {
-                            continue;
-                        }
-                        for (const joinCode of joinCodes) {
-                            userCodes.set(joinCode, this.joinHosts.get(joinCode).get("joinPeerCode"));
-                        }
-                    }
+                // create fake join object
+                join = new Map();
+                join.set("peerCode", dbEntry["peer_code"]);
+                join.set("hostCode", dbEntry["host_code"]);
+                if (dbEntry["peer_user_id"] !== null) {
+                    join.set("peerUserId", dbEntry["peer_user_id"]);
                 }
-
-                // register for updates
-                if (once !== true) {
-                    for (const code of userCodes) {
-                        this.addClientJoin(code, userCodes.get(code), clientId, undefined);
-                    }
+                if (dbEntry["host_user_id"] !== null) {
+                    join.set("hostUserId", dbEntry["host_user_id"]);
                 }
+                join.set("peerName", dbEntry["peer_name"]);
+                join.set("hostName", dbEntry["host_name"]);
+                join.set("isRemember", true);
+                join.set("peerClientIds", new Set());
+                join.set("hostClientIds", new Set());
+            }
 
-                // send results
-
+            // check user permission
+            let userId = client.get("userId");
+            if ((peerCode !== undefined && userId !== join.get("peerUserId")) || (hostCode !== undefined && userId !== join.get("hostUserId"))) {
+                messageObj.send({"success": false});
                 return;
             }
-            
+            if ((peerCode !== undefined && join.get("peerCode") !== peerCode) || (hostCode !== undefined && join.get("hostCode") !== hostCode)) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // register in memory
+            if (isInMemory === false) {
+                this.addJoinMemory(joinId, join.get("peerCode"), join.get("hostCode"), join.get("peerUserId"), join.get("hostUserId"), join.get("peerName"), join.get("hostName"), join.get("isRemember"));
+            }
+            if (peerCode !== undefined) {
+                this.addClientJoin(joinId, clientId, undefined);
+            } else {
+                this.addClientJoin(joinId, undefined, clientId);
+            }
+
+            // reload join from memory
+            join = this.joins.get(joinId);
+
+            // return data
+            let name = "";
+            if (peerCode !== undefined) {
+                name = join.get("peerName");
+            } else {
+                name = join.get("hostName");
+            }
+            const returnEntry = {
+                "name": name,
+                "isOnline": join.get("hostClientIds").size > 0 ? true : false,
+                "isRemember": join.get("isRemember")
+            };
+            messageObj.send({"success": true, "value": returnEntry});
+            return;
         }
-
         if (message["type"] === "join-disconnect") {
             /*{
-                "key": string,
-                "codes": []
+                "joinId": string,
+                "peerCode" | "hostCode": string
             }*/
             /*{
-                "success": boolean,
-                "value": any
+                "success": boolean
             }*/
+            //get input and check
+            let joinId = message["joinId"];
+            if (typeof joinId !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+            const peerCode = message["peerCode"];
+            const hostCode = message["hostCode"];
+            if (peerCode === undefined && hostCode === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
 
+            // check memory
+            let join = this.joins.get(joinId);
+            if (join === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check permission
+            if (peerCode !== undefined) {
+                if (join.get("peerCode") !== peerCode || join.get("peerClientIds").has(clientId) === false) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            } else if (hostCode !== undefined) {
+                if (join.get("hostCode") !== hostCode || join.get("hostClientIds").has(clientId) === false) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            }
+
+            // remove from memory
+            if (peerCode !== undefined) {
+                this.removeClientJoin(joinId, clientId, undefined);
+            } else {
+                this.removeClientJoin(joinId, undefined, clientId);
+            }
+            messageObj.send({"success": true});
+            return;
         }
-
         if (message["type"] === "join") {
             /*{
-                "joinCode": string
+                "joinId": string
             }*/
             /*
                  Client1                     Server                      Client2
                     |                           |                           |
-                    |         {joinCode}        |         {details}         |
+                    |          {joinId}         |          {joinId}         |
                     |-------------------------->|-------------------------->|
                     |                           |                           |
                     |     {success,accepted}    |         {success}         |
@@ -2754,28 +3282,400 @@ const Server = class {
                     |<--------------------------|<--------------------------|
                     |                           |                           |
                     |          {finish}         |          {finish}         |
-                    |<------------------------->|<------------------------->|
-                    |                           |                           |
+                    |<--------------------------|<--------------------------|
+                    |-------------------------->|                           |
             */
-
             
-        }
+            // check inputs
+            const joinId = message["joinId"];
+            if (typeof joinId !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
 
+            // check memory
+            const join = this.joins.get(joinId);
+            if (join === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check permission
+            if (join.get("peerClientIds").has(clientId) === false) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check availability
+            const hostClientIds = join.get("hostClientIds");
+            if (hostClientIds.size === 0) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // send details to first host
+            const hostClientId = hostClientIds.values().next().value;
+            const hostClient = this.clients.get(hostClientId);
+            const hostMessageObj = hostClient.get("com").invoke({
+                "timestamp": Date.now(),
+                "type": "join",
+                "joinId": joinId
+            });
+            await hostMessageObj.wait();
+            if (hostMessageObj.error !== "" || hostMessageObj.data["success"] !== true) {
+                messageObj.send({"success": false, "accepted": false});
+                return;
+            }
+
+            // send accept to peer
+            messageObj.invoke({
+                "success": true,
+                "accepted": true
+            });
+            await messageObj.wait();
+            if (messageObj.error !== "" || messageObj.data["success"] !== true) {
+                // send error finish to host
+                hostMessageObj.send({
+                    "finish": false
+                });
+                return;
+            }
+
+            // start ping-pong between peer and host, and exchange webrtc offer/answer/candidates through server
+            let isFinish = false;
+            while (isFinish === false) {
+
+                // send webrtc to host
+                hostMessageObj.invoke({
+                    "timestamp": Date.now(),
+                    "webrtc": messageObj.data["webrtc"],
+                    "finish": messageObj.data["finish"]
+                });
+                await hostMessageObj.wait();
+                if (hostMessageObj.error !== "") {
+                    // send error finish to peer
+                    messageObj.send({
+                        "finish": false
+                    });
+                    return;
+                }
+
+                // send webrtc to peer
+                messageObj.invoke({
+                    "timestamp": Date.now(),
+                    "webrtc": hostMessageObj.data["webrtc"],
+                    "finish": hostMessageObj.data["finish"]
+                });
+                await messageObj.wait();
+                if (messageObj.error !== "") {
+                    // send error finish to host
+                    hostMessageObj.send({
+                        "finish": false
+                    });
+                    return;
+                }
+
+                // close connection finish=true appears on peer side
+                if (messageObj.data["finish"] === true) {
+                    // send finish to host if it need answered
+                    if (hostMessageObj.isInvoke === true) {
+                        hostMessageObj.send({
+                            "finish": true
+                        });
+                    }
+                    isFinish = true;
+                }
+            }
+
+            return;
+        }
+        if (message["type"] === "join-rename") {
+            /*{
+                "joinId": string,
+                "name": string,
+                "peerCode" | "hostCode": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+            // get input and check
+            let joinId = message["joinId"];
+            let name = message["name"];
+            if (typeof joinId !== "string" || typeof name !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+            const peerCode = message["peerCode"];
+            const hostCode = message["hostCode"];
+
+            // check memory
+            let join = this.joins.get(joinId);
+
+            // check db (fallback)
+            if (join === undefined) {
+                const dbEntry = await this.db.select().table("joins").where("join_id", joinId)
+                if (dbEntry === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                // create fake join object
+                join = new Map();
+                join.set("peerCode", dbEntry["peer_code"]);
+                join.set("hostCode", dbEntry["host_code"]);
+                if (dbEntry["peer_user_id"] !== null) {
+                    join.set("peerUserId", dbEntry["peer_user_id"]);
+                }
+                if (dbEntry["host_user_id"] !== null) {
+                    join.set("hostUserId", dbEntry["host_user_id"]);
+                }
+                join.set("peerName", dbEntry["peer_name"]);
+                join.set("hostName", dbEntry["host_name"]);
+                join.set("isRemember", true);
+                join.set("peerClientIds", new Set());
+                join.set("hostClientIds", new Set());
+            }
+
+            // check permission
+            if (client.get("isLoggedIn") === false) {
+                if (peerCode === undefined && hostCode === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                if (peerCode !== undefined && join.get("peerCode") !== peerCode) {
+                    messageObj.send({"success": false});
+                    return;
+                } else if (hostCode !== undefined && join.get("hostCode") !== hostCode) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            } else {
+                if (client.get("userId") !== join.get("peerUserId") && client.get("userId") !== join.get("hostUserId")) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            }
+
+            // update name
+            if (peerCode !== undefined || client.get("userId") === join.get("peerUserId")) {
+                this.updateJoin(joinId, "name", name, clientId, undefined)
+            } else if (hostCode !== undefined || client.get("userId") === join.get("hostUserId")) {
+                this.updateJoin(joinId, "name", name, undefined, clientId);
+            }
+
+            messageObj.send({"success": true});
+            return;
+        }
+        if (message["type"] === "join-remember") {
+            /*{
+                "joinId": string,
+                "isRemember": boolean,
+                "hostCode": string
+            }*/
+            /*{
+                "success": boolean
+            }*/
+            let joinId = message["joinId"];
+            let isRemember = message["isRemember"];
+            if (typeof joinId !== "string" || typeof isRemember !== "boolean") {
+                messageObj.send({"success": false});
+                return;
+            }
+            const hostCode = message["hostCode"];
+
+            // check memory
+            const join = this.joins.get(joinId);
+            if (join === undefined) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // check db (fallback)
+            if (join === undefined) {
+                const dbEntry = await this.db.select().table("joins").where("join_id", joinId)
+                if (dbEntry === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                // create fake join object
+                join = new Map();
+                join.set("peerCode", dbEntry["peer_code"]);
+                join.set("hostCode", dbEntry["host_code"]);
+                if (dbEntry["peer_user_id"] !== null) {
+                    join.set("peerUserId", dbEntry["peer_user_id"]);
+                }
+                if (dbEntry["host_user_id"] !== null) {
+                    join.set("hostUserId", dbEntry["host_user_id"]);
+                }
+                join.set("peerName", dbEntry["peer_name"]);
+                join.set("hostName", dbEntry["host_name"]);
+                join.set("isRemember", true);
+                join.set("peerClientIds", new Set());
+                join.set("hostClientIds", new Set());
+            }
+
+            // check permission
+            if (client.get("isLoggedIn") === false) {
+                if (hostCode === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                if (hostCode !== join.get("hostCode")) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            } else {
+                if (client.get("userId") !== join.get("hostUserId")) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            }
+
+            // update remember
+            await this.updateJoin(joinId, "isRemember", isRemember, undefined, clientId);
+            messageObj.send({"success": true});
+            return;
+        }
         if (message["type"] === "join-rehost") {
-
-        }
-
-        if (message["type"] === "join-delete") {
+            /*{
+                "joinId": string
+            }*/
+            /*{
+                "success": boolean,
+                "hostCode": string,
+            }*/
+            // get input and check
+            let joinId = message["joinId"];
+            if (typeof joinId !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
             
+            // check memory
+            let join = this.joins.get(joinId);
+
+            // check db (fallback)
+            if (join === undefined) {
+                const dbEntry = await this.db.select().table("joins").where("join_id", joinId)
+                if (dbEntry === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                // create fake join object
+                join = new Map();
+                join.set("peerCode", dbEntry["peer_code"]);
+                join.set("hostCode", dbEntry["host_code"]);
+                if (dbEntry["peer_user_id"] !== null) {
+                    join.set("peerUserId", dbEntry["peer_user_id"]);
+                }
+                if (dbEntry["host_user_id"] !== null) {
+                    join.set("hostUserId", dbEntry["host_user_id"]);
+                }
+                join.set("peerName", dbEntry["peer_name"]);
+                join.set("hostName", dbEntry["host_name"]);
+                join.set("isRemember", true);
+                join.set("peerClientIds", new Set());
+                join.set("hostClientIds", new Set());
+            }
+
+            // check permission
+            if (client.get("isLoggedIn") === false || client.get("userId") !== join.get("hostUserId")) {
+                messageObj.send({"success": false});
+                return;
+            }
+
+            // update host code
+            const hostCode = this.updateJoin(joinId, "rehost", undefined, undefined, clientId);
+            messageObj.send({"success": true, "hostCode": hostCode});
+            return;
+        }
+        if (message["type"] === "join-delete") {
+            /*{
+                "joinId": string,
+                "peerCode" | "hostCode": string
+            }*/
+            /*{
+                "success": boolean,
+            }*/
+            // get input and check
+            let joinId = message["joinId"];
+            let name = message["name"];
+            if (typeof joinId !== "string" || typeof name !== "string") {
+                messageObj.send({"success": false});
+                return;
+            }
+            const peerCode = message["peerCode"];
+            const hostCode = message["hostCode"];
+
+            // check memory
+            let join = this.joins.get(joinId);
+
+            // check db (fallback)
+            if (join === undefined) {
+                const dbEntry = await this.db.select().table("joins").where("join_id", joinId)
+                if (dbEntry === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                // create fake join object
+                join = new Map();
+                join.set("peerCode", dbEntry["peer_code"]);
+                join.set("hostCode", dbEntry["host_code"]);
+                if (dbEntry["peer_user_id"] !== null) {
+                    join.set("peerUserId", dbEntry["peer_user_id"]);
+                }
+                if (dbEntry["host_user_id"] !== null) {
+                    join.set("hostUserId", dbEntry["host_user_id"]);
+                }
+                join.set("peerName", dbEntry["peer_name"]);
+                join.set("hostName", dbEntry["host_name"]);
+                join.set("isRemember", true);
+                join.set("peerClientIds", new Set());
+                join.set("hostClientIds", new Set());
+            }
+
+            // check permission
+            if (client.get("isLoggedIn") === false) {
+                if (peerCode === undefined && hostCode === undefined) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+                if (peerCode !== undefined && join.get("peerCode") !== peerCode) {
+                    messageObj.send({"success": false});
+                    return;
+                } else if (hostCode !== undefined && join.get("hostCode") !== hostCode) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            } else {
+                if (client.get("userId") !== join.get("peerUserId") && client.get("userId") !== join.get("hostUserId")) {
+                    messageObj.send({"success": false});
+                    return;
+                }
+            }
+
+            // delete join
+            this.removeJoin(joinId, clientId);
+            messageObj.send({"success": true});
+            return;
         }
         /*
         events:
         {
             "timestamp": number,
-            "type": string // "share" | "device"
+            "type": string // "devices" | "shares"
             "isChange": boolean,
             "isRemove": boolean,
-            "value": any
+            "value": {
+                "joinId": string,
+                "name": string,
+                "isRemember": boolean,
+                "isOnline": boolean
+            }
+        },
+        {
+            "timestamp": number,
+            "type": string // "join"
+            "joinId": string
         }*/
 
 
@@ -2833,16 +3733,15 @@ const Server = class {
             "userId": undefined,
             "sessionId": undefined,
             "pairCode": undefined,
-            "joinHostCodes": undefined,
-            "joinPeerCodes": undefined
+            "joinIds": undefined,
         }*/
         const client = new Map([
             ["com", com],
             ["ws", ws],
-            ["isLoggedIn", false]
+            ["isLoggedIn", false],
+            ["joinIds", new Set()]
         ]);
         this.clients.set(clientId, client);
-        this.events.set(clientId, new EventTarget());
 
         // listen messages and handle API
         com.onIncoming(async (messageObj) => {
@@ -2870,8 +3769,6 @@ const Server = class {
             } else {
                 this.removePairCode(clientId, false, true);
             }
-            this.events.get(clientId).dispatchEvent(new Event("disconnect")); 
-            this.events.delete(clientId);
             this.clients.delete(clientId);
             
             console.log("Client disconnected (" + clientId + ")");

@@ -24,6 +24,7 @@
                 <i>menu</i>
             </button>
             <div class="max"></div>
+            <!--
             <div class="max m l">
                 <div class="field large prefix round fill active wide-search">
                     <i class="front" id="input-search-finish">search</i>
@@ -50,10 +51,11 @@
                     </menu>
                 </div>
             </div>
+            -->
             <div class="max"></div>
-            <button class="circle large transparent s" id="btn-search">
+            <!--<button class="circle large transparent s" id="btn-search">
                 <i>search</i>
-            </button>
+            </button>-->
             <button class="circle large transparent" id="btn-settings">
                 <i>settings</i>
             </button>
@@ -96,12 +98,12 @@
                 <i>devices</i>
                 <div data-i18n="main.devices">Devices</div>
             </a>
-            <a id="btn-outgoings">
+            <a id="btn-shares">
                 <div>
                     <i>upload</i>
-                    <div class="badge min top left hide" id="badge-outgoings"></div>
+                    <div class="badge min top left hide" id="badge-shares"></div>
                 </div>
-                <div data-i18n="main.outgoings">Outgoing shares</div>
+                <div data-i18n="main.shares">Shares</div>
             </a>
             <div class="max"></div>
             <a class="primary" id="btn-download">
@@ -175,12 +177,12 @@
                         <i>devices</i>
                         <span data-i18n="main.devices">Devices</span>
                     </li>
-                    <li class="wave round" id="btn-outgoings-2">
+                    <li class="wave round" id="btn-shares-2">
                         <div>
                             <i>upload</i>
-                            <div class="badge min top left hide" id="badge-outgoings-2"></div>
+                            <div class="badge min top left hide" id="badge-shares-2"></div>
                         </div>
-                        <span data-i18n="main.outgoings">Outgoing shares</span>
+                        <span data-i18n="main.shares">Shares</span>
                     </li>
                 </ul>
             </div>
@@ -224,9 +226,9 @@
                     </button>
                 </div>
                 <div>
-                    <!-- Apperance settings -->
+                    <!-- Appearance settings -->
                     <div id="settings-appearance">
-                        <h5 class="small-margin" data-i18n="settings.appearance.title">Apperance settings</h5>
+                        <h5 class="small-margin" data-i18n="settings.appearance.title">Appearance settings</h5>
                         <div class="small-margin">
                             <fieldset>
                                 <legend data-i18n="settings.appearance.lang">Language</legend>
@@ -452,7 +454,7 @@
                         <div class="small-margin">
                             <p><span data-i18n="settings.about.version">Version:</span> <span id="about-version">1.0.0</span></p>
                             <p data-i18n="settings.about.description">Desktop Streamer is an open source project that allows you to access your desktop remotly through a simple web interface. It is built with Electron and Node.js.</p>
-                            <fieldset style="display: flex; flex-direction: column;">
+                            <fieldset class="about-box">
                                 <legend data-i18n="settings.about.missing-features">Missing features</legend>
                                 <span class="green-text hide" id="about-supported">&bull;<span data-i18n="settings.about.supported">Nothing missing, all features are supported.</span></span>
 
@@ -617,7 +619,7 @@
                 <span data-i18n="new.share.request-long">Share for long term.</span>
             </label>
             <div class="space"></div>
-            <div style="display: flex; justify-content: center;">
+            <div class="dialog-room-request-buttons">
                 <button class="tertiary round" id="btn-request-reject">
                     <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
                     <i>close</i>
@@ -644,9 +646,37 @@
             </div>
         </dialog>
 
+        <dialog class="" id="dialog-room-exit">
+            <nav>
+                <h5>Exit from room</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-exit-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <p>Do you want to close from this room?</p>
+                <div class="space"></div>
+                <div class="dialog-room-exit-buttons">
+                    <button class="tertiary round" id="btn-room-exit-cancel">
+                        <i>close</i>
+                        <span>Cancel</span>
+                    </button>
+                    <button class="tertiary round" id="btn-room-exit-exit">
+                        <i>close</i>
+                        <span>Exit</span>
+                    </button>
+                    <button class="primary round" id="btn-room-exit-terminate">
+                        <i>check</i>
+                        <span>Exit and close</span>
+                    </button>
+                </div>
+            </div>
+        </dialog>
+
         <dialog class="multicolumn-dialog" id="dialog-room-settings">
             <nav>
-                <h5>Room settings</h5>
+                <h5>Room settings - <span>Room's name</span></h5>
                 <div class="max"></div>
                 <button class="circle transparent" id="btn-room-settings-close">
                     <i>close</i>
@@ -662,17 +692,123 @@
                         <i>token</i>
                         <span class="l m">Resources</span>
                     </button>
-                    <button class="fill small-margin">
-                        <i>share</i>
-                        <span class="l m">Users</span>
-                    </button>
                 </div>
                 <div>
-                    <!-- Information settings -->
-                    <div id="account-information">
+                    <!-- Room Information -->
+                    <div id="room-settings-information">
+                        <h5 class="small-margin">Information</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend>Room properties</legend>
+                                <nav class="wrap">
+                                    <div class="field label border round information-box">
+                                        <input type="text" id="room-settings-name"/>
+                                        <label>Room name</label>
+                                    </div>
+                                </nav>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Room availability</legend>
+                                <nav class="wrap">
+                                    <label class="checkbox">
+                                        <input type="checkbox">
+                                        <span>Keep room for long time</span>
+                                    </label>
+                                </nav>
+                            </fieldset>
+                        </div>
+                    </div>
+                    <!-- Room Resources -->
+                    <div id="room-settings-resources" class="hide">
+                        <h5 class="small-margin">Resources</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend>Control</legend>
+                                <div class="field suffix border round room-settings-fieldset-box">
+                                    <nav class="room-settings-resource-list">
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Mouse + Keyboard control</span>
+                                        </label>
+                                    </nav>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Screens</legend>
+                                <div class="field suffix border round room-settings-fieldset-box">
+                                    <nav class="room-settings-resource-list">
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Screen 1</span>
+                                        </label>
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Screen 2</span>
+                                        </label>
+                                        <div class="room-settings-fieldset-add">
+                                            <button>
+                                                <i>add</i>
+                                                <span>Add screen manually</span>
+                                            </button>
+                                        </div>
+                                    </nav>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>System audio</legend>
+                                <div class="field suffix border round room-settings-fieldset-box">
+                                    <nav class="room-settings-resource-list">
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>System audio</span>
+                                        </label>
+                                    </nav>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Microphones</legend>
+                                <div class="field suffix border round room-settings-fieldset-box">
+                                    <nav class="room-settings-resource-list">
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Microphone 1</span>
+                                        </label>
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Microphone 2</span>
+                                        </label>
+                                    </nav>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>Webcams</legend>
+                                <div class="field suffix border round room-settings-fieldset-box">
+                                    <nav class="room-settings-resource-list">
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Webcam 1</span>
+                                        </label>
+                                        <label class="checkbox">
+                                            <input type="checkbox">
+                                            <span>Webcam 2</span>
+                                        </label>
+                                    </nav>
+                                </div>
+                            </fieldset>
+                            <div class="room-settings-fieldset-add">
+                                <button class="room-settings-fieldset-refresh">
+                                    <i>refresh</i>
+                                    <span>Refresh resources</span>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
+        </dialog>
+
+        <dialog class="" id="dialog-confim">
+
         </dialog>
 
         <!-- Surfaces -->
@@ -758,7 +894,7 @@
             <div class="hide" id="screen-login">
                 <h5>Log in to your account</h5>
                 <div class="space"></div>
-                <div class="center-align" style="display: flex; justify-content: center;" id="google-login"></div>
+                <div class="center-align" id="google-login"></div>
             </div>
 
             <!-- Services page -->
@@ -769,106 +905,26 @@
 
             <!-- Devices page -->
             <div class="hide" id="screen-devices">
-                <h3>My Clients</h3>
-                <p>Available clients where access from this device.</p>
-                <div class="grid">
-                    <div class="s12 m6 l3">
-                        <article class="padding" style="display: flex; justify-content: space-between;">
-                            <div class="" style="display: flex; align-self: center; overflow: hidden;">
-                                <i>folder_open</i>
-                                <span class="bold" style="padding-left: 10px; text-wrap: nowrap;">My pc name - Windows 10</span>
-                            </div>
-                            <div class="">
-                                <button class="circle transparent">
-                                    <i>more_vert</i>
-                                    <menu class="left no-wrap">
-                                        <li>
-                                            <i>share</i>
-                                            Share
-                                        </li>
-                                        <li>
-                                            <i>delete</i>
-                                            Delete
-                                        </li>    
-                                    </menu>
-                                </button>
-                            </div>
-                        </article>
-                    </div>
+                <div id="screen-devices-user">
+                    <h3>User Clients</h3>
+                    <div class="grid" id="devices-area"></div>
                 </div>
-                <div class="grid">
-                    <div class="s12 m6 l3">
-                        <article class="padding">
-                            <div class="max bold">
-                                My pc name - Windows 10
-                            </div>
-                            <a class="wave">
-                                <img class="responsive" src="/icons/wallpaper.png" style="aspect-ratio: 4/3;">
-                            </a>
-                            <div class="small-padding">
-                                <nav>
-                                    <button class="circle transparent green">
-                                        <i>play_arrow</i>
-                                    </button>
-                                    <div class="max">
-                                    </div>
-                                    <button class="circle transparent">
-                                        <i>more_vert</i>
-                                        <menu class="left no-wrap">
-                                            <li>
-                                                <i>share</i>
-                                                Share
-                                            </li>
-                                            <li>
-                                                <i>delete</i>
-                                                Delete
-                                            </li>
-                                            
-                                        </menu>
-                                    </button>
-                                </nav>
-                            </div>
-                        </article>
-                    </div>
-                    <div class="s12 m6 l3">
-                        <article class="padding">
-                            <div class="max bold">
-                                My pc name - Windows 10
-                            </div>
-                            <a class="wave">
-                                <img class="responsive" src="/icons/wallpaper.png" style="aspect-ratio: 4/3;">
-                            </a>
-                            <div class="small-padding">
-                                <nav>
-                                    <button class="circle transparent green">
-                                        <i>play_arrow</i>
-                                    </button>
-                                    <div class="max">
-                                    </div>
-                                    <button class="circle transparent">
-                                        <i>more_vert</i>
-                                        <menu class="left no-wrap">
-                                            <li>
-                                                <i>share</i>
-                                                Share
-                                            </li>
-                                            <li>
-                                                <i>delete</i>
-                                                Delete
-                                            </li>
-                                        </menu>
-                                    </button>
-                                </nav>
-                            </div>
-                        </article>
-                    </div>
+                <div id="screen-devices-guest">
+                    <h3>Guest Clients</h3>
+                    <div class="grid" id="devices-area-2"></div>
                 </div>
             </div>
 
-            <!-- Outgoings page -->
-            <div class="hide" id="screen-outgoings">
-                <h3>Outgoing Shares</h3>
-                <p>Outgoing shares from this device.</p>
+            <!-- Shares page -->
+            <div class="hide" id="screen-shares">
+                <div id="screen-shares-user">
+                    <h3>User Shares</h3>
+                    <div class="grid" id="shares-area"></div>
+                </div>
+                <div id="screen-shares-guest">
+                    <h3>Guest Shares</h3>
+                    <div class="grid" id="shares-area-2"></div>
+                </div>
             </div>
         </main>
 
@@ -877,29 +933,50 @@
                 <video id="video" playsinline></video>
             </div>
             <nav class="center-align tiny-space">
+                <button class="extra round circle error">
+                        <i>close</i>
+                    </button>
                 <nav class="toolbar">
                     <a>
                         <i>videocam_off</i>
-                        <div>Video</div>
+                        <menu class="top">
+                            <li>
+                                Resoulution
+                                <menu>
+                                    <li>360p</li>
+                                    <li>480p</li>
+                                    <li>720p</li>
+                                    <li>1080p</li>
+                                </menu>
+                            </li>
+                            <li>
+                                Framerate
+                                <menu>
+                                    <li>25</li>
+                                    <li>30</li>
+                                    <li>60</li>
+                                </menu>
+                            </li>
+                            <li>
+                                Enchanting
+                                <menu>
+                                    <li>No enchante</li>
+                                    <li>AI upscale</li>
+                                </menu>
+                            </li>
+                        </menu>
                     </a>
                     <a>
-                        <i>mic</i>
-                        <div>Mic</div>
-                    </a>
-                    <a class="active">
-                        <i>front_hand</i>
-                        <div>Attention</div>
+                        <i>volume_off</i>
                     </a>
                     <a>
-                        <i>more_vert</i>
-                        <div>More</div>
+                        <i>hand_gesture_off</i>
+                    </a>
+                    <a>
+                        <i>fullscreen</i>
                     </a>
                 </nav>
-                <button class="extra round circle error">
-                    <i>close</i>
-                </button>
             </nav>
-
         </main>
     </body>
 </html>
