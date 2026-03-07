@@ -884,6 +884,7 @@ const Server = class {
     ]);                             // key-subscription name, value-> Map of "userId" -> Set of "clientId"
     pairs = new Map();              // key-pairCode, value-> {hostClientId, peerClientId, timeoutId}
     joins = new Map();              // key-joinId, value-> {peerCode, hostCode, peerUserId, hostUserId, peerName, hostName, isRemember, peerClientIds, hostClientIds}
+    joinsUser = new Map();          // key-userId, value-> Set of joinIds           for indexing
 
     // utility things
     isClosing = false;
@@ -1614,6 +1615,8 @@ const Server = class {
         this.removePairCode(clientId, false, true);
     };
     removeClientSession(userId, sessionId, clientId) {
+        const client = this.clients.get(clientId);
+
         // remove from sessions map
         const clientsSet = this.sessions.get(sessionId);
         if (clientsSet !== undefined) {
@@ -1624,36 +1627,29 @@ const Server = class {
         }
 
         // remove joins
-        const joinIds = this.clients.get(clientId).get("joinIds");
+        const joinIds = client.get("joinIds");
         for (const joinId of joinIds) {
             const join = this.joins.get(joinId);
             if (join.get("peerClientIds").has(clientId) === true && join.get("peerUserId") === userId) {
-                this.removeClientJoin(joinId, clientId);
+                this.removeClientJoin(joinId, clientId, undefined, true);
                 client.get("joinIds").delete(joinId);
             } else if (join.get("hostClientIds").has(clientId) === true && join.get("hostUserId") === userId) {
-                this.removeClientJoin(joinId, undefined, clientId);
+                this.removeClientJoin(joinId, undefined, clientId, true);
                 client.get("joinIds").delete(joinId);
             }
         }
+        
+        // remove subscriptions
+        const it = this.subscriptions.entries();
+        for (const [type, subsMap] of it) {
+            this.removeClientSubscription(type, userId, clientId);
+        }
 
         // update client state
-        const client = this.clients.get(clientId);
         client.set("isLoggedIn", false);
         client.delete("userId");
         client.delete("sessionId");
         client.delete("sessionKey");
-
-        // remove subscriptions
-        const it = this.subscriptions.entries();
-        for (const [type, subsMap] of it) {
-            const userSubs = subsMap.get(userId);
-            if (userSubs !== undefined) {
-                userSubs.delete(clientId);
-                if (userSubs.size === 0) {
-                    subsMap.delete(userId);
-                }
-            }
-        }
 
         // remove pair code
         this.removePairCode(clientId, false, true);
@@ -1675,6 +1671,18 @@ const Server = class {
             userSubscriptions.delete(clientId);
             if (userSubscriptions.size === 0) {
                 subscriptions.delete(userId);
+            }
+        }
+        if (type === "devices") {
+            // remove all joins related to devices
+            const client = this.clients.get(clientId);
+            const joinsUser = this.joinsUser.get(client.get("userId"));
+            console.log(client.get("userId"));
+            console.log(joinsUser);
+            if (joinsUser !== undefined) {
+                for (const joinId of joinsUser) {
+                    this.removeClientJoin(joinId, undefined, undefined, false);
+                }
             }
         }
     };
@@ -2140,9 +2148,23 @@ const Server = class {
         ]);
         if (peerUserId !== undefined) {
             join.set("peerUserId", peerUserId);
+            // indexing
+            const joinsUser = this.joinsUser.get(peerUserId);
+            if (joinsUser === undefined) {
+                this.joinsUser.set(peerUserId, new Set([joinId]));
+            } else {
+                joinsUser.add(joinId);
+            }
         }
         if (hostUserId !== undefined) {
             join.set("hostUserId", hostUserId);
+            // indexing
+            const joinsUser = this.joinsUser.get(hostUserId);
+            if (joinsUser === undefined) {
+                this.joinsUser.set(hostUserId, new Set([joinId]));
+            } else {
+                joinsUser.add(joinId);
+            }
         }
         this.joins.set(joinId, join);
     };
@@ -2246,7 +2268,7 @@ const Server = class {
         // remove host
         if (hostClientId !== undefined) {
             // remove host
-            this.joins.get(hostClientId).get("joinIds").delete(joinId);
+            this.clients.get(hostClientId).get("joinIds").delete(joinId);
             join.get("hostClientIds").delete(hostClientId);
             // notifiy if 
             if (notifyOthers && join.get("hostClientIds").size === 0) {
@@ -2276,11 +2298,36 @@ const Server = class {
             }
         }
 
-        // cleanup form memory if no client
-        const clientCount = join.get("hostClientIds").size + join.get("peerClientIds").size;
-        if (clientCount === 0) {
-            this.joins.delete(joinId);
+        // cleanup form memory if no client and no peer user subscription
+        let isPeerSubscribed = false;
+        const peerUserId = join.get("peerUserId");
+        if (peerUserId !== undefined) {
+            const peerSubscription = this.subscriptions.get("devices").get(peerUserId);
+            console.log(peerSubscription)
+            if (peerSubscription !== undefined && peerSubscription.size > 0) {
+                isPeerSubscribed = true;
+            }
         }
+        console.log(isPeerSubscribed);
+        const clientCount = join.get("hostClientIds").size + join.get("peerClientIds").size;
+        if (clientCount === 0 && !isPeerSubscribed) {
+            this.joins.delete(joinId);
+            const peerUserJoins = this.joinsUser.get(peerUserId);
+            if (peerUserJoins !== undefined) {
+                peerUserJoins.delete(joinId);
+                if (peerUserJoins.size === 0) {
+                    this.joinsUser.delete(peerUserId);
+                }
+            }
+            const hostUserJoins = this.joinsUser.get(join.get("hostUserId"));
+            if (hostUserJoins !== undefined) {
+                hostUserJoins.delete(joinId);
+                if (hostUserJoins.size === 0) {
+                    this.joinsUser.delete(join.get("hostUserId"));
+                }
+            }
+        }
+        console.log(join);
     };
     
     async updateUserData(userId, type, data) {
@@ -2597,22 +2644,12 @@ const Server = class {
             } else if (key === "devices") {
                 const joinsSet = new Set();
                 // get all sessions
-                const sessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
-                for (const session of sessions) {
-                    // get all clientId in sessions
-                    const clientIds = this.sessions.get(session["session_id"]);
-                    if (clientIds === undefined) {
-                        continue;
-                    }
-                    for (const clientId of clientIds) {
-                        // get all joinIds
-                        const joinIds = this.clients.get(clientId).get("joinIds");
-                        for (const joinId of joinIds) {
-                            // get peer joins
-                            const join = this.joins.get(joinId);
-                            if (join !== undefined && join.get("peerUserId") === client.get("userId")) {
-                                joinsSet.add(joinId);
-                            } 
+                const joinsUser = this.joinsUser.get(client.get("userId"));
+                if (joinsUser !== undefined) {
+                    for (const joinId of joinsUser) {
+                        const join = this.joins.get(joinId);
+                        if (join.get("peerUserId") === client.get("userId")) {
+                            joinsSet.add(joinId);
                         }
                     }
                 }
@@ -2665,22 +2702,12 @@ const Server = class {
             } else if (key === "shares") {
                 const joinsSet = new Set();
                 // get all sessions
-                const sessions = await this.db.select().table("sessions").where("user_id", client.get("userId")).andWhere("expire", ">", Date.now());
-                for (const session of sessions) {
-                    // get all clientId in sessions
-                    const clientIds = this.sessions.get(session["session_id"]);
-                    if (clientIds === undefined) {
-                        continue;
-                    }
-                    for (const clientId of clientIds) {
-                        // get all joinIds
-                        const joinIds = this.clients.get(clientId).get("joinIds");
-                        for (const joinId of joinIds) {
-                            // get peer joins
-                            const join = this.joins.get(joinId);
-                            if (join !== undefined && join.get("hostUserId") === client.get("userId")) {
-                                joinsSet.add(joinId);
-                            } 
+                const joinsUser = this.joinsUser.get(client.get("userId"));
+                if (joinsUser !== undefined) {
+                    for (const joinId of joinsUser) {
+                        const join = this.joins.get(joinId);
+                        if (join.get("hostUserId") === client.get("userId")) {
+                            joinsSet.add(joinId);
                         }
                     }
                 }
@@ -3767,7 +3794,21 @@ const Server = class {
             if (client.get("isLoggedIn") === true) {
                 this.removeClientSession(client.get("userId"), client.get("sessionId"), clientId);
             } else {
+                // remove pair code
                 this.removePairCode(clientId, false, true);
+
+                // remove joins
+                const joinIds = client.get("joinIds");
+                for (const joinId of joinIds) {
+                    const join = this.joins.get(joinId);
+                    if (join.get("peerClientIds").has(clientId) === true && join.get("peerUserId") === client.get("userId")) {
+                        this.removeClientJoin(joinId, clientId, undefined, true);
+                        client.get("joinIds").delete(joinId);
+                    } else if (join.get("hostClientIds").has(clientId) === true && join.get("hostUserId") === client.get("userId")) {
+                        this.removeClientJoin(joinId, undefined, clientId, true);
+                        client.get("joinIds").delete(joinId);
+                    }
+                }
             }
             this.clients.delete(clientId);
             

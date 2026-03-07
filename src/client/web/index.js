@@ -153,6 +153,13 @@ const domReady = new Promise(function (resolve) {
 
 
 // Server connection
+// events:
+// online, offline, login, logout,
+// user-data
+// session-added, session-removed, session-changed,
+// pair-request, pair-accept, pair-reject, 
+// devices-added, devices-removed, devices-changed,
+// shares-added, shares-removed, shares-changed
 const Server = class extends EventTarget {
     address = "";
     ws = null;
@@ -163,6 +170,8 @@ const Server = class extends EventTarget {
         "sessionId": "",
         "sessionKey": ""
     };
+    joinsGuest = new Map();   // joinId -> {peerCode, hostCode, name, isOnline, isRemember}
+    joinsUser = new Map();    // joinId -> {isPeer, isHost, hostCode, name, isOnline, isRemember}
     constructor() {
         super();
     };
@@ -240,10 +249,9 @@ const Server = class extends EventTarget {
                 return;
             }
 
-            // trigger online
+            // allow online
             console.log("connected");
             this.isOnline = true;
-            this.dispatchEvent(new CustomEvent("online"));
 
             // try to login with saved session
             if (this.loginState["isLoggedIn"] === true) {
@@ -255,39 +263,129 @@ const Server = class extends EventTarget {
                     this.loginState["sessionId"] = "";
                     this.loginState["sessionKey"] = "";
                     await this.saveSession();
-                } else {
-                    this.dispatchEvent(new CustomEvent("login"));
                 }
             }
-            
-            // try share on host joins (guest)
+
+            // clear joins
+            this.joinsGuest.clear();
+            this.joinsUser.clear();
+
+            // try connect on peer/host joins (guest - local)
             const guestJoins = await IDB.RowEntries(IDB.TableGet(DB, GUEST_TABLE))
             for (let guestJoin of guestJoins) {
                 const joinId = guestJoin[0];
-                const hostCode = guestJoin[1]["hostCode"];
-                if (hostCode === undefined) {
+                let isChange = false;
+                const dataStore = {
+                    "peerCode": guestJoin[1]["peerCode"],
+                    "hostCode": guestJoin[1]["hostCode"]
+                };
+
+                if (dataStore["peerCode"] !== undefined) {
+                    const request = await this.subscribeJoin(joinId, dataStore["peerCode"], undefined);
+                    if (request["success"] === false) {
+                        isChange = true;
+                        delete dataStore["peerCode"];
+                    } else {
+                        this.setJoin(true, joinId, {
+                            "isPeer": true,
+                            "peerCode": dataStore["peerCode"],
+                            "name": request["name"],
+                            "isRemember": request["isRemember"],
+                            "isOnline": request["isOnline"]
+                        });
+                    }
+                }
+
+                if (dataStore["hostCode"] !== undefined) {
+                    const request = await this.subscribeJoin(joinId, undefined, dataStore["hostCode"]);
+                    if (request["success"] === false) {
+                        isChange = true;
+                        delete dataStore["hostCode"];
+                    } else {
+                        this.setJoin(true, joinId, {
+                            "isHost": true,
+                            "hostCode": dataStore["hostCode"],
+                            "name": request["name"],
+                            "isRemember": request["isRemember"],
+                            "isOnline": request["isOnline"]
+                        });
+                    }
+                }
+
+                // save or delete
+                if (dataStore["peerCode"] === undefined && dataStore["hostCode"] === undefined) {
+                    await IDB.RowDel(IDB.TableGet(DB, GUEST_TABLE),  [joinId]);
                     continue;
                 }
-                const connect = this.subscribeJoin(joinId, undefined, hostCode);
-                if (connect["success"] === false) {
-                    await IDB.RowDel(IDB.TableGet(DB, GUEST_TABLE), joinId);
+                if (isChange) {
+                    await IDB.RowUpdate(IDB.TableGet(DB, GUEST_TABLE), joinId, dataStore);
                 }
             }
 
-            // try share on host joins (users)
-            const hostJoins = await IDB.RowEntries(IDB.TableGet(DB, USER_TABLE))
-            for (let hostJoin of hostJoins) {
-                const joinId = hostJoin[0];
-                const hostCode = hostJoin[1]["hostCode"];
-                if (hostCode === undefined) {
-                    continue;
-                }
-                const connect = this.subscribeJoin(joinId, undefined, hostCode);
-                if (connect["success"] === false) {
-                    await IDB.RowDel(IDB.TableGet(DB, USER_TABLE), joinId);
+            // try share on host joins (users - local)
+            const userJoins = await IDB.RowEntries(IDB.TableGet(DB, USER_TABLE))
+            for (let userJoin of userJoins) {
+                const joinId = userJoin[0];
+                const dataStore = {
+                    "hostCode": userJoin[1]["hostCode"]
+                };
+
+                const request = await this.subscribeJoin(joinId, undefined, dataStore["hostCode"]);
+                if (request["success"] === false) {
+                    await IDB.RowDel(IDB.TableGet(DB, USER_TABLE), [joinId]);
+                } else {
+                    this.setJoin(true, joinId, {
+                        "isHost": true,
+                        "hostCode": dataStore["hostCode"],
+                        "name": request["name"],
+                        "isRemember": request["isRemember"],
+                        "isOnline": request["isOnline"]
+                    });
                 }
             }
 
+            // try connect peer joins (users - remote)
+            let peersUser = [];
+            try {
+                peersUser= await this.getUserData("devices");
+            } catch (error) {}
+            for (let peerJoin of peersUser) {
+                this.setJoin(false, peerJoin["joinId"], {
+                    "isPeer": true,
+                    "name": peerJoin["name"],
+                    "isRemember": peerJoin["isRemember"],
+                    "isOnline": peerJoin["isOnline"]
+                });
+            }
+
+            // try connect host joins (users - remote)
+            const hostsUser = [];
+            try {
+                hostsUser = await this.getUserData("shares");
+            } catch (error) {}
+            for (let hostJoin of hostsUser) {
+                this.setJoin(false, hostJoin["joinId"], {
+                    "isHost": true,
+                    "name": hostJoin["name"],
+                    "isRemember": hostJoin["isRemember"],
+                    "isOnline": hostJoin["isOnline"]
+                });
+            }
+
+            // trigger online
+            this.dispatchEvent(new CustomEvent("online"));
+
+            // trigger login
+            if (this.loginState["isLoggedIn"] === true) {
+                this.dispatchEvent(new CustomEvent("login"));
+            }
+
+            // notify outgoing shares
+            if (this.isShare()) {
+                this.dispatchEvent(new CustomEvent("share-start"));
+            } else {
+                this.dispatchEvent(new CustomEvent("share-end"));
+            }
         }, { "once": true });
 
         // handle disconnection
@@ -371,19 +469,24 @@ const Server = class extends EventTarget {
 
         // pair accept
         if (message["type"] === "pair-accept") {
-            // save pairing
-            let table;
-            if (this.loginState["isLoggedIn"] === false) {
-                table = IDB.TableGet(DB, GUEST_TABLE);
-            } else {
-                table = IDB.TableGet(DB, USER_TABLE);
+            // save pairing (only for guests)
+            const isGuest = this.loginState["isLoggedIn"] === false;
+            if (isGuest) {
+                const table = IDB.TableGet(DB, GUEST_TABLE);
+                let data = await IDB.RowGet(table, [[messageObj.data["joinId"], {}]]);
+                data = data[0];
+                data["peerCode"] =  messageObj.data["peerCode"];
+                await IDB.RowSet(table, [
+                    [message["joinId"], data]
+                ]);
             }
-            await IDB.RowSet(table, [
-                message["joinId"],
-                {
-                    "peerCode": message["peerCode"]
-                }
-            ]);
+
+            // update memory
+            this.setJoin(isGuest, message["joinId"], {
+                "peerCode": message["peerCode"],
+                "isRemember": message["isRemember"],
+                "peerName": message["peerName"]
+            });
 
             // send event
             this.dispatchEvent(new CustomEvent("pair-accept", {
@@ -405,24 +508,100 @@ const Server = class extends EventTarget {
 
         // devices
         if (message["type"] === "devices") {
-            this.dispatchEvent(new CustomEvent("devices", {
-                "detail": {
-                    "isChange": message["isChange"],
-                    "isRemove": message["isRemove"],
-                    "value": message["value"]
+            console.log(message);
+
+            const guestJoin = this.joinsGuest.get(message["value"]["joinId"]);
+            const isGuestExist = guestJoin !== undefined;
+
+            const userJoin = this.joinsUser.get(message["value"]["joinId"]);
+            const isUserExist = userJoin !== undefined;
+
+            const isExist = isGuestExist || isUserExist;
+
+            if (isExist) {
+                if (message["isRemove"] === true) {
+                    this.removeJoin(isGuestExist, message["value"]["joinId"]);
+                } else if (message["isChange"] === true) {
+                    console.log(message);
+                    this.setJoin(isGuestExist, message["value"]["joinId"], {
+                        "name": message["value"]["name"],
+                        "isRemember": message["value"]["isRemember"],
+                        "isOnline": message["value"]["isOnline"]
+                    });
+                } else {
+                    this.setJoin(isGuestExist, message["value"]["joinId"], {
+                        "name": message["value"]["name"],
+                        "isRemember": message["value"]["isRemember"],
+                        "isOnline": message["value"]["isOnline"]
+                    });
                 }
-            }));
+                
+            } else {
+                if (message["isRemove"] !== true && message["isChange"] !== true) {
+                    if (this.loginState["isLoggedIn"] === true) {
+                        this.setJoin(false, message["value"]["joinId"], {
+                            "isPeer": true,
+                            "name": message["value"]["name"],
+                            "isRemember": message["value"]["isRemember"],
+                            "isOnline": message["value"]["isOnline"]
+                        });
+                    }
+                }
+            }
+            return;
         }
 
         // shares
         if (message["type"] === "shares") {
-            this.dispatchEvent(new CustomEvent("shares", {
-                "detail": {
-                    "isChange": message["isChange"],
-                    "isRemove": message["isRemove"],
-                    "value": message["value"]
+
+            const guestJoin = this.joinsGuest.get(message["value"]["joinId"]);
+            const isGuestExist = guestJoin !== undefined;
+
+            const userJoin = this.joinsUser.get(message["value"]["joinId"]);
+            const isUserExist = userJoin !== undefined;
+
+            const isExist = isGuestExist || isUserExist;
+
+            if (isExist) {
+                if (message["isRemove"] === true) {
+                    this.removeJoin(isGuestExist, message["value"]["joinId"]);
+                } else if (message["isChange"] === true) {
+                    const data = {};
+                    if (message["value"]["name"] !== undefined) {
+                        data["name"] = message["value"]["name"];
+                    }
+                    if (message["value"]["isRemember"] !== undefined) {
+                        data["isRemember"] = message["value"]["isRemember"];
+                    }
+                    if (message["value"]["isOnline"] !== undefined) {
+                        data["isOnline"] = message["value"]["isOnline"];
+                    }
+                    if (message["value"]["hostCode"] !== undefined) {
+                        data["hostCode"] = undefined;
+                    }
+
+                    this.setJoin(isGuestExist, message["value"]["joinId"], data);
+                } else {
+                    this.setJoin(isGuestExist, message["value"]["joinId"], {
+                        "name": message["value"]["name"],
+                        "isRemember": message["value"]["isRemember"],
+                        "isOnline": message["value"]["isOnline"]
+                    });
                 }
-            }));
+                
+                
+            } else {
+                if (message["isRemove"] !== true && message["isChange"] !== true) {
+                    if (this.loginState["isLoggedIn"] === true) {
+                        this.setJoin(false, message["value"]["joinId"], {
+                            "name": message["value"]["name"],
+                            "isRemember": message["value"]["isRemember"],
+                            "isOnline": message["value"]["isOnline"]
+                        });
+                    }
+                }
+            }
+            return;
         }
     };
     async saveSession() {
@@ -550,11 +729,11 @@ const Server = class extends EventTarget {
         } else {
             table = IDB.TableGet(DB, USER_TABLE);
         }
+        let data = await IDB.RowGet(table, [[messageObj.data["joinId"], {}]]);
+        data = data[0];
+        data["hostCode"] =  messageObj.data["hostCode"];
         await IDB.RowSet(table, [
-            messageObj.data["joinId"],
-            {
-                "hostCode": messageObj.data["hostCode"]
-            }
+            [messageObj.data["joinId"], data]
         ]);
 
         // broadcast result
@@ -611,7 +790,66 @@ const Server = class extends EventTarget {
         await messageObj.wait();
         return messageObj.data["success"];
     };
-
+    setJoin(isGuest, joinId, option={}) {
+        console.log("setJoin", isGuest, joinId, option);
+        let isCreated = false;
+        let exist;
+        if (isGuest) {
+            exist = this.joinsGuest.get(joinId);
+            if (exist === undefined) {
+                exist = {};
+                this.joinsGuest.set(joinId, exist);
+                isCreated = true;
+            }
+        } else {
+            exist = this.joinsUser.get(joinId);
+            if (exist === undefined) {
+                exist = {};
+                this.joinsUser.set(joinId, exist);
+                isCreated = true;
+            }
+        }
+        for (let key in option) {
+            exist[key] = option[key];
+        }
+        let event = "join-changed";
+        if (isCreated) {
+            event = "join-added";
+        }
+        this.dispatchEvent(new CustomEvent(event, {
+            "detail": {
+                "isGuest": isGuest,
+                "joinId": joinId,
+                "value": option
+            }
+        }));
+    };
+    removeJoin(isGuest, joinId) {
+        if (isGuest) {
+            this.joinsGuest.delete(joinId);
+        } else {
+            this.joinsUser.delete(joinId);
+        }
+        this.dispatchEvent(new CustomEvent("join-removed", {
+            "detail": {
+                "isGuest": isGuest,
+                "joinId": joinId
+            }
+        }));
+    };
+    isShare() {
+        for (let joinData of this.joinsGuest) {
+            if (joinData[1]["hostCode"] !== undefined) {
+                return true;
+            }
+        }
+        for (let joinData of this.joinsUser) {
+            if (joinData[1]["hostCode"] !== undefined) {
+                return true;
+            }
+        }
+        return false;
+    };
 
 };
 const server = new Server();
@@ -2577,8 +2815,10 @@ const DeviceScreen = class {
         this.area = document.getElementById("devices-area");
         this.area2 = document.getElementById("devices-area-2");
 
+        this.boxes = new Map();
+
         this.DeviceBox = class extends EventTarget {
-            constructor(peerId="") {
+            constructor(joinId="", peerCode="") {
                 super();
                 const div = document.createElement("div");
                 const html = `
@@ -2619,7 +2859,8 @@ const DeviceScreen = class {
                 div.innerHTML = html;
                 this.el = div.firstChild;
 
-                this.peerId = peerId;
+                this.joinId = joinId;
+                this.peerCode = peerCode;
 
                 this.nameEl = this.el.querySelector(".device-name");
                 this.connectBtn = this.el.querySelector(".btn-device-connect");
@@ -2627,23 +2868,23 @@ const DeviceScreen = class {
                 this.deleteBtn = this.el.querySelector(".btn-device-delete");
 
                 this.connectBtn.addEventListener("click", () => {
-                    this.dispatchEvent(new CustomEvent("connect", {"detail": {"peerId": this.peerId}}));
+                    this.dispatchEvent(new CustomEvent("connect", {"detail": {"joinId": this.joinId, "peerCode": this.peerCode}}));
                 });
 
                 this.settingsBtn.addEventListener("click", () => {
-                    this.dispatchEvent(new CustomEvent("settings", {"detail": {"peerId": this.peerId}}));
+                    this.dispatchEvent(new CustomEvent("settings", {"detail": {"joinId": this.joinId, "peerCode": this.peerCode}}));
                 });
 
                 this.deleteBtn.addEventListener("click", () => {
-                    this.dispatchEvent(new CustomEvent("delete", {"detail": {"peerId": this.peerId}}));
+                    this.dispatchEvent(new CustomEvent("delete", {"detail": {"joinId": this.joinId}}));
                 });
 
             };
             setName(name="") {
                 this.nameEl.textContent = name;
             };
-            setActive(isActive=true) {
-                if (isActive) {
+            setOnline(isOnline=true) {
+                if (isOnline) {
                     this.connectBtn.classList.remove("secondary");
                     this.connectBtn.classList.add("primary");
                     this.connectBtn.disabled = false;
@@ -2659,7 +2900,66 @@ const DeviceScreen = class {
             };
         };
     };
-    open = async () => {
+    addDeviceBox(isGuest, joinId, peerCode, name, isOnline) {
+        const deviceBox = new this.DeviceBox(joinId, peerCode);
+        console.log("Add device box:", joinId, peerCode, name, isOnline);
+        deviceBox.setName(name);
+        deviceBox.setOnline(isOnline);
+        if (isGuest) {
+            this.area2.appendChild(deviceBox.el);
+        } else {
+            this.area.appendChild(deviceBox.el);
+        }
+        this.boxes.set(joinId, deviceBox);
+    };
+    changeDeviceBox(joinId, options) {
+        const deviceBox = this.boxes.get(joinId);
+        if (deviceBox === undefined) {
+            return;
+        }
+        if (options["name"] !== undefined) {
+            deviceBox.setName(options["name"]);
+        }
+        if (options["isOnline"] !== undefined) {
+            deviceBox.setOnline(options["isOnline"]);
+        }
+    };
+    removeDeviceBox(joinId) {
+        const deviceBox = this.boxes.get(joinId);
+        if (deviceBox === undefined) {
+            return;
+        }
+        deviceBox.el.remove();
+        this.boxes.delete(joinId);
+    };
+    onJoinAdd = (event) => {
+        const joinId = event.detail.joinId;
+        const value = event.detail.value;
+        if (value["isGuest"] && value["peerCode"] === undefined) {
+            return;
+        }
+        const peerCode = value["peerCode"];
+        const name = value["name"];
+        const isOnline = value["isOnline"];
+        this.addDeviceBox(value["isGuest"], joinId, peerCode, name, isOnline);
+    };
+    onJoinChanged = (event) => {
+        console.log(event)
+        const joinId = event.detail.joinId;
+        const value = event.detail.value;
+        if (value["isGuest"] && value["peerCode"] === undefined) {
+            return;
+        }
+        this.changeDeviceBox(joinId, {
+            "name": value["name"],
+            "isOnline": value["isOnline"]
+        });
+    };
+    onJoinDelete = (event) => {
+        const joinId = event.detail.joinId;
+        this.removeDeviceBox(joinId);
+    };
+    open = () => {
         this.deviceScreen.classList.remove("hide");
         this.deviceBtn.classList.add("active");
         this.deviceBtn2.classList.add("fill");
@@ -2668,23 +2968,25 @@ const DeviceScreen = class {
         this.area.innerHTML = "";
         this.area2.innerHTML = "";
 
+        console.log("assssssssssss");
+
         // get local devices
-        const devicesLocal = await IDB.RowEntries(IDB.TableGet(DB, GUEST_TABLE));
-        if (devicesLocal.length === 0) {
-            this.areaGuest.classList.add("hide");
+        if (server.joinsGuest.size === 0) {
+            if (server.loginState["isLoggedIn"] === true) {
+                this.areaGuest.classList.add("hide");
+            }
         } else {
             this.areaGuest.classList.remove("hide");
-            for (const deviceData of devicesLocal) {
+            for (const join of server.joinsGuest) {
                 // get data from server
-                const joinId = deviceData[0];
-                const peerCode = deviceData[1]["peerCode"];
+                const joinId = join[0];
+                const peerCode = join[1]["peerCode"];
                 if (peerCode === undefined) {
                     continue;
                 }
-                const answer = server.subscribeJoin(joinId, peerCode);
-                const deviceEl = new this.DeviceBox(joinId);
-                deviceEl.setName(answer["value"]["name"]);
-                this.area2.appendChild(deviceEl.el);
+                const name = join[1]["name"];
+                const isOnline = join[1]["isOnline"];
+                this.addDeviceBox(true, joinId, peerCode, name, isOnline);
             }
         }
 
@@ -2692,48 +2994,35 @@ const DeviceScreen = class {
         if (server.loginState["isLoggedIn"] === false) {
             this.areaUser.classList.add("hide");
         } else {
-            this.areaUser.classList.remove("hide");
-            const devices = await server.getUserData("devices");
-            console.log(devices);
+            for (const join of server.joinsUser) {
+                console.log("User join:", join);
+                const joinId = join[0];
+                const isPeer = join[1]["isPeer"];
+                console.log("User join:", isPeer);
+                if (isPeer !== true) {
+                    continue;
+                }
+                console.log("User join:", join);
+                const name = join[1]["name"];
+                const isOnline = join[1]["isOnline"];
+                this.addDeviceBox(false, joinId, undefined, name, isOnline);
+            }
         }
-        return;
-        const testEl = new this.DeviceBox();
-        this.area.appendChild(testEl.el);
-        const testEl2 = new this.DeviceBox();
-        testEl2.setName("My phone");
-        testEl2.setActive(false);
-        this.area.appendChild(testEl2.el);
 
-        const testEl3 = new this.DeviceBox();
-        this.area2.appendChild(testEl3.el);
-        
-        
-        
+        server.addEventListener("join-added", this.onJoinAdd);
+        server.addEventListener("join-changed", this.onJoinChanged);
+        server.addEventListener("join-removed", this.onJoinDelete);
     };
-    close = async () => {
+    close = () => {
         this.area.innerHTML = "";
         this.area2.innerHTML = "";
         this.deviceScreen.classList.add("hide");
         this.deviceBtn.classList.remove("active");
         this.deviceBtn2.classList.remove("fill");
 
-        // unsubscribe local devices
-        const devicesLocal = await IDB.RowEntries(IDB.TableGet(DB, GUEST_TABLE));
-        if (devicesLocal.length > 0) {
-            for (const deviceData of devicesLocal) {
-                const joinId = deviceData[0];
-                const peerCode = deviceData[1]["peerCode"];
-                if (peerCode === undefined) {
-                    continue;
-                }
-                server.unsubscribeJoin(joinId, peerCode);
-            }
-        }
-
-        // unsubscribe user
-        if (server.loginState["isLoggedIn"] === true) {
-            server.unsubscribeUserData("devices");
-        }
+        server.removeEventListener("join-added", this.onJoinAdd);
+        server.removeEventListener("join-changed", this.onJoinChanged);
+        server.removeEventListener("join-removed", this.onJoinDelete);
     };
 };
 
@@ -2743,13 +3032,13 @@ const SharesScreen = class {
         this.sharesScreen = document.getElementById("screen-shares");
         this.sharesBtn = document.getElementById("btn-shares");
         this.sharesBtn2 = document.getElementById("btn-shares-2");
-        this.areaClient = document.getElementById("screen-shares-user");
+        this.areaUser = document.getElementById("screen-shares-user");
         this.areaGuest = document.getElementById("screen-shares-guest");
         this.area = document.getElementById("shares-area");
         this.area2 = document.getElementById("shares-area-2");
 
         this.ShareBox = class extends EventTarget {
-            constructor() {
+            constructor(joinId="", hostCode="") {
                 super();
                 const div = document.createElement("div");
                 const html = `
@@ -2781,7 +3070,7 @@ const SharesScreen = class {
                                             <i>screen_record</i>
                                             <span>Local</span>
                                         </button>
-                                        <button class="chip small-elevate primary-text share-tag-active hide">
+                                        <button class="chip small-elevate primary-text share-tag-online hide">
                                             <i>done</i>
                                             <span>Online</span>
                                         </button>
@@ -2789,7 +3078,7 @@ const SharesScreen = class {
                                             <i>today</i>
                                             <span>Temporary</span>
                                         </button>
-                                        <button class="chip small-elevate secondary-text share-tag-inactive hide">
+                                        <button class="chip small-elevate secondary-text share-tag-offline hide">
                                             <i>close</i>
                                             <span>Offline</span>
                                         </button>
@@ -2802,13 +3091,16 @@ const SharesScreen = class {
                 div.innerHTML = html;
                 this.el = div.firstChild;
 
+                this.joinId = joinId;
+                this.hostCode = hostCode;
+
                 this.nameEl = this.el.querySelector(".share-name");
                 this.settingsBtn = this.el.querySelector(".btn-share-settings");
                 this.deleteBtn = this.el.querySelector(".btn-share-delete");
                 this.tagLocal = this.el.querySelector(".share-tag-local");
-                this.tagActive = this.el.querySelector(".share-tag-active");
+                this.tagOnline = this.el.querySelector(".share-tag-online");
                 this.tagTemporary = this.el.querySelector(".share-tag-temporary");
-                this.tagInactive = this.el.querySelector(".share-tag-inactive");
+                this.tagOffline = this.el.querySelector(".share-tag-offline");
             };
             setName(name="") {
                 this.nameEl.textContent = name;
@@ -2817,12 +3109,12 @@ const SharesScreen = class {
                 let interactEl = null;
                 if (tag === "local") {
                     interactEl = this.tagLocal;
-                } else if (tag === "active") {
-                    interactEl = this.tagActive;
+                } else if (tag === "online") {
+                    interactEl = this.tagOnline;
                 } else if (tag === "temporary") {
                     interactEl = this.tagTemporary;
-                } else if (tag === "inactive") {
-                    interactEl = this.tagInactive;
+                } else if (tag === "offline") {
+                    interactEl = this.tagOffline;
                 }
 
                 let callName = "";
@@ -2836,7 +3128,7 @@ const SharesScreen = class {
             };
         };
     };
-    open = () => {
+    open = async () => {
         this.area.innerHTML = "";
         this.area2.innerHTML = "";
 
@@ -2844,24 +3136,81 @@ const SharesScreen = class {
         this.sharesBtn.classList.add("active");
         this.sharesBtn2.classList.add("fill");
 
+        // get local shares
+        if (server.joinsGuest.size === 0) {
+            if (server.loginState["isLoggedIn"] === true) {
+                this.areaGuest.classList.add("hide");
+            }
+        } else {
+            this.areaGuest.classList.remove("hide");
+            for (const join of server.joinsGuest) {
+                // get data from server
+                const joinId = join[0];
+                const hostCode = join[1]["hostCode"];
+                if (hostCode === undefined) {
+                    continue;
+                }
+                const deviceEl = new this.ShareBox(joinId, hostCode);
+                const name = join[1]["name"];
+                const isOnline = join[1]["isOnline"];
+                const isRemember = join[1]["isRemember"];
+                deviceEl.setName(name);
+                deviceEl.setTag("local", true);
+                deviceEl.setTag("temporary", isRemember === false);
+                deviceEl.setTag("online", isOnline);
+                this.area2.appendChild(deviceEl.el);
+            }
+        }
+
+        // get user shares
+        if (server.loginState["isLoggedIn"] === false) {
+            this.areaUser.classList.add("hide");
+        } else {
+            this.areaUser.classList.remove("hide");
+            console.log(server.joinsUser);
+            for (const join of server.joinsUser) {
+                const joinId = join[0];
+                if (join[1]["isHost"] !== true) {
+                    continue;
+                }
+                const hostCode = join[1]["hostCode"];
+                const name = join[1]["name"];
+                const isOnline = join[1]["isOnline"];
+                const isRemember = join[1]["isRemember"];
+
+                const deviceEl = new this.ShareBox(joinId, hostCode);
+                deviceEl.setName(name);
+                deviceEl.setTag("online", isOnline);
+                deviceEl.setTag("offline", isOnline === false);
+                deviceEl.setTag("temporary", isRemember === false);
+                if (hostCode !== undefined) {
+                    deviceEl.setTag("local", true);
+                } else {
+                    deviceEl.setTag("local", false);
+                }
+                this.area.appendChild(deviceEl.el);
+            }
+        }
+
+        return;
         const testEl = new this.ShareBox();
         testEl.setName("My PC");
         testEl.setTag("local", true);
-        testEl.setTag("active", true);
+        testEl.setTag("online", true);
         testEl.setTag("temporary", true);
         this.area.appendChild(testEl.el);
         const testEl2 = new this.ShareBox();
         testEl2.setName("My phone");
-        testEl2.setTag("inactive", true);
+        testEl2.setTag("offline", true);
         this.area.appendChild(testEl2.el);
 
         const testEl3 = new this.ShareBox();
         testEl3.setName("Shared PC");
         testEl3.setTag("local", true);
-        testEl3.setTag("active", true);
+        testEl3.setTag("online", true);
         this.area2.appendChild(testEl3.el);
     };
-    close = () => {
+    close = async () => {
         this.area.innerHTML = "";
         this.area2.innerHTML = "";
 
@@ -3252,8 +3601,15 @@ const main = async function() {
     // badge update
     const badgeShares = document.getElementById("badge-shares");
     const badgeShares2 = document.getElementById("badge-shares-2");
-    badgeShares.classList.remove("hide");
-    badgeShares2.classList.remove("hide");
+    server.addEventListener("share-start", (event) => {
+        badgeShares.classList.remove("hide");
+        badgeShares2.classList.remove("hide");
+    });
+    server.addEventListener("share-end", (event) => {
+        badgeShares.classList.add("hide");
+        badgeShares2.classList.add("hide");
+    });
+    
 
     // Dialog and screen management
     const emptyDialog = new EmptyDialog();
