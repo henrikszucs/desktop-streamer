@@ -1,6 +1,0 @@
-node_modules
-tmp
-bin
-conf
-package-lock.json
-dev/electron
