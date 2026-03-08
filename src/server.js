@@ -82,7 +82,10 @@ const Configure = class {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "title": "Desktop Streamer Server Configuration",
             "type": "object",
-            "required": ["http", "ws"],
+            "anyOf": [
+                {"required": ["http"]},
+                {"required": ["ws"]}
+            ],
             "additionalProperties": false,
             "properties": {
                 "http": {
@@ -174,10 +177,10 @@ const Configure = class {
 
         this.validate = ajv.compile(schema);
         this.serverScriptPath = import.meta.dirname;
-        this.sourcePath = path.join("./bin");
-        this.sourceSkipPaths = ["bin"];
-        this.compilePath = path.join("./tmp");
-        this.compileSkipPaths = ["tmp"];
+        this.binsPath = path.join("./bin");
+        this.binsSkipPaths = ["bin"];
+        this.compilesPath = path.join("./tmp");
+        this.compilesSkipPaths = ["tmp"];
         this.electronPath = path.join(this.serverScriptPath, "client/electron");
         this.electronNativePath = path.join(this.serverScriptPath, "client/electron-native");
         this.webPath = path.join(this.serverScriptPath, "client/web");
@@ -206,7 +209,7 @@ const Configure = class {
         return confUser;
     };
     async compile(confSystem, confUser) {
-        const isCompiled = await this.isDirEmpty(this.compilePath, this.compileSkipPaths);
+        const isCompiled = await this.isDirEmpty(this.compilesPath, this.compilesSkipPaths);
         
         // exit if compile is not requested and already compiled
         if (isCompiled && confSystem["isCompile"] === false) {
@@ -214,9 +217,69 @@ const Configure = class {
         }
 
         //remove old compiled files
-        await this.deletePath(this.compilePath, true, this.compileSkipPaths);
+        await this.deletePath(this.compilesPath, true, this.compilesSkipPaths);
 
+        const jobs = [];
 
+        // read binaries (if exist in native libs)
+        const nativeLibs = await fs.readdir(this.electronNativePath);
+        const binList = await fs.readdir(this.binsPath);
+        for (const bin of binList) {
+            const binPath = path.join(this.binsPath, bin);
+            const binInfo = path.basename(binPath, path.extname(binPath)).split("-");
+            const binStat = await fs.stat(binPath);
+            if (binInfo.length < 2) {
+                continue;
+            }
+            const os = binInfo[0];
+            const arch = binInfo[1];
+            if (binStat.isDirectory() && binInfo.length === 2 && nativeLibs.includes(os + "-" + arch)) {
+                jobs.push({
+                    "path": binPath,
+                    "os": os,
+                    "arch": arch,
+                    "isZip": false
+                });
+            } else if (binStat.isFile() && path.extname(binPath) === ".zip" && binInfo.length === 2 && nativeLibs.includes(os + "-" + arch)) {
+                jobs.push({
+                    "path": binPath,
+                    "os": os,
+                    "arch": arch,
+                    "isZip": true
+                });
+            }
+        }
+        if (jobs.length === 0) {
+            console.error("No supported electron dist found in: " + sourcePath);
+            return false;
+        }
+
+        // generate conf script ()
+        const confClient = {};
+        if (confUser["http"]) {
+            confClient["http"] = {
+                "domain": confUser["http"]["domain"],
+                "port": confUser["http"]["port"],
+                "clients": []
+            };
+            if (confUser["http"]["remote"]) {
+                confClient["ws"] = {
+                    "host": confUser["http"]["remote"]["host"],
+                    "port": confUser["http"]["remote"]["port"]
+                };
+            }
+        }
+        if (confUser["ws"]) {
+            confClient["ws"] = {
+                "domain": confUser["ws"]["domain"],
+                "port": confUser["ws"]["port"]
+            };
+        }
+        for (const job of jobs) {
+            const name = job.os + "-" + job.arch + (job.isZip ? ".zip" : "");
+            confClient["http"]["clients"].push(name);
+        }
+        let confString = "\"use strict\";\nexport default" + JSON.stringify(confClient) + ";";
     };
 
     setAbsolute(src, origin) {
