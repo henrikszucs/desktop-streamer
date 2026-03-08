@@ -80,3 +80,21 @@ server configuration file path: server/conf/conf.json
 │   └── client/web - web UI files
 └── tmp - temporary folder for generated files
 ```
+
+## Binary naming
+The bin - binary folder need contains folders or .zip files with the following names:
+```md
+os can be: win32 | darwin | linux
+arch can be:  x64 | ia32 | arm64 | armv7l
+
+<os>-<arch>.zip
+
+or
+
+<os>-<arch>
+
+e.g.
+
+win32-x64.zip
+darwin-arm64/
+```

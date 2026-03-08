@@ -16,7 +16,8 @@ import Ajv from "ajv"
 import mime from "easy-mime";
 import Communicator from "easy-communicator";
 
-
+// avj load
+const ajv = new Ajv();
 
 // generate random ID
 const generateId = function(length=10, chars="1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
@@ -71,31 +72,7 @@ const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     return undefined;
 };
 
-// check if dir is empty
-const isDirEmpty = async function(dirPath) {
-    try {
-        const dirIter = await fs.opendir(dirPath);
-        const {value, done} = await dirIter[Symbol.asyncIterator]().next();
-        if (!done) {
-            await dirIter.close();
-            return true;
-        }
-        return false;
-    } catch (error) {
-        return undefined;
-    }
-};
 
-// this will join path if relative
-const setAbsolute = function(src, origin) {
-    if (path.isAbsolute(src) === false) {
-        src = path.join(origin, src);
-    }
-    return path.resolve(src);
-};
-
-const serverScriptPath = import.meta.dirname;
-const ajv = new Ajv();
 
 // class that help to process configuration and compile clients
 const Configure = class {
@@ -196,8 +173,14 @@ const Configure = class {
         };
 
         this.validate = ajv.compile(schema);
+        this.serverScriptPath = import.meta.dirname;
         this.sourcePath = path.join("./bin");
-        this.compilePath = path.join("./bin");
+        this.sourceSkipPaths = ["bin"];
+        this.compilePath = path.join("./tmp");
+        this.compileSkipPaths = ["tmp"];
+        this.electronPath = path.join(this.serverScriptPath, "client/electron");
+        this.electronNativePath = path.join(this.serverScriptPath, "client/electron-native");
+        this.webPath = path.join(this.serverScriptPath, "client/web");
 
     };
     async parseConfUser(confPath="") {
@@ -223,11 +206,48 @@ const Configure = class {
         return confUser;
     };
     async compile(confSystem, confUser) {
+        const isCompiled = await this.isDirEmpty(this.compilePath, this.compileSkipPaths);
+        
+        // exit if compile is not requested and already compiled
+        if (isCompiled && confSystem["isCompile"] === false) {
+            return false;
+        }
+
+        //remove old compiled files
+        await this.deletePath(this.compilePath, true, this.compileSkipPaths);
+
 
     };
 
+    setAbsolute(src, origin) {
+        if (path.isAbsolute(src) === false) {
+            src = path.join(origin, src);
+        }
+        return path.resolve(src);
+    };
 
-    async deletePath(targetPath, keepDir, keepPaths = []) {
+    async isDirEmpty(dirPath, skipPaths = []) {
+        let stat;
+        try {
+            stat = await fs.stat(dirPath);
+        } catch {
+            return undefined;
+        }
+
+        if (!stat.isDirectory()) {
+            return true;
+        }
+
+        const entries = await fs.readdir(dirPath);
+        for (const entry of entries) {
+            const relativePath = path.relative(dirPath, path.join(dirPath, entry)).split(path.sep).join("/");
+            if (!skipPaths.includes(relativePath)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    async deletePath(targetPath, keepDir, skipPaths = []) {
         const resolvedTarget = path.resolve(targetPath);
     
         let stat;
@@ -242,7 +262,7 @@ const Configure = class {
             return;
         }
     
-        await deleteContents(resolvedTarget, resolvedTarget, keepPaths);
+        await deleteContents(resolvedTarget, resolvedTarget, skipPaths);
     
         if (!keepDir) {
             const remaining = await fs.readdir(resolvedTarget);
@@ -251,7 +271,7 @@ const Configure = class {
             }
         }
     };
-    async deleteContents(rootPath, currentPath, keepPaths) {
+    async deleteContents(rootPath, currentPath, skipPaths) {
         const entries = await fs.readdir(currentPath);
     
         for (const entry of entries) {
@@ -259,18 +279,18 @@ const Configure = class {
             const relativePath = path.relative(rootPath, entryPath).split(path.sep).join("/");
     
             // Exact match — skip entirely
-            if (keepPaths.includes(relativePath)) {
+            if (skipPaths.includes(relativePath)) {
                 continue;
             }
     
             // Check if this entry is a parent of any keepPath
-            const isParentOfKept = keepPaths.some(
+            const isParentOfKept = skipPaths.some(
                 (kp) => kp.startsWith(relativePath + "/")
             );
     
             if (isParentOfKept) {
                 // Recurse into it but don't delete it
-                await deleteContents(rootPath, entryPath, keepPaths);
+                await deleteContents(rootPath, entryPath, skipPaths);
             } else {
                 await fs.rm(entryPath, { recursive: true });
             }

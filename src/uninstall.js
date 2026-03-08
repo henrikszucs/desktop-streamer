@@ -26,7 +26,7 @@ const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     return undefined;
 };
 
-async function deletePath(targetPath, keepDir, keepPaths = []) {
+async function deletePath(targetPath, keepDir, skipPaths = []) {
     const resolvedTarget = path.resolve(targetPath);
 
     let stat;
@@ -41,7 +41,7 @@ async function deletePath(targetPath, keepDir, keepPaths = []) {
         return;
     }
 
-    await deleteContents(resolvedTarget, resolvedTarget, keepPaths);
+    await deleteContents(resolvedTarget, resolvedTarget, skipPaths);
 
     if (!keepDir) {
         const remaining = await fs.readdir(resolvedTarget);
@@ -51,7 +51,7 @@ async function deletePath(targetPath, keepDir, keepPaths = []) {
     }
 }
 
-async function deleteContents(rootPath, currentPath, keepPaths) {
+async function deleteContents(rootPath, currentPath, skipPaths) {
     const entries = await fs.readdir(currentPath);
 
     for (const entry of entries) {
@@ -59,18 +59,18 @@ async function deleteContents(rootPath, currentPath, keepPaths) {
         const relativePath = path.relative(rootPath, entryPath).split(path.sep).join("/");
 
         // Exact match — skip entirely
-        if (keepPaths.includes(relativePath)) {
+        if (skipPaths.includes(relativePath)) {
             continue;
         }
 
         // Check if this entry is a parent of any keepPath
-        const isParentOfKept = keepPaths.some(
+        const isParentOfKept = skipPaths.some(
             (kp) => kp.startsWith(relativePath + "/")
         );
 
         if (isParentOfKept) {
             // Recurse into it but don't delete it
-            await deleteContents(rootPath, entryPath, keepPaths);
+            await deleteContents(rootPath, entryPath, skipPaths);
         } else {
             await fs.rm(entryPath, { recursive: true });
         }
@@ -79,19 +79,19 @@ async function deleteContents(rootPath, currentPath, keepPaths) {
 
 const main = async function() {
     const itemList = new Set([
-		{"path": "./package-lock.json", "keepDir": false, "keepPaths": []},
-        {"path": "./node_modules", "keepDir": false, "keepPaths": []},
-		{"path": "./tmp", "keepDir": true, "keepPaths": ["tmp"]}
+		{"path": "./package-lock.json", "keepDir": false, "skipPaths": []},
+        {"path": "./node_modules", "keepDir": false, "skipPaths": []},
+		{"path": "./tmp", "keepDir": true, "skipPaths": ["tmp"]}
     ]);
 
     const binFlag = getArg(process.argv, "--bin", false); 
     if (binFlag) {
-        itemList.add({"path": "./bin", "keepDir": true, "keepPaths": ["bin"]});
+        itemList.add({"path": "./bin", "keepDir": true, "skipPaths": ["bin"]});
     }
 
     for (const item of itemList) {
         try {
-            await deletePath(item.path, item.keepDir, item.keepPaths);
+            await deletePath(item.path, item.keepDir, item.skipPaths);
         } catch (error) {
             console.error(`Error removing ${item.path}:`, error);
         }
