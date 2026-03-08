@@ -25,6 +25,7 @@
     ],
     "license": "",
     "dependencies": {
+        "ajv": "^8.18.0",
         "easy-communicator": "^1.1.2",
         "easy-mime": "^0.0.1",
         "jszip": "^3.10.1",
