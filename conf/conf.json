@@ -5,10 +5,6 @@
         "key": "server.key",
         "cert": "server.crt",
         "redirect": 80,
-        "cache": {
-            "size": 268435456,
-            "sizeLimit": 10485760
-        },
         "remote": {
             "host": "localhost",
             "port": 444
@@ -24,5 +20,5 @@
                 "stun:stun.l.google.com:19302"
             ]
         }
-    } 
+    }
 }

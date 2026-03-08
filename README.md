@@ -50,17 +50,13 @@ server configuration file path: server/conf/conf.json
         "key": "server.key",            //private key path
         "cert": "server.crt",           //private cert path
         "redirect": 80,                 //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
-        "cache": {                      //(optional) cache HTTP server data into memory (delete to load directly from disk)
-            "size": 524288000,          //max cache size in bytes
-            "sizeLimit": 10485760       //max file size that can cached (ignore too big files)
-        },
         "remote": {                     //(optional) remote websocket server, it will ignore local ws creation
             "host": "localhost",
             "port": 444
         }
     },
     "ws": {
-        "domain": "localhost",          //access domain for non web clients (only if http domain not presented)
+        "domain": "localhost",          //access domain for non web clients
         "port": 444,
         "key": "server.key",            //private key path
         "cert": "server.crt",           //private cert path
