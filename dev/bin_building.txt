@@ -1,0 +1,3 @@
+delete: default_app.asar
+modify icon on windows
+
