@@ -198,6 +198,11 @@ const Configure = class {
             "webrtc": confUser["webrtc"],
             "clients": []
         };
+        if (confUser["ws"] !== undefined) {
+            confClient["ws"] = confUser["ws"];
+        } else {
+            confClient["ws"] = confUser["port"];
+        }
         for (const job of jobs) {
             const name = job.os + "-" + job.arch + (job.isZip ? ".zip" : "");
             confClient["clients"].push(name);
@@ -450,7 +455,7 @@ const Server = class {
 
         // Start WebSocket server
         process.stdout.write("Starting WS server...    ");
-        if (confUser["ws"] !== undefined) {
+        if (confUser["ws"] !== undefined && confUser["ws"] !== confUser["port"]) {
             // create separate server for ws
             this.wsHttpServerPort = confUser["ws"];
             this.wsHttpServer = https.createServer({
@@ -652,7 +657,6 @@ const Server = class {
                 return;
             }
             com.receive(data);
-
         });
         await com.sideSync();
         await com.timeSync();
@@ -669,7 +673,7 @@ const Server = class {
                 await this.handleAPI(messageObj, clientId);
             } catch (error) {
                 console.log("Error handling message:", error);
-                await client.get("ws").terminate();
+                await client["ws"].terminate();
             }
         });
 

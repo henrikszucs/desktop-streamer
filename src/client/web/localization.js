@@ -8,10 +8,10 @@ const getLang = () => {
 };
 
 const setLang = (lang) => {
-	if (localization.supportedLanguages.indexOf(lang) === -1) {
+	if (getSupportedLanguages().indexOf(lang) === -1) {
 		lang = (navigator.language || navigator.userLanguage).substring(0,2);
 	}
-	if (localization.supportedLanguages.indexOf(lang) === -1) {
+	if (getSupportedLanguages().indexOf(lang) === -1) {
         lang = defLang;
     }
     curLang = lang;
@@ -620,8 +620,6 @@ const getSupportedLanguages = () => {
     let lastObj = dict;
     let lastKey = getFirstKey(lastObj);
     while (lastKey !== null) {
-        console.log(lastObj);
-        console.log(lastKey);
         prevObj = lastObj;
         lastObj = lastObj[lastKey];
         lastKey = getFirstKey(lastObj);

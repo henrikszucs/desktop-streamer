@@ -3,10 +3,10 @@
     <head>
         <meta charset="UTF-8"/>
         <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-        <meta name="description" content="A simple web interface for controlling your desktop remotly."/>
+        <meta name="description" content="A simple web interface for controlling your desktop remotelly."/>
         <meta name="keywords" content="desktop, streamer, remote, access"/>
         <title>Desktop Streamer</title>
-        <link href="/icons/icon.svg" rel="icon"  type="image/svg+xml"/>
+        <link href="/media/favicon.svg" rel="icon"  type="image/svg+xml"/>
 
         <link href="/libs/beercss/beer.min.css" rel="stylesheet"/>
         <script src="/libs/beercss/beer.min.js" type="module" async></script>
@@ -17,6 +17,267 @@
 
     </head>
     <body>
-        
+        <!-- Menus -->
+        <nav class="top surface" id="nav-top">
+            <button class="circle large transparent s" id="btn-menu-top">
+                <i>menu</i>
+            </button>
+            <div class="max"></div>
+            <button class="circle large transparent" id="btn-settings">
+                <i>settings</i>
+            </button>
+        </nav>
+
+        <nav class="left m l scroll max nav-side-fix" id="nav-left">
+            <header>
+                <button class="circle extra transparent" id="btn-menu-left">
+                    <i>menu</i>
+                </button>
+                <button class="primary-container square round extend" id="btn-new">
+                    <i>add</i>
+                    <span data-i18n="main.new">New</span>
+                </button>
+            </header>
+            <div class="max"></div>
+            <a class="primary" id="btn-downloads">
+                <i>download</i>
+                <div data-i18n="main.downloads">Download client</div>
+            </a>
+        </nav>
+
+        <!-- Dialogs -->
+        <div class="overlay blur active" id="dialog-overlay"></div>
+        <dialog class="active" id="dialog-loading">
+            <h5 data-i18n="loading.title">Loading...</h5>
+            <br>
+            <div data-i18n="loading.subtitle">The application is loading please wait...</div>
+            <br>
+            <progress></progress>
+        </dialog>
+
+        <dialog class="left" id="dialog-menu">
+            <div>
+                <header>
+                    <nav>
+                        <h6 class="max" data-i18n="main.menu">Menu</h6>
+                        <button class="transparent circle large" id="btn-menu-close">
+                            <i>close</i>
+                        </button>
+                    </nav>
+                </header>
+                <div class="space"></div>
+                <button class="primary-container small-round large responsive" id="btn-new-2">
+                    <i>add</i>
+                    <span data-i18n="main.new">New</span>
+                </button>
+            </div>
+            <div>
+                <button class="primary" id="btn-downloads-2">
+                    <i>download</i>
+                    <div data-i18n="main.downloads">Download client</div>
+                </button>
+            </div>
+        </dialog>
+
+        <dialog class="multicolumn-dialog" id="dialog-settings">
+            <nav>
+                <h5 data-i18n="settings.title">Settings</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-settings-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-round">
+                <div>
+
+                </div>
+                <div>
+                    
+                </div>
+            </div>
+        </dialog>
+
+        <dialog class="" id="dialog-room-create">
+            <nav>
+                <h5 data-i18n="new.share.dialog-title">Waiting for join...</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-create-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <p data-i18n="new.share.dialog-info">Share this join code with someone you want to invite:</p>
+                <div class="space"></div>
+                <div class="room-create-fields">
+                    <div class="field label border round">
+                        <input type="text" id="input-room-create-code" readonly/>
+                        <label data-i18n="new.share.join-code">Join code</label>
+                    </div>
+                    <button class="primary circle transparent suffix" id="btn-room-create-copy">
+                        <i>content_copy</i>
+                    </button>
+                </div>
+                <div class="space"></div>
+                <p data-i18n="new.share.dialog-info-2">A popup will appear when someone wants to join your device.</p>
+            </div>
+        </dialog>
+
+        <dialog class="" id="dialog-room-request">
+            <h5 data-i18n="new.share.request-title">Join request</h5>
+            <div class="space"></div>
+            <p id="dialog-room-request-info"></p>
+            <div class="space"></div>
+            <label class="checkbox" id="btn-request-remember-label">
+                <input type="checkbox" id="btn-request-remember">
+                <span data-i18n="new.share.request-long">Share for long term.</span>
+            </label>
+            <div class="space"></div>
+            <div class="dialog-room-request-buttons">
+                <button class="tertiary round" id="btn-request-reject">
+                    <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
+                    <i>close</i>
+                    <span data-i18n="new.share.reject">Decline</span>
+                </button>
+                <button class="primary round" id="btn-request-accept">
+                    <i>check</i>
+                    <span data-i18n="new.share.accept">Accept</span>
+                </button>
+            </div>
+        </dialog>
+
+        <dialog class="" id="dialog-room-joining">
+            <nav>
+                <h5 data-i18n="new.join.dialog-title">Joining...</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-joining-close">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <p id="dialog-room-joining-info">Establishing connection to host device as <span class="bold">Guest</span> from <span class="bold">192.168.0.1</span> ip address. Please wait...</p>
+                <progress min="0" max="10000" id="room-joining-progress"></progress>
+            </div>
+        </dialog>
+
+        <!-- Surfaces -->
+        <main class="surface-container round padding bottom-margin center-align" id="screen-main">
+            <!-- New screen -->
+            <div class="" id="screen-new">
+                <!-- Start screen -->
+                <h5 data-i18n="new.join.title">Join room</h5>
+                <nav class="no-space center-align">
+                    <div class="field label border left-round" >
+                        <input type="text" id="input-new-code"/>
+                        <label data-i18n="new.join.join-code">Join code</label>
+                        <output class="invalid error-text hide">Error text</output>
+                    </div>
+                    <button class="large right-round" id="btn-new-join">
+                        <i>cast</i>
+                        <span data-i18n="new.join.btn">Join</span>
+                    </button>
+                </nav>
+                <div class="large-space"></div>
+                <div class="divider margin-top margin-bottom"></div>
+                <h5 data-i18n="new.share.title">Share device</h5>
+                <div class="space"></div>
+                <nav class="center-align">
+                    <button class="large" id="btn-new-create">
+                        <i>add_circle</i>
+                        <span data-i18n="new.share.btn">Share this device</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Downloads page -->
+            <div class="hide center-align" id="screen-downloads">
+                <h3>Download Desktop Streamer</h3>
+                <h6 class="small">Get the Desktop Streamer client program for your computer to full remote control.</h6>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="small-round extra" id="download-win32">
+                        <img class="responsive" src="/icons/win32.svg">
+                        Windows
+                    </button>
+                    <button class="small-round extra border" id="download-darwin">
+                        <img class="responsive" src="/icons/darwin.svg">
+                        macOS
+                    </button>
+                    <button class="small-round extra border" id="download-linux">
+                        <img class="responsive" src="/icons/linux.svg">
+                        Linux
+                    </button>
+                </div>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="small-round extra" id="download-x64">
+                        x64
+                    </button>
+                    <button class="small-round extra border" id="download-x86">
+                        x86
+                    </button>
+                    <button class="small-round extra border" id="download-arm64">
+                        arm64
+                    </button>
+                    <button class="small-round extra border" id="download-arm32">
+                        arm32
+                    </button>
+                </div>
+                <div class="row center-align wrap gap padding-top">
+                    <button class="small-round extra" id="download-finish">
+                        <i>download</i>
+                        Download
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <main class="room-layout hide" id="screen-room">
+            <div>
+                <video id="video" playsinline></video>
+            </div>
+            <nav class="center-align tiny-space">
+                <button class="extra round circle error">
+                        <i>close</i>
+                    </button>
+                <nav class="toolbar">
+                    <a>
+                        <i>videocam_off</i>
+                        <menu class="top">
+                            <li>
+                                Resoulution
+                                <menu>
+                                    <li>360p</li>
+                                    <li>480p</li>
+                                    <li>720p</li>
+                                    <li>1080p</li>
+                                </menu>
+                            </li>
+                            <li>
+                                Framerate
+                                <menu>
+                                    <li>25</li>
+                                    <li>30</li>
+                                    <li>60</li>
+                                </menu>
+                            </li>
+                            <li>
+                                Enchanting
+                                <menu>
+                                    <li>No enchante</li>
+                                    <li>AI upscale</li>
+                                </menu>
+                            </li>
+                        </menu>
+                    </a>
+                    <a>
+                        <i>volume_off</i>
+                    </a>
+                    <a>
+                        <i>hand_gesture_off</i>
+                    </a>
+                    <a>
+                        <i>fullscreen</i>
+                    </a>
+                </nav>
+            </nav>
+        </main>
     </body>
 </html>
