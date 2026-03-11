@@ -19,15 +19,6 @@ import Communicator from "easy-communicator";
 // avj load
 const ajv = new Ajv();
 
-// generate random ID
-const generateId = function(length=10, chars="1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
-    let id = "";
-    for (let i = 0; i < length; i++) {
-        id += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return id;
-};
-
 // binary search in array [isFound, index]
 const binarySearch = function(arr, x, getVal=function(el) {return el}) {   
     let start = 0;
@@ -76,99 +67,53 @@ const getArg = function(args, argName, isKeyValue=false, isInline=false) {
 
 // class that help to process configuration and compile clients
 const Configure = class {
-
     constructor() {
         const schema = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "title": "Desktop Streamer Server Configuration",
             "type": "object",
-            "anyOf": [
-                {"required": ["http"]},
-                {"required": ["ws"]}
-            ],
+            "required": ["domain", "port", "key", "cert", "webrtc"],
             "additionalProperties": false,
             "properties": {
-                "http": {
-                    "type": "object",
-                    "required": ["domain", "port", "key", "cert"],
-                    "additionalProperties": false,
-                    "properties": {
-                        "domain": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "port": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 65535
-                        },
-                        "key": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "cert": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "redirect": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 65535
-                        },
-                        "remote": {
-                            "type": "object",
-                            "required": ["host", "port"],
-                            "additionalProperties": false,
-                            "properties": {
-                                "host": {
-                                    "type": "string",
-                                    "minLength": 1
-                                },
-                                "port": {
-                                    "type": "integer",
-                                    "minimum": 1,
-                                    "maximum": 65535
-                                }
-                            }
-                        }
-                    }
+                "domain": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                },
+                "redirect": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                },
+                "key": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cert": {
+                    "type": "string",
+                    "minLength": 1
                 },
                 "ws": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                },
+                "webrtc": {
                     "type": "object",
-                    "required": ["domain", "port", "key", "cert", "webrtc"],
+                    "required": ["iceServers"],
                     "additionalProperties": false,
                     "properties": {
-                        "domain": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "port": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 65535
-                        },
-                        "key": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "cert": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "webrtc": {
-                            "type": "object",
-                            "required": ["iceServers"],
-                            "additionalProperties": false,
-                            "properties": {
-                                "iceServers": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string",
-                                        "minLength": 1
-                                    },
-                                    "minItems": 1
-                                }
-                            }
+                        "iceServers": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "minItems": 1
                         }
                     }
                 }
@@ -195,22 +140,15 @@ const Configure = class {
         }
 
         // set key and cert paths
-        confUser["http"]["key"] = setAbsolute(confUser.http.key, path.dirname(confPath));
-        confUser["http"]["cert"] = setAbsolute(confUser.http.cert, path.dirname(confPath));
-        confUser["ws"]["key"] = setAbsolute(confUser.ws.key, path.dirname(confPath));
-        confUser["ws"]["cert"] = setAbsolute(confUser.ws.cert, path.dirname(confPath));
-
-        // load key and cert to memory
-        confUser["http"]["keyData"] = await fs.readFile(confUser.http.key, {"encoding": "utf8"});
-        confUser["http"]["certData"] = await fs.readFile(confUser.http.cert, {"encoding": "utf8"});
-        confUser["ws"]["keyData"] = await fs.readFile(confUser.ws.key, {"encoding": "utf8"});
-        confUser["ws"]["certData"] = await fs.readFile(confUser.ws.cert, {"encoding": "utf8"});
+        confUser["key"] = this.setAbsolute(confUser["key"], path.dirname(confPath));
+        confUser["cert"] = this.setAbsolute(confUser["cert"], path.dirname(confPath));
+        confUser["key"] = await fs.readFile(confUser["key"], {"encoding": "utf8"});
+        confUser["cert"] = await fs.readFile(confUser["cert"], {"encoding": "utf8"});
 
         return confUser;
     };
     async compile(confSystem, confUser) {
-        const isCompiled = await this.isDirEmpty(this.compilesPath, this.compilesSkipPaths);
-        
+        const isCompiled = await this.isDirEmpty(this.compilesPath, this.compilesSkipPaths) === false;
         // exit if compile is not requested and already compiled
         if (isCompiled && confSystem["isCompile"] === false) {
             return false;
@@ -250,36 +188,71 @@ const Configure = class {
             }
         }
         if (jobs.length === 0) {
-            console.error("No supported electron dist found in: " + sourcePath);
-            return false;
+            console.warn("No supported electron dist found in: " + sourcePath);
         }
 
         // generate conf script ()
-        const confClient = {};
-        if (confUser["http"]) {
-            confClient["http"] = {
-                "domain": confUser["http"]["domain"],
-                "port": confUser["http"]["port"],
-                "clients": []
-            };
-            if (confUser["http"]["remote"]) {
-                confClient["ws"] = {
-                    "host": confUser["http"]["remote"]["host"],
-                    "port": confUser["http"]["remote"]["port"]
-                };
-            }
-        }
-        if (confUser["ws"]) {
-            confClient["ws"] = {
-                "domain": confUser["ws"]["domain"],
-                "port": confUser["ws"]["port"]
-            };
-        }
+        const confClient = {
+            "domain": confUser["domain"],
+            "port": confUser["port"],
+            "webrtc": confUser["webrtc"],
+            "clients": []
+        };
         for (const job of jobs) {
             const name = job.os + "-" + job.arch + (job.isZip ? ".zip" : "");
-            confClient["http"]["clients"].push(name);
+            confClient["clients"].push(name);
         }
-        let confString = "\"use strict\";\nexport default" + JSON.stringify(confClient) + ";";
+        let confString = JSON.stringify(confClient);
+
+        // write generated conf into web path
+        await fs.writeFile(path.join(this.webPath, "conf.json"), confString, "utf8");
+
+        // create tmp directory
+        await fs.mkdir(this.compilesPath, { "recursive": true });
+
+        // pack electron binaries combined with web + electron app + native libs
+        for (const job of jobs) {
+            process.stdout.write("\n    Packing client for " + job.os + "-" + job.arch + "...    ");
+            const zip = new JSZip();
+            const zipName = job.os + "-" + job.arch + ".zip";
+
+            // darwin uses Electron.app/Contents/Resources/app, others use resources/app
+            const resourceAppPath = job.os === "darwin"
+                ? "Electron.app/Contents/Resources/app"
+                : "resources/app";
+
+            // add electron binary dist
+            if (job.isZip) {
+                const zipData = await fs.readFile(job.path);
+                const srcZip = await JSZip.loadAsync(zipData);
+                for (const [relativePath, file] of Object.entries(srcZip.files)) {
+                    if (!file.dir) {
+                        zip.file(relativePath, await file.async("uint8array"));
+                    }
+                }
+            } else {
+                await this.addDirToZip(zip, job.path, "");
+            }
+
+            // add electron app files (main.js, package.json, libs/)
+            await this.addDirToZip(zip, this.electronPath, resourceAppPath);
+
+            // add web client files into resources/app/web
+            await this.addDirToZip(zip, this.webPath, resourceAppPath);
+
+            // add native libs for this platform
+            const nativePath = path.join(this.electronNativePath, job.os + "-" + job.arch);
+            await this.addDirToZip(zip, nativePath, resourceAppPath);
+
+            // write final zip to downloads
+            const zipBuffer = await zip.generateAsync({ "type": "nodebuffer" });
+            await fs.writeFile(path.join(this.compilesPath, zipName), zipBuffer);
+
+            process.stdout.write("done");
+        }
+
+        process.stdout.write("\n");
+        return true;
     };
 
     setAbsolute(src, origin) {
@@ -325,7 +298,7 @@ const Configure = class {
             return;
         }
     
-        await deleteContents(resolvedTarget, resolvedTarget, skipPaths);
+        await this.deleteContents(resolvedTarget, resolvedTarget, skipPaths);
     
         if (!keepDir) {
             const remaining = await fs.readdir(resolvedTarget);
@@ -353,9 +326,37 @@ const Configure = class {
     
             if (isParentOfKept) {
                 // Recurse into it but don't delete it
-                await deleteContents(rootPath, entryPath, skipPaths);
+                await this.deleteContents(rootPath, entryPath, skipPaths);
             } else {
-                await fs.rm(entryPath, { recursive: true });
+                await fs.rm(entryPath, { "recursive": true });
+            }
+        }
+    };
+    async copyDir(srcDir, destDir) {
+        const entries = await fs.readdir(srcDir);
+        for (const entry of entries) {
+            const srcPath = path.join(srcDir, entry);
+            const destPath = path.join(destDir, entry);
+            const stat = await fs.stat(srcPath);
+            if (stat.isDirectory()) {
+                await fs.mkdir(destPath, { "recursive": true });
+                await this.copyDir(srcPath, destPath);
+            } else {
+                await fs.copyFile(srcPath, destPath);
+            }
+        }
+    };
+    async addDirToZip(zip, dirPath, zipPrefix) {
+        const entries = await fs.readdir(dirPath);
+        for (const entry of entries) {
+            const fullPath = path.join(dirPath, entry);
+            const zipPath = zipPrefix ? zipPrefix + "/" + entry : entry;
+            const stat = await fs.stat(fullPath);
+            if (stat.isDirectory()) {
+                await this.addDirToZip(zip, fullPath, zipPath);
+            } else {
+                const data = await fs.readFile(fullPath);
+                zip.file(zipPath, data);
             }
         }
     };
@@ -363,6 +364,21 @@ const Configure = class {
 
 // websocket and http server
 const Server = class {
+    httpBasePath = "./src/client/web";
+    httpDownloadPath = "./tmp/";
+    httpServer = null;
+    httpServerPort = null;
+    httpRedirect = null;
+    httpRedirectPort = null;
+    
+    wsServer = null;
+    wsHttpServer = null;
+    wsHttpServerPort = null;
+
+    clients = new Map();    // key-clientId, value-> {ws}
+    pairs = new Map();      // key-pairCode, value-> {hostClientId, peerClientId, timeoutId}
+
+    isClosing = false;
     constructor() {
         
     };
@@ -404,19 +420,313 @@ const Server = class {
             return undefined;
         }
     };
+    generateId(length=10, chars="1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
+        let id = "";
+        for (let i = 0; i < length; i++) {
+            id += chars[Math.floor(Math.random() * chars.length)];
+        }
+        return id;
+    };
 
     async start(confUser) {
+        // Start HTTP server
+        process.stdout.write("Starting HTTP server...    ");
+        this.httpServerPort = confUser["port"];
+        this.httpServer = https.createServer({
+            "key": confUser["key"],
+            "cert": confUser["cert"]
+        }, this.httpRequestHandle.bind(this));
+        this.httpServer.listen(this.httpServerPort);
+        process.stdout.write("\n    Available: https://" + confUser["domain"] + (this.httpServerPort !== 443 ? ":" + this.httpServerPort : "") + "\n");
         
+        // create redirect server
+        if (confUser["redirect"] !== undefined) {
+            this.httpRedirectPort = confUser["redirect"];
+            this.httpRedirect = http.createServer(this.httpRedirectHandle.bind(this));
+            this.httpRedirect.listen(this.httpRedirectPort);
+            process.stdout.write("    Redirect: http://" + confUser["domain"] + (this.httpRedirectPort !== 80 ? ":" + this.httpRedirectPort : "") + "\n");
+        }
+        process.stdout.write("done\n");
+
+        // Start WebSocket server
+        process.stdout.write("Starting WS server...    ");
+        if (confUser["ws"] !== undefined) {
+            // create separate server for ws
+            this.wsHttpServerPort = confUser["ws"];
+            this.wsHttpServer = https.createServer({
+                "key": confUser["key"],
+                "cert": confUser["cert"]
+            }, this.wsHttpHandle.bind(this));
+            this.wsHttpServer.listen(this.wsHttpServerPort);
+            this.wsServer = new WebSocketServer({
+                "server": this.wsHttpServer
+            });
+        } else {
+            // use existing http server for ws
+            this.wsServer = new WebSocketServer({
+                "server": this.httpServer
+            });
+        }
+        this.wsServer.addListener("connection", (ws) => {
+            if (this.isClosing) {
+                ws.terminate();
+            } else {
+                this.clientConnect(ws);
+            }
+        });
+        process.stdout.write("done\n");
     };
     async stop() {
+        if (this.isClosing) {
+            return;
+        }
+        this.isClosing = true;
+        
+        // close WS server and its connections
+        process.stdout.write("\n    Closing WS server....    ");
+        await new Promise((resolve) => {
+            let round = 0;
+            const close = () => {
+                if (round === 0) {
+                    // First sweep, soft close
+                    this.wsServer.clients.forEach(function (socket) {
+                        socket.close();
+                    });
+                } else if (round < 20) {
+                    // Check clients
+                    let isAllClosed = true;
+                    for (const socket of this.wsServer.clients) {
+                        if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                            isAllClosed = false;
+                            break;
+                        }
+                    }
+                    if (isAllClosed === true) {
+                        resolve(true);
+                        return;
+                    }
+                } else {
+                    // Last sweep, hard close for everyone who's left
+                    this.wsServer.clients.forEach(function(socket) {
+                        if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+                            socket.terminate();
+                        }
+                    });
+                    resolve(true);
+                    return;
+                }
+                round++;
+                setTimeout(close, 500);
+            };
+            close();
+        });
+
+        // close WS HTTP server if exists
+        if (this.wsHttpServer !== null) {
+            await new Promise((resolve) => {
+                const timeout = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.wsHttpServer.close(function() {
+                    clearTimeout(timeout);
+                    resolve(true);
+                });
+            });
+        }
+        process.stdout.write("done\n");
+
+        // close redirect server if exists
+        process.stdout.write("\n    Closing HTTP server....    ");
+        if (this.httpRedirect !== null) {
+            await new Promise((resolve) => {
+                const timeout = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.httpRedirect.close(function() {
+                    clearTimeout(timeout);
+                   resolve(true);
+                });
+            });
+        }
+            
+        // close HTTP server
+        await new Promise((resolve) => {
+            const timeout = setTimeout(function() {
+                resolve(false);
+            }, 5000);
+            this.httpServer.close(function() {
+                clearTimeout(timeout);
+                resolve(true);
+            });
+        });
+        process.stdout.write("done\n");
 
     };
+
+    // server handlers
+    async httpRequestHandle(req, res) {
+        // get requested file
+        let fileStream = undefined;
+        if (req.url.startsWith("/downloads/")) {
+            const fullPath = path.join(this.httpDownloadPath, req.url.replace("/downloads/", ""));
+            fileStream = await this.getFileDataStream(fullPath);
+        } else {
+            const fullPath = path.join(this.httpBasePath, req.url);
+            fileStream = await this.getFileDataStream(fullPath);
+        }
+
+        // get index.html if requesting root or index
+        if (fileStream === undefined) {
+            const fullPath = path.join(this.httpBasePath, "index.html");
+            fileStream = await this.getFileDataStream(fullPath);
+        }
+
+        if (fileStream === undefined) {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("404 Not Found");
+            return;
+        }
+
+        res.writeHead(200, {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Last-Modified": fileStream["lastModified"],
+            "Content-Length": fileStream["size"],
+            "Content-Type": fileStream["type"],
+            "ETag": fileStream["etag"]
+        });
+        fileStream["stream"].pipe(res);
+    };
+    async httpRedirectHandle(req, res) {
+        const myURL = req.headers.host.split(":")[0];
+        const myPort = this.httpServerPort !== 443 ? ":" + this.httpServerPort : "";
+        res.writeHead(302, {
+            "Location": "https://" + myURL + myPort + req.url
+        });
+        res.end();
+    };
+    async wsHttpHandle(req, res) {
+        res.writeHead(200, {
+            //"Content-Security-Policy": "default-src 'self'",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Content-Length": 0,
+            "Content-Type": "text/plain"
+        });
+        res.write("");
+        res.end();
+    };
+
+    // websocket client handlers
+    async clientConnect(ws) {
+        // generate clientId for connection
+        let clientId;
+        do {
+            clientId = Math.floor(Math.random() * 9999) + 1;
+        } while (this.clients.has(clientId));
+
+        // create communicator
+        const com = new Communicator({
+            "sender": async function(data, transfer, message) {
+                if ((data instanceof ArrayBuffer) === false) {
+                    data = JSON.stringify(data);
+                }
+                ws.send(data);
+            },
+            "interactTimeout": 3000,
+            "timeout": 5000,
+            "packetSize": 1000,
+            "packetTimeout": 1000,
+            "packetRetry": Infinity,
+            "sendThreads": 16
+        });
+        ws.addEventListener("message", function(event) {
+            let data = event.data;  // can be string or ArrayBuffer
+            try {
+                if (typeof data === "string") {
+                    data = JSON.parse(data);
+                } else {
+                    data = new Uint8Array(data);
+                    data = data.buffer;
+                }
+            } catch (error) {
+                console.log(error);
+                return;
+            }
+            com.receive(data);
+
+        });
+        await com.sideSync();
+        await com.timeSync();
+
+        // create state
+        const client = {
+            "ws": ws
+        };
+        this.clients.set(clientId, client);
+
+        // listen messages and handle API
+        com.onIncoming(async (messageObj) => {
+            try {
+                await this.handleAPI(messageObj, clientId);
+            } catch (error) {
+                console.log("Error handling message:", error);
+                await client.get("ws").terminate();
+            }
+        });
+
+        // listen error
+        ws.addEventListener("error", (event) => {
+            console.log("Error " + event.error);
+        });
+
+        // listen close
+        ws.addEventListener("close", () => {
+            this.clientDisconnect(clientId);
+        });
+
+        // debug info
+        console.log("Client connected (" + clientId.toString().padStart(4, "0") + ")");
+    };
+    async clientDisconnect(clientId) {
+        this.clients.delete(clientId);
+        console.log("Client disconnected (" + clientId + ")");
+    };
+    async handleAPI(messageObj, clientId) {
+        if (message["type"] === "ping") {
+
+        }
+        
+
+        if (message["type"] === "pair-create") {
+
+        }
+
+        if (message["type"] === "pair-request") {
+
+        }
+
+        if (message["type"] === "pair-accept") {
+
+        }
+
+        if (message["type"] === "pair-reject") {
+
+        }
+
+        if (message["type"] === "pair-delete") {
+
+        }
+
+
+        if (message["type"] === "join-connect") {
+
+        }
+
+        if (message["type"] === "join-disconnect") {
+
+        }
+    };
+
 };
-
-
-
-
-
 
 
 const main = async function(args) {
@@ -425,9 +735,9 @@ const main = async function(args) {
 
     // Read CLI options
     process.stdout.write("Reading arguments...    ");
-    const confPath = path.resolve(getArg(process.argv, "--configuration", true, true) || getArg(process.argv, "-c", true, false) || "./conf/conf.json");
-    const complieFlag = getArg(process.argv, "--compile", false) || false;
-    const exitFlag = getArg(process.argv, "--exit", false) || false;
+    const confPath = path.resolve(getArg(args, "--configuration", true, true) || getArg(args, "-c", true, false) || "./conf/conf.json");
+    const complieFlag = getArg(args, "--compile", false) || false;
+    const exitFlag = getArg(args, "--exit", false) || false;
     process.stdout.write("done\n");
     
     // Process the configuration and parameters
@@ -438,19 +748,18 @@ const main = async function(args) {
     const confUser = await configure.parseConfUser(confPath);
     process.stdout.write("done\n");
 
-    console.log(confUser);
     // Compile the clients
-    /*
     process.stdout.write("Compiling clients...    ");
-    const isDone = await configure.compile(confSystem, confUser);
-    if (isDone) {
+    const isCompiled = await configure.compile(confSystem, confUser);
+    if (isCompiled) {
         process.stdout.write("done\n");
     } else {
         process.stdout.write("skipped\n");
     }
+    
 
     // Start HTTP/WS server
-    await server.start(confUser);*/
+    await server.start(confUser);
 
     // Cleanup
     const close = async function() {

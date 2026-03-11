@@ -44,28 +44,17 @@ server configuration file path: server/conf/conf.json
 
 ```
 {
-    "http": {
-        "domain": "localhost",          //access domain for non web clients
-        "port": 443,                    //port of the server
-        "key": "server.key",            //private key path
-        "cert": "server.crt",           //private cert path
-        "redirect": 80,                 //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
-        "remote": {                     //(optional) remote websocket server, it will ignore local ws creation
-            "host": "localhost",
-            "port": 444
-        }
-    },
-    "ws": {
-        "domain": "localhost",          //access domain for non web clients
-        "port": 444,
-        "key": "server.key",            //private key path
-        "cert": "server.crt",           //private cert path
-        "webrtc": {
-            "iceServers": [
-                "stun:stun.l.google.com:19302"
-            ]
-        }
-    } 
+    "domain": "localhost",                  //access domain for non web clients
+    "port": 443,                            //port of the HTTPS server
+    "redirect": 80,                         //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
+    "key": "server.key",                    //private key path
+    "cert": "server.crt",                   //private cert path
+    "ws": 444,                              //websocket port
+    "webrtc": {                             //webrtc settings
+        "iceServers": [
+            "stun:stun.l.google.com:19302"
+        ]
+    }
 }
 ```
 

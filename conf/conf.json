@@ -1,24 +1,13 @@
 {
-    "http": {
-        "domain": "localhost",
-        "port": 443,
-        "key": "server.key",
-        "cert": "server.crt",
-        "redirect": 80,
-        "remote": {
-            "host": "localhost",
-            "port": 444
-        }
-    },
-    "ws": {
-        "domain": "localhost",
-        "port": 444,
-        "key": "server.key",
-        "cert": "server.crt",
-        "webrtc": {
-            "iceServers": [
-                "stun:stun.l.google.com:19302"
-            ]
-        }
+    "domain": "localhost",
+    "port": 443,
+    "redirect": 80,
+    "key": "server.key",
+    "cert": "server.crt",
+    "ws": 444,
+    "webrtc": {
+        "iceServers": [
+            "stun:stun.l.google.com:19302"
+        ]
     }
 }

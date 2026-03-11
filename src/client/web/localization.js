@@ -1,12 +1,19 @@
 "use strict";
 
-let curLang = "en";
+const defLang = "en";
+let curLang = defLang;
 
 const getLang = () => {
     return curLang;
 };
 
 const setLang = (lang) => {
+	if (localization.supportedLanguages.indexOf(lang) === -1) {
+		lang = (navigator.language || navigator.userLanguage).substring(0,2);
+	}
+	if (localization.supportedLanguages.indexOf(lang) === -1) {
+        lang = defLang;
+    }
     curLang = lang;
 };
 
