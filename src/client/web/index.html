@@ -89,10 +89,274 @@
             </nav>
             <div class="no-round">
                 <div>
-
+                    <button class="primary small-margin" id="btn-settings-appearance">
+                        <i>palette</i>
+                        <span class="l m" data-i18n="settings.appearance.btn">Appearance</span>
+                    </button>
+                    <button class="fill small-margin" id="btn-settings-audio">
+                        <i>speaker</i>
+                        <span class="l m" data-i18n="settings.audio.btn">Audio</span>
+                    </button>
+                    <button class="fill small-margin" id="btn-settings-video">
+                        <i>videocam</i>
+                        <span class="l m" data-i18n="settings.video.btn">Video</span>
+                    </button>
+                    <button class="fill small-margin" id="btn-settings-control">
+                        <i>joystick</i>
+                        <span class="l m" data-i18n="settings.control.btn">Control</span>
+                    </button>
+                    <button class="fill small-margin" id="btn-settings-about">
+                        <i>info</i>
+                        <span class="l m" data-i18n="settings.about.btn">About</span>
+                    </button>
                 </div>
                 <div>
-                    
+                    <!-- Appearance settings -->
+                    <div id="settings-appearance">
+                        <h5 class="small-margin" data-i18n="settings.appearance.title">Appearance settings</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.appearance.lang">Language</legend>
+                                <div class="field suffix border round select-appearance-lang">
+                                    <select id="select-appearance-lang">
+                                        <option value="auto" data-i18n="settings.appearance.autolang">-- Automatic selection --</option>
+                                        <option value="en">English</option>
+                                        <option value="hu">Magyar</option>
+                                    </select>
+                                    <i>arrow_drop_down</i>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.appearance.theme">Theme color</legend>
+                                <nav class="wrap">
+                                    <button class="chip circle small" id="btn-appearance-theme">
+                                        <i>dark_mode</i>
+                                    </button>
+                                    <button class="chip circle" id="btn-appearance-theme-color">
+                                        <i>palette</i>
+                                        <input type="color"/>
+                                    </button>
+                                    <button class="circle small green" id="btn-appearance-theme-green"></button>
+                                    <button class="circle small red" id="btn-appearance-theme-red"></button>
+                                    <button class="circle small pink" id="btn-appearance-theme-pink"></button>
+                                    <button class="circle small purple" id="btn-appearance-theme-purple"></button>
+                                    <button class="circle small indigo" id="btn-appearance-theme-indigo"></button>
+                                    <button class="circle small blue" id="btn-appearance-theme-blue"></button>
+                                    <button class="circle small yellow" id="btn-appearance-theme-yellow"></button>
+                                    <button class="circle small orange" id="btn-appearance-theme-orange"></button>
+                                </nav>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.appearance.tray.title">System tray</legend>
+                                <label class="checkbox hide" id="label-tray">
+                                    <input type="checkbox" id="checkbox-tray">
+                                    <span data-i18n="settings.appearance.tray.checkbox">Minimizing on close</span>
+                                </label>
+                                <span class="error-text hide" id="error-tray" data-i18n="settings.appearance.tray.error">System tray not supported.</span>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.appearance.autostart.title">Auto startup</legend>
+                                <label class="checkbox hide" id="label-auto-launch">
+                                    <input type="checkbox" id="checkbox-auto-launch">
+                                    <span data-i18n="settings.appearance.autostart.checkbox">Launch with the system</span>
+                                </label>
+                                <span class="error-text hide" id="error-auto-launch" data-i18n="settings.appearance.autostart.error">Auto lanuch not supported.</span>
+                            </fieldset>
+                        </div>
+                    </div>
+                    <!-- Audio settings -->
+                    <div id="settings-audio" class="hide">
+                        <h5 class="small-margin" data-i18n="settings.audio.title">Audio settings</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.audio.decoder.title">Audio play</legend>
+                                <span class="green-text hide" id="decoder-audio-support" data-i18n="settings.audio.decoder.supported">Low latency play supported</span>
+                                <span class="error-text hide" id="decoder-audio-unsupport" data-i18n="settings.audio.decoder.unsupported">Low latency play not supported</span>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.audio.system.title">System audio share</legend>
+                                <span class="green-text hide" id="system-audio-support" data-i18n="settings.audio.system.supported">Fully supported</span>
+                                <span class="tertiary-text hide" id="system-audio-partial" data-i18n="settings.audio.system.partial">Only manual share supported</span>
+                                <span class="error-text hide" id="system-audio-unsupport" data-i18n="settings.audio.system.unsupported">System audio share not supported</span>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.audio.speaker.title">Speakers</legend>
+                                <div class="audio-test">
+                                    <div class="field suffix border round select-audio-test">
+                                        <select id="select-audio-test">
+                                            <option value="0" data-i18n="settings.audio.speaker.test1">Test sound 1</option>
+                                            <option value="1" data-i18n="settings.audio.speaker.test2">Test sound 2</option>
+                                            <option value="2" data-i18n="settings.audio.speaker.test3">Test sound 3</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-test-audio-test">
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.audio.mic.title">Microphones</legend>
+                                <div class="audio-input">
+                                    <div class="field suffix border round select-audio-input">
+                                        <select id="select-audio-input" disabled>
+                                            <option data-i18n="settings.audio.mic.notfound">No Microphone</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-refresh-audio-input">
+                                            <i>refresh</i>
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-test-audio-input" disabled>
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                    <!-- Video settings -->
+                    <div id="settings-video" class="hide">
+                        <h5 class="small-margin" data-i18n="settings.video.title">Video settings</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.video.decoder.title">Video play</legend>
+                                <span class="green-text hide" id="decoder-video-support" data-i18n="settings.video.decoder.supported">Low latency play supported</span>
+                                <span class="error-text hide" id="decoder-video-unsupport" data-i18n="settings.video.decoder.unsupported">Low latency play not supported</span>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.video.cam.title">Webcams</legend>
+                                <div class="select-camera-input-box">
+                                    <div class="field suffix border round select-camera-input">
+                                        <select id="select-camera-input" disabled>
+                                            <option data-i18n="settings.video.cam.notfound">No webcam detected</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-camera-refresh">
+                                            <i>refresh</i>
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-camera-test" disabled>
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="hide" id="video-camera-test-box">
+                                    <div class="video-container">
+                                        <video class="video" id="video-camera-test" autoplay="true"></video>
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.video.display.title">Screen share</legend>
+                                <div class="select-display-input-box">
+                                    <div class="field suffix border round select-display-input">
+                                        <select id="select-display-input" disabled>
+                                            <option data-i18n="settings.video.display.notfound">Only manual share supported</option>
+                                        </select>
+                                        <i>arrow_drop_down</i>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-display-refresh">
+                                            <i>refresh</i>
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <button class="circle large" id="btn-display-test">
+                                            <i>play_arrow</i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="hide" id="video-display-test-box">
+                                    <div class="video-container">
+                                        <video class="video" id="video-display-test" autoplay="true"></video>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </div>
+                    <!-- Control settings -->
+                    <div id="settings-control" class="hide">
+                        <h5 class="small-margin">Control settings</h5>
+                        <div class="small-margin">
+                            <fieldset>
+                                <legend data-i18n="settings.control.control-share.title">Control share</legend>
+                                <div class="mouse-share">
+                                    <span class="green-text hide" id="mouse-share-support" data-i18n="settings.control.control-share.supported">Fully supported</span>
+                                    <span class="error-text hide" id="mouse-share-unsupport" data-i18n="settings.control.control-share.unsupported">Constol share not supported</span>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="settings.control.exit-shortcut.title">Fullscreen exit</legend>
+                                <div id="shortcut-list">
+                                    <!--
+                                    <div class="shortcut-box">
+                                        <div class="field label suffix border round shortcut-delay">
+                                            <select disabled>
+                                                <option>No delay</option>
+                                                <option>1 second</option>
+                                                <option>2 seconds</option>
+                                                <option>3 seconds</option>
+                                                <option>5 seconds</option>
+                                                <option>8 seconds</option>
+                                                <option>10 seconds</option>
+                                            </select>
+                                            <label>Holding time</label>
+                                            <i>arrow_drop_down</i>
+                                        </div>
+                                        <div class="shortcut-box-sub">
+                                            <div class="field label border round shortcut-key">
+                                                <input type="text" value="F11" disabled/>
+                                                <label>Key</label>
+                                            </div>
+                                            <div class="shortcut-delete">
+                                                <button class="circle large" disabled>
+                                                    <i>delete</i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    -->
+                                </div>
+                                <button id="btn-shortcut-add">
+                                    <i>add</i>
+                                    <span data-i18n="settings.control.exit-shortcut.add">Add shortcut</span>
+                                </button>
+                            </fieldset>
+                        </div>
+                    </div>
+                    <!-- About -->
+                    <div id="settings-about" class="hide">
+                        <h5 class="small-margin" data-i18n="settings.about.title">About Desktop Streamer</h5>
+                        <div class="small-margin">
+                            <p><span data-i18n="settings.about.version">Version:</span> <span id="about-version">1.0.0</span></p>
+                            <p data-i18n="settings.about.description">Desktop Streamer is an open source project that allows you to access your desktop remotly through a simple web interface. It is built with Electron and Node.js.</p>
+                            <fieldset class="about-box">
+                                <legend data-i18n="settings.about.missing-features">Missing features</legend>
+                                <span class="green-text hide" id="about-supported">&bull;<span data-i18n="settings.about.supported">Nothing missing, all features are supported.</span></span>
+
+                                <span class="error-text hide" id="about-auto-launch">&bull;<span data-i18n="settings.about.auto-launch">Auto launch: not supported</span></span>
+                                <span class="error-text hide" id="about-tray">&bull;<span data-i18n="settings.about.tray">System tray: not supported</span></span>
+
+                                <span class="tertiary-text hide" id="about-audio">&bull;<span data-i18n="settings.about.system-audio">System audio share: only manual share</span></span>
+                                <span class="error-text hide" id="about-audio-unsupported">&bull;<span data-i18n="settings.about.system-audio-unsupported">System audio share: not supported</span></span>
+
+                                <span class="tertiary-text hide" id="about-screen">&bull;<span data-i18n="settings.about.screen-share">Screen share: only manual select</span></span>
+
+                                <span class="error-text hide" id="about-play">&bull;<span data-i18n="settings.about.play">Low latency play: not supported</span></span>
+
+                                <span class="error-text hide" id="about-control">&bull;<span data-i18n="settings.about.control-share">Control share: not supported</span></span>
+                            </fieldset>
+                        </div>
+                    </div>
                 </div>
             </div>
         </dialog>
@@ -193,30 +457,30 @@
                 <h3>Download Desktop Streamer</h3>
                 <h6 class="small">Get the Desktop Streamer client program for your computer to full remote control.</h6>
                 <div class="row center-align wrap gap padding-top">
-                    <button class="small-round extra" id="download-win32">
-                        <img class="responsive" src="/icons/win32.svg">
+                    <button class="small-round extra border hide" id="download-win32">
+                        <img class="responsive" src="/media/logo-win32.svg">
                         Windows
                     </button>
-                    <button class="small-round extra border" id="download-darwin">
-                        <img class="responsive" src="/icons/darwin.svg">
+                    <button class="small-round extra border hide" id="download-darwin">
+                        <img class="responsive" src="/media/logo-darwin.svg">
                         macOS
                     </button>
-                    <button class="small-round extra border" id="download-linux">
-                        <img class="responsive" src="/icons/linux.svg">
+                    <button class="small-round extra border hide" id="download-linux">
+                        <img class="responsive" src="/media/logo-linux.svg">
                         Linux
                     </button>
                 </div>
                 <div class="row center-align wrap gap padding-top">
-                    <button class="small-round extra" id="download-x64">
+                    <button class="small-round extra border hide" id="download-x64">
                         x64
                     </button>
-                    <button class="small-round extra border" id="download-x86">
+                    <button class="small-round extra border hide" id="download-x86">
                         x86
                     </button>
-                    <button class="small-round extra border" id="download-arm64">
+                    <button class="small-round extra border hide" id="download-arm64">
                         arm64
                     </button>
-                    <button class="small-round extra border" id="download-arm32">
+                    <button class="small-round extra border hide" id="download-arm32">
                         arm32
                     </button>
                 </div>
