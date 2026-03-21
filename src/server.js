@@ -380,8 +380,9 @@ const Server = class {
     wsHttpServer = null;
     wsHttpServerPort = null;
 
-    clients = new Map();    // key-clientId, value-> {ws}
+    clients = new Map();    // key-clientId, value-> {ws, com, pairCode, joinId}
     pairs = new Map();      // key-pairCode, value-> {hostClientId, peerClientId, timeoutId}
+    joins = new Map();      // key-joinId, value-> {peerCode, hostCode, peerUserId, hostUserId}
 
     isClosing = false;
     constructor() {
@@ -663,7 +664,10 @@ const Server = class {
 
         // create state
         const client = {
-            "ws": ws
+            "ws": ws,
+            "com": com,
+            "pairCode": undefined,
+            "joinId": undefined
         };
         this.clients.set(clientId, client);
 
@@ -690,46 +694,545 @@ const Server = class {
         // debug info
         console.log("Client connected (" + clientId.toString().padStart(4, "0") + ")");
     };
-    async clientDisconnect(clientId) {
-        this.clients.delete(clientId);
-        console.log("Client disconnected (" + clientId + ")");
-    };
+    
     async handleAPI(messageObj, clientId) {
-        if (message["type"] === "ping") {
-
+        //check basic structure
+        await messageObj.wait();
+        const message = messageObj.data;
+        if (typeof message !== "object" && typeof message["type"] !== "string") {
+            console.log("Invalid message format", message);
+            messageObj.abort();
+            return;
         }
-        
+        const client = this.clients.get(clientId);
+
+
+        if (message["type"] === "ping") {
+            /*{
+                
+            }*/
+            /*{
+                "success": boolean,
+                "value": string
+            }*/
+            messageObj.send({
+                "success": true,
+                "value": "pong"
+            });
+            return;
+        }
 
         if (message["type"] === "pair-create") {
+            /*{
 
+            }*/
+            /*{
+                "success": boolean,
+                "pairCode": string
+            }*/
+            const pairCode = await this.pairCreate(clientId);
+            messageObj.send({
+                "success": true,
+                "pairCode": pairCode
+            });
+            return;
         }
 
         if (message["type"] === "pair-request") {
-
+            /*{
+                "pairCode": string
+            }*/
+            /*{
+                "success": boolean
+                "ip": string,
+            }*/
+            const pairCode = message["pairCode"];
+            const res = await this.pairRequest(clientId, pairCode);
+            messageObj.send({
+                "success": res["success"],
+                "ip": res["success"] ? client["ws"]._socket.remoteAddress : undefined,
+                "timeout": res["success"] ? res["timeout"] : undefined
+            });
+            return;
         }
 
         if (message["type"] === "pair-accept") {
+            /*{
 
+            }*/
+            /*{
+                "success": boolean,
+                "joinCode": string,
+                "hostCode": string
+            }*/
+            const pairCode = client["pairCode"];
+            const pair = this.pairs.get(pairCode);
+            if (pair === undefined) {
+                messageObj.send({
+                    "success": false
+                });
+                return;
+            }
+            if (pair["hostClientId"] !== clientId) {
+                messageObj.send({
+                    "success": false
+                });
+                return;
+            }
+            
+            const joinInfo = await this.joinCreate(pair["hostClientId"], pair["peerClientId"]);
+            if (joinInfo === undefined) {
+                messageObj.send({
+                    "success": false
+                });
+                return;
+            }
+
+            const peerClient = this.clients.get(pair["peerClientId"]);
+            peerClient["com"].send({
+                "type": "pair-accept",
+                "hostCode": joinInfo["hostCode"],
+                "joinCode": joinInfo["peerCode"]
+            });
+
+            messageObj.send({
+                "success": true,
+                "hostCode": joinInfo["hostCode"],
+                "joinCode": joinInfo["peerCode"]
+            });
+            return;
         }
 
         if (message["type"] === "pair-reject") {
+            /*{
 
+            }*/
+            /*{
+                "success": boolean,
+            }*/
+            const pairCode = client["pairCode"];
+            const pair = this.pairs.get(pairCode);
+            if (pair === undefined) {
+                messageObj.send({
+                    "success": true
+                });
+                return;
+            }
+            if (pair["hostClientId"] === clientId) {
+                // reject request and notify peer
+                await this.pairDelete(pairCode, false, true, false);
+            } else if (pair["peerClientId"] === clientId) {
+                // reject request and notify host
+                await this.pairDelete(pairCode, false, false, true);
+            }
+            messageObj.send({
+                "success": true
+            });
+            return;
         }
 
         if (message["type"] === "pair-delete") {
+            /*{
 
+            }*/
+            /*{
+                "success": boolean,
+            }*/
+            await this.pairDeleteByClientId(clientId);
+             messageObj.send({
+                "success": true
+            });
+            return;
         }
 
 
         if (message["type"] === "join-connect") {
+            /*{
+                "joinId": string,
+                "code": string,
+            }*/
+            /*{
+                "success": boolean,
+            }*/
+            const joinId = message["joinId"];
+            const code = message["code"];
+            if (joinId === undefined || code === undefined) {
+                messageObj.send({
+                    "success": false
+                });
+                return;
+            }
+            await this.joinConnect(clientId, joinId, code);
+            messageObj.send({
+                "success": true
+            });
+            return;
+        }
 
+        if (message["type"] === "join-request") {
+            /*{
+                "value": string,
+            }*/
+            /*{
+                "value": boolean,
+            }*/
         }
 
         if (message["type"] === "join-disconnect") {
+            /*{
 
+            }*/
+            /*{
+                "success": boolean,
+            }*/
+            this.joinDeleteByClientId(clientId);
+            messageObj.send({
+                "success": true
+            });
+            return;
         }
     };
 
+    async pairCreate(clientId) {
+        // delete old pair if exist
+        this.pairDeleteByClientId(clientId);
+
+        // create unique pair code
+        let pairCode;
+        do {
+            pairCode = this.generateId(6, "0123456789");
+        } while (this.pairs.has(pairCode));
+
+        this.pairs.set(pairCode, {
+            "hostClientId": clientId,
+            "peerClientId": undefined,
+            "timeoutId": undefined
+        });
+        const client = this.clients.get(clientId);
+        client["pairCode"] = pairCode;
+        console.log(this.pairs);
+        return pairCode;
+    };
+    async pairRequest(clientId, pairCode) {
+        // delete old pair if exist
+        this.pairDeleteByClientId(clientId);
+
+        // join peer to pair if exist
+        const pair = this.pairs.get(pairCode);
+        if (pair === undefined || pair["peerClientId"] !== undefined) {
+            return {
+                "success": false
+            };
+        }
+        pair["peerClientId"] = clientId;
+        const peerClient = this.clients.get(clientId);
+        peerClient["pairCode"] = pairCode;
+
+        // set timeout
+        const timeout = 10000;
+        pair["timeoutId"] = setTimeout(() => {
+            this.pairDelete(pairCode, false, true, true);
+        }, timeout + 2000);
+
+        // send notification to host
+        const hostClient = this.clients.get(pair["hostClientId"]);
+        hostClient["com"].send({
+            "type": "pair-request",
+            "timeout": timeout,
+            "ip": peerClient["ws"]._socket.remoteAddress
+        });
+        return {
+            "success": true,
+            "timeout": timeout
+        };
+    };
+    async pairDeleteByClientId(clientId) {
+        // filter clientId
+        const client = this.clients.get(clientId);
+        if (client === undefined || client["pairCode"] === undefined) {
+            return;
+        }
+
+        // filter pair
+        const pairCode = client["pairCode"];
+        const pair = this.pairs.get(pairCode);
+        if (pair === undefined) {
+            client["pairCode"] = undefined;
+            return;
+        }
+
+        // delete
+        if (pair["hostClientId"] === clientId) {
+            // remove peer with notification
+            await this.pairDelete(pairCode, false, true, false);
+            // remove host without notification
+            await this.pairDelete(pairCode, true, false, false);
+            
+        } else if (pair["peerClientId"] === clientId) {
+            // remove peer with notificate host
+            await this.pairDelete(pairCode, false, false, true);
+        } else {
+            console.warn("Client " + clientId + " is not in pair " + pairCode);
+        }
+        console.log(this.pairs);
+
+    };
+    async pairDelete(pairCode, isHost, isNotify=false, isNotifyOther=false) {
+        const pair = this.pairs.get(pairCode);
+        if (pair === undefined) {
+            return;
+        }
+        
+        // delete host side
+        if (isHost && pair["hostClientId"] !== undefined) {
+            const hostClient = this.clients.get(pair["hostClientId"]);
+            const peerClient = this.clients.get(pair["peerClientId"]);
+            if (hostClient !== undefined) {
+                hostClient["pairCode"] = undefined;
+                if (isNotify) {
+                    hostClient["com"].send({
+                        "type": "pair-reject"
+                    });
+                }
+                if (isNotifyOther) {
+                    if (peerClient !== undefined) {
+                        peerClient["com"].send({
+                            "type": "pair-reject"
+                        });
+                    }
+                }
+            }
+            if (peerClient !== undefined) {
+                peerClient["pairCode"] = undefined;
+            }
+            // clear timeout
+            if (pair["timeoutId"] !== undefined) {
+                clearTimeout(pair["timeoutId"]);
+                pair["timeoutId"] = undefined;
+            }
+            // delete pair
+            this.pairs.delete(pairCode);
+        }
+
+        // delete peer side
+        if (isHost === false && pair["peerClientId"] !== undefined) {
+            const peerClient = this.clients.get(pair["peerClientId"]);
+            if (peerClient !== undefined) {
+                peerClient["pairCode"] = undefined;
+                if (isNotify) {
+                    peerClient["com"].send({
+                        "type": "pair-reject"
+                    });
+                }
+                if (isNotifyOther) {
+                    const hostClient = this.clients.get(pair["hostClientId"]);
+                    hostClient["com"].send({
+                        "type": "pair-reject"
+                    });
+                }
+            }
+            // detete pair peer and timeout
+            pair["peerClientId"] = undefined;
+            if (pair["timeoutId"] !== undefined) {
+                clearTimeout(pair["timeoutId"]);
+                pair["timeoutId"] = undefined;
+            }
+        }
+
+    };
+
+    async joinCreate(hostClientId, peerClientId) {
+        const hostClient = this.clients.get(hostClientId);
+        const peerClient = this.clients.get(peerClientId);
+        if (hostClient === undefined || peerClient === undefined) {
+            return undefined;
+        }
+
+        // create unique join id
+        let joinId;
+        do {
+            joinId = this.generateId(8);
+        } while (this.joins.has(joinId));
+
+        // create unique host code and peer code
+        let hostCode, peerCode;
+        do {
+            hostCode = this.generateId(6);
+            peerCode = this.generateId(6);
+        } while (hostCode === peerCode);
+
+        // set variables and return
+        this.joins.set(joinId, {
+            "hostClientId": hostClientId,
+            "peerClientId": peerClientId,
+            "hostCode": hostCode,
+            "peerCode": peerCode
+        });
+        hostClient["joinId"] = joinId;
+        peerClient["joinId"] = joinId;
+
+        await this.pairDelete(pairCode, false, false, false);
+        await this.pairDelete(pairCode, true, false, false);
+
+        return {
+            "joinId": joinId,
+            "hostCode": hostCode,
+            "peerCode": peerCode
+        };
+    };
+    async joinConnect(clientId, joinId, code) {
+        // check client
+        const client = this.clients.get(clientId);
+        if (client === undefined) {
+            return false;
+        }
+        // check join
+        const join = this.joins.get(joinId);
+        if (join === undefined) {
+            return false;
+        }
+        // check code and get role
+        let isHost;
+        if (join["hostCode"] === code) {
+            isHost = true;
+        } else if (join["peerCode"] === code) {
+            isHost = false;
+        } else {
+            return false;
+        }
+        
+        // set client joinId
+        client["joinId"] = joinId;
+
+        // send notification to other side
+        const otherClientId = isHost ? join["peerClientId"] : join["hostClientId"];
+        const otherClient = this.clients.get(otherClientId);
+        if (otherClient !== undefined) {
+            otherClient["com"].send({
+                "type": "join-connect",
+            });
+        }
+        return true;
+    };
+    async joinRequest(clientId, value) {
+        // check client
+        const client = this.clients.get(clientId);
+        if (client === undefined) {
+            return false;
+        }
+        // check join
+        const joinId = client["joinId"];
+        const join = this.joins.get(joinId);
+        if (join === undefined) {
+            return false;
+        }
+        // send request to other side and wait for response
+        const otherClientId = join["hostClientId"] === clientId ? join["peerClientId"] : join["hostClientId"];
+        const otherClient = this.clients.get(otherClientId);
+        if (otherClient === undefined) {
+            return false;
+        }
+        // TODO: add timeout and retry
+
+    };
+    async joinDisconnectByClientId(clientId) {
+        // filter clientId
+        const client = this.clients.get(clientId);
+        if (client === undefined || client["joinId"] === undefined) {
+            return;
+        }
+        const joinId = client["joinId"];
+        const join = this.joins.get(joinId);
+        if (join === undefined) {
+            client["joinId"] = undefined;
+            return;
+        }
+        if (join["hostClientId"] === clientId) {
+            // delete host with notification and notify peer
+            await this.joinDelete(joinId, true, false, true, "join-disconnect");
+        } else if (join["peerClientId"] === clientId) {
+            // delete peer with notification and notify host
+             await this.joinDelete(joinId, false, false, true, "join-disconnect");
+        }
+    };
+    async joinDeleteByClientId(clientId) {
+        // filter clientId
+        const client = this.clients.get(clientId);
+        if (client === undefined || client["joinId"] === undefined) {
+            return;
+        }
+        const joinId = client["joinId"];
+        const join = this.joins.get(joinId);
+        if (join === undefined) {
+            client["joinId"] = undefined;
+            return;
+        }
+        if (join["hostClientId"] === clientId) {
+            // delete host with notification and notify peer
+            await this.joinDelete(joinId, false, false, true, "join-delete");
+            await this.joinDelete(joinId, true, false, true, "join-delete");
+        } else if (join["peerClientId"] === clientId) {
+            // delete peer with notification and notify host
+            await this.joinDelete(joinId, false, false, true, "join-delete");
+            await this.joinDelete(joinId, true, false, true, "join-delete");
+        }
+    };
+    async joinDelete(joinId, isHost, isNotify=false, isNotifyOther=false, type="join-disconnect") {
+        const join = this.joins.get(joinId);
+        if (join === undefined) {
+            return;
+        }
+
+        // delete host side
+        if (isHost && join["hostClientId"] !== undefined) {
+            const hostClient = this.clients.get(join["hostClientId"]);
+            if (hostClient !== undefined) {
+                hostClient["joinId"] = undefined;
+                if (isNotify) {
+                    hostClient["com"].send({
+                        "type": type
+                    });
+                }
+                if (isNotifyOther) {
+                    const peerClient = this.clients.get(join["peerClientId"]);
+                    peerClient["com"].send({
+                        "type": type
+                    });
+                }
+            }
+        }
+
+        // delete peer side
+        if (isHost === false && join["peerClientId"] !== undefined) {
+            const peerClient = this.clients.get(join["peerClientId"]);
+            if (peerClient !== undefined) {
+                peerClient["joinId"] = undefined;
+                if (isNotify) {
+                    peerClient["com"].send({
+                        "type": type
+                    });
+                }
+                if (isNotifyOther) {
+                    const hostClient = this.clients.get(join["hostClientId"]);
+                    hostClient["com"].send({
+                        "type": type
+                    });
+                }
+            }
+        }
+
+        if (join["hostClientId"] === undefined || join["peerClientId"] === undefined) {
+            this.joins.delete(joinId);
+        }
+
+        return;
+    };
+    
+    async clientDisconnect(clientId) {
+        this.pairDeleteByClientId(clientId);
+        this.clients.delete(clientId);
+        console.log("Client disconnected (" + clientId + ")");
+    };
 };
 
 

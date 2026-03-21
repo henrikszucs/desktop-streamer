@@ -387,17 +387,9 @@ const dict = {
                 "en": "Join request",
                 "hu": "Csatlakozási kérelem"
             },
-            "full-name": {
-                "en": "{firstName} {lastName}",
-                "hu": "{lastName} {firstName}"
-            },
-            "guest": {
-                "en": "Guest",
-                "hu": "Vendég"
-            },
             "request-info": {
-                "en": "<span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address wants to join your device.",
-                "hu": "<span class=\"bold\">{fullName}</span> a(z) <span class=\"bold\">{ipAddress}</span> IP címről csatlakozni szeretne az eszközödhöz."
+                "en": "From <span class=\"bold\">{ipAddress}</span> IP address wants to join your device.",
+                "hu": "A(z) <span class=\"bold\">{ipAddress}</span> IP címről csatlakozni szeretne az eszközödhöz."
             },
             "request-long": {
                 "en": "Share for long term",
@@ -437,17 +429,9 @@ const dict = {
                 "en": "Joining room...",
                 "hu": "Szobához csatlakozás..."
             },
-            "full-name": {
-                "en": "{firstName} {lastName}",
-                "hu": "{lastName} {firstName}"
-            },
-            "guest": {
-                "en": "Guest",
-                "hu": "Vendég"
-            },
             "dialog-info": {
-                "en": "Establishing connection to host device as <span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address. Please wait...",
-                "hu": "Kapcsolódás a kiszolgáló eszközhöz <span class=\"bold\">{fullName}</span> néven, <span class=\"bold\">{ipAddress}</span> IP címről. Kérlek várj..."
+                "en": "Establishing connection from <span class=\"bold\">{ipAddress}</span> IP address. Please wait...",
+                "hu": "Kapcsolódás a kiszolgáló eszközhöz <span class=\"bold\">{ipAddress}</span> IP címről. Kérlek várj..."
             },
         }
     }

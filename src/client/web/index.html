@@ -374,6 +374,7 @@
                 <div class="space"></div>
                 <div class="room-create-fields">
                     <div class="field label border round">
+                        <progress class="circle indeterminate" id="input-room-create-loading" value="50" max="100"></progress>
                         <input type="text" id="input-room-create-code" readonly/>
                         <label data-i18n="new.share.join-code">Join code</label>
                     </div>
@@ -390,11 +391,6 @@
             <h5 data-i18n="new.share.request-title">Join request</h5>
             <div class="space"></div>
             <p id="dialog-room-request-info"></p>
-            <div class="space"></div>
-            <label class="checkbox" id="btn-request-remember-label">
-                <input type="checkbox" id="btn-request-remember">
-                <span data-i18n="new.share.request-long">Share for long term.</span>
-            </label>
             <div class="space"></div>
             <div class="dialog-room-request-buttons">
                 <button class="tertiary round" id="btn-request-reject">
@@ -429,11 +425,12 @@
             <div class="" id="screen-new">
                 <!-- Start screen -->
                 <h5 data-i18n="new.join.title">Join room</h5>
-                <nav class="no-space center-align">
+                <nav class="no-space center-align join-nav">
                     <div class="field label border left-round" >
+                        <progress class="circle indeterminate hide" value="50" max="100" id="join-load"></progress>
                         <input type="text" id="input-new-code"/>
                         <label data-i18n="new.join.join-code">Join code</label>
-                        <output class="invalid error-text hide">Error text</output>
+                        <output id="join-error-text" class="invalid error-text" data-i18n="new.join.code-invalid">Error text</output>
                     </div>
                     <button class="large right-round" id="btn-new-join">
                         <i>cast</i>

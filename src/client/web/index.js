@@ -311,34 +311,148 @@ const Server = class extends EventTarget {
     };
 
 
-    handleIncoming = (event) => {
+    handleIncoming = async (messageObj) => {
+        await messageObj.wait();
+        const message = messageObj.data;
 
+        // pair request (host)
+        if (message["type"] === "pair-request") {
+            this.dispatchEvent(new CustomEvent("pair-request", {
+                "detail": {
+                    "ip": message["ip"],
+                    "timeout": message["timeout"]
+                }
+            }));
+            return;
+        }
+
+        // pair reject
+        if (message["type"] === "pair-reject") {
+            this.dispatchEvent(new CustomEvent("pair-reject"));
+            return;
+        }
+
+        // pair accept (peer)
+        if (message["type"] === "pair-accept") {
+            this.dispatchEvent(new CustomEvent("pair-accept", {
+                "detail": {
+                    "joinId": message["joinId"],
+                    "peerCode": message["peerCode"]
+                }
+            }));
+            return;
+        }
+
+
+        if (message["type"] === "join-connect") {
+            this.dispatchEvent(new CustomEvent("join-connect"));
+            return;
+        }
+
+        if (message["type"] === "join-disconnect") {
+            this.dispatchEvent(new CustomEvent("join-disconnect"));
+            return;
+        }
+
+        if (message["type"] === "join-delete") {
+            this.dispatchEvent(new CustomEvent("join-delete"));
+            return;
+        }
+
+        if (message["type"] === "join-request") {
+            this.dispatchEvent(new CustomEvent("join-request"));
+            return;
+        }
     };
 
     // pairing
-    pairCreate() {
-
+    async pairCreate() {
+        const msg = this.communicator.invoke({
+            "type": "pair-create"
+        });
+        await msg.wait();
+        const data = msg.data;
+        if (!data["success"]) {
+            throw new Error("Failed to create pair");
+        }
+        return data["pairCode"];
     };
-    pairRequest(pairCode) {
-    
+    async pairRequest(pairCode) {
+        const msg = this.communicator.invoke({
+            "type": "pair-request",
+            "pairCode": pairCode
+        });
+        await msg.wait();
+        const data = msg.data;
+        if (!data["success"]) {
+            throw new Error("Failed to request pair");
+        }
+        return data;
     };
-    pairAccept() {
-
+    async pairAccept() {
+        const msg = this.communicator.invoke({
+            "type": "pair-accept"
+        });
+        await msg.wait();
+        const data = msg.data;
+        if (!data["success"]) {
+            throw new Error("Failed to request pair");
+        }
+        return {
+            "joinId": data["joinId"],
+            "hostCode": data["hostCode"]
+        };
     };
-    pairReject() {
-
+    async pairReject() {
+        const msg = this.communicator.invoke({
+            "type": "pair-reject"
+        });
+        await msg.wait();
+        const data = msg.data;
+        if (!data["success"]) {
+            throw new Error("Failed to request pair");
+        }
+        return true;
+    };
+    async pairDelete() {
+        const msg = this.communicator.invoke({
+            "type": "pair-delete"
+        });
+        await msg.wait();
+        const data = msg.data;
+        if (!data["success"]) {
+            throw new Error("Failed to request pair");
+        }
+        return true;
     };
 
     // joining
-    joinConnect(joinId, peerCode, hostCode) {
+    async joinConnect(joinId, peerCode, hostCode) {
+        const startMsg = {
+            "type": "join-connect",
+            "joinId": joinId,
+        };
+        if (peerCode !== undefined) {
+            startMsg["peerCode"] = peerCode;
+        } else if (hostCode !== undefined) {
+            startMsg["hostCode"] = hostCode;
+        }
+        const msg = this.communicator.invoke({
+            "peerCode": peerCode,
+            "hostCode": hostCode
+        });
+        await msg.wait();
 
     };
-    joinDisconnect(joinId) {
+    async joinRequest() {
+        
+    };
+    async joinDisconnect(joinId) {
 
     };
 };
 const server = new Server();
-
+globalThis.server = server;
 
 // UI classes
 // Display screen behaviour
@@ -1474,60 +1588,332 @@ const NewScreen = class extends EventTarget {
     constructor() {
         super();
 
-        const NewShareDialog = class extends EventTarget {
+        const CreateDialog = class extends EventTarget {
             constructor() {
                 super();
-            };
-            open = () => {
 
+                this.overlay = document.getElementById("dialog-overlay");
+                this.dialog = document.getElementById("dialog-room-create");
+                this.closeBtn = document.getElementById("btn-room-create-close");
+                this.copyBtn = document.getElementById("btn-room-create-copy");
+
+                this.dialogRequest = document.getElementById("dialog-room-request");
+                this.dialogRequestBar = document.getElementById("room-request-reject-bar");
+                this.dialogRequestInfo = document.getElementById("dialog-room-request-info");
+                this.dialogRequestReject = document.getElementById("btn-request-reject");
+                this.dialogRequestAccept = document.getElementById("btn-request-accept");
+                this.dialogRequestUpdateInterval = -1;
+                this.dialogRequestStartTime = 0;
+
+                this.loading = document.getElementById("input-room-create-loading");
+                this.inputField = document.getElementById("input-room-create-code");
+                
+                this.currentState = "closed"; // tracks if async data is actually loaded/cleaned up
+                this.targetState = "closed";  // tracks the user's latest request
+                this.taskQueue = Promise.resolve();
+
+                this.copyBtn.addEventListener("click", () => {
+                    if (!navigator.clipboard) {
+                        this.inputField.select();
+                        document.execCommand("copy");
+                        return;
+                    }
+                    this.inputField.select();
+                    this.inputField.setSelectionRange(0, 99999);
+                    navigator.clipboard.writeText(this.inputField.value);
+                });
+                this.dialogRequestReject.addEventListener("click", () => {
+                    this.rejectRequest();
+                });
+                this.dialogRequestAccept.addEventListener("click", () => {
+                    this.acceptRequest();
+                });
+            };
+
+            open = () => {
+                this.targetState = "open";
+
+                // 1. Execute visual changes synchronously and immediately
+                this.overlay.classList.add("active");
+                this.dialog.classList.add("active");
+                this.closeBtn.addEventListener("click", this.triggerClose);
+                this.overlay.addEventListener("click", this.triggerClose);
+
+                // 2. Queue the async work
+                this.taskQueue = this.taskQueue.then(async () => {
+                    // Ignore this task if the user changed their mind before it started
+                    if (this.targetState !== "open") return;
+                    
+                    // Don't fetch again if we are already opened
+                    if (this.currentState === "open") return;
+
+                    await this.openAsync();
+                    
+                    this.currentState = "open";
+                    console.log("Data opened");
+                }).catch(console.error);
             };
             close = () => {
+                this.targetState = "closed";
+
+                // 1. Execute visual changes synchronously and immediately
+                this.closeRequest();
+                this.overlay.classList.remove("active");
+                this.dialog.classList.remove("active");
+                this.closeBtn.removeEventListener("click", this.triggerClose);
+                this.overlay.removeEventListener("click", this.triggerClose);
+
+                // 2. Queue the async work
+                this.taskQueue = this.taskQueue.then(async () => {
+                    // Ignore this task if the user changed their mind before it started
+                    if (this.targetState !== "closed") return;
+                    
+                    // Don't teardown again if we are already closed
+                    if (this.currentState === "closed") return;
+
+                    await this.closeAsync();
+
+                    this.currentState = "closed";
+                    console.log("Data closed");
+                }).catch(console.error);
+            };
+
+            openAsync = async () => {
+                this.loading.classList.remove("hide");
+                this.inputField.parentElement.classList.add("prefix");
+                this.inputField.disabled = true;
+
+                const pairCode = await server.pairCreate();
+                server.addEventListener("pair-request", this.openRequest);
+
+                this.inputField.value = pairCode;
+                this.loading.classList.add("hide");
+                this.inputField.parentElement.classList.remove("prefix");
+                this.inputField.disabled = false;
+            };
+            closeAsync = async () => {
+                this.loading.classList.remove("hide");
+                this.inputField.parentElement.classList.add("prefix");
+                this.inputField.disabled = true;
+                this.inputField.value = "";
+
+                await server.pairDelete();
+                server.removeEventListener("pair-request", this.openRequest);
+            };
+                
+            triggerClose = () => {
+                this.dispatchEvent(new CustomEvent("close"));
+            };
+            openRequest = (event) => {
+                this.closeBtn.removeEventListener("click", this.triggerClose);
+                this.overlay.removeEventListener("click", this.triggerClose);
+                this.dialog.classList.remove("active");
+
+                const detail = event.detail;
+                const timeout = detail["timeout"];
+                const ip = detail["ip"];
+
+                this.dialogRequest.classList.add("active");
+                let infoText = localization.get("new.share.request-info");
+                infoText = localization.putParameters(infoText, new Map([
+                    ["ipAddress", ip],
+                ]));
+                this.dialogRequestInfo.innerHTML = infoText;
+
+                this.dialogRequestStartTime = Date.now();
+                this.dialogRequestUpdateInterval = setInterval(() => {
+                    const progress = (Date.now() - this.dialogRequestStartTime) / timeout * 10000;
+                    this.dialogRequestBar.value = progress;
+                    if (progress >= 10000) {
+                        this.rejectRequest();
+                    }
+                }, 16);
+
+                server.addEventListener("pair-reject", this.closeRequest);
 
             };
+            closeRequest = (event) => {
+                server.removeEventListener("pair-reject", this.closeRequest);
+                this.closeBtn.addEventListener("click", this.triggerClose);
+                this.overlay.addEventListener("click", this.triggerClose);
+                this.dialogRequest.classList.remove("active");
+                this.dialog.classList.add("active");
+                clearInterval(this.dialogRequestUpdateInterval);
+            };
+            rejectRequest = async () => {
+                try {
+                    await server.pairReject();
+                } catch (e) {
+                    
+                }
+                this.closeRequest();
+            };
+            acceptRequest = async () => {
+                try {
+                    await server.pairReject();
+                } catch (e) {
+                    
+                }
+                this.closeRequest();
+            };
+            
         };
-        const NewRequestDialog = class extends EventTarget {
+        
+        const JoinDialog = class extends EventTarget {
             constructor() {
                 super();
+                this.overlay = document.getElementById("dialog-overlay");
+                this.dialog = document.getElementById("dialog-room-joining");
+                this.closeBtn = document.getElementById("btn-room-joining-close");
+                this.infoText = document.getElementById("dialog-room-joining-info");
+                this.loadingBar = document.getElementById("room-joining-progress");
+
+                this.startTime = 0;
+                this.timeout = 10000;
+                this.loadingInterval = -1;
+                this.cancelPromise = undefined;
             };
             open = () => {
+                this.overlay.classList.add("active");
+                this.dialog.classList.add("active");
+                this.closeBtn.addEventListener("click", this.cancelRequest);
+                this.overlay.addEventListener("click", this.cancelRequest);
+                server.addEventListener("pair-reject", this.rejectRequest);
 
+                this.startTime = Date.now();
+                this.loadingInterval = setInterval(() => {
+                    const progress = (Date.now() - this.startTime) / this.timeout * 10000;
+                    this.loadingBar.value = progress;
+                }, 16);
             };
             close = () => {
-
+                this.overlay.classList.remove("active");
+                this.dialog.classList.remove("active");
+                this.closeBtn.removeEventListener("click", this.cancelRequest);
+                this.overlay.removeEventListener("click", this.cancelRequest);
+                server.removeEventListener("pair-reject", this.rejectRequest);
+            };
+            setInit(ip, timeout) {
+                let infoText = localization.get("new.join.dialog-info");
+                infoText = localization.putParameters(infoText, new Map([
+                    ["ipAddress", ip],
+                ]));
+                this.infoText.innerHTML = infoText;
+                this.timeout = timeout;
+            };
+            cancelRequest = async () => {
+                if (this.cancelPromise !== undefined) {
+                    return;
+                }
+                this.cancelPromise = server.pairReject();
+                await this.cancelPromise;
+                this.cancelPromise = undefined;
+                this.dispatchEvent(new CustomEvent("close", {
+                    "detail": {
+                        "type": "cancel"
+                    }
+                }));
+            };
+            rejectRequest = async () => {
+                this.dispatchEvent(new CustomEvent("close", {
+                    "detail": {
+                        "type": "reject"
+                    }
+                }));
             };
         };
-        const NewJoiningDialog = class extends EventTarget {
-            constructor() {
-                super();
-            };
-            open = () => {
 
-            };
-            close = () => {
-
-            };
-        };
-        const NewLoadingDialog = class extends EventTarget {
-            constructor() {
-                super();
-            };
-            open = () => {
-
-            };
-            close = () => {
-
-            };
-        };
+        this.createDialog = new CreateDialog();
+        this.joinDialog = new JoinDialog();
 
         this.screen = document.getElementById("screen-new");
+        this.joinBtn = document.getElementById("btn-new-join");
+        this.joinLoading = document.getElementById("join-load");
+        this.codeInput = document.getElementById("input-new-code");
+        this.codeInputError = document.getElementById("join-error-text");
+        this.createBtn = document.getElementById("btn-new-create");
 
+        this.joinBtn.addEventListener("click", async () => {
+            this.codeInput.parentElement.classList.remove("invalid");
+            const code = this.codeInput.value.trim();
+
+            this.joinLoad(true);
+            let req;
+            try {
+                req = await server.pairRequest(code);
+                console.log("Pair request accepted:", req);
+            } catch (e) {
+
+            }
+            this.joinLoad(false);
+
+            if (req === undefined) {
+                console.log("Pair request accepted:", req);
+                this.codeInput.parentElement.classList.add("invalid");
+                this.codeInputError.innerText = localization.get("new.join.code-invalid");
+                return;
+            }
+
+            this.joinDialog.setInit(req["ip"], req["timeout"]);
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": this.joinDialog
+                }
+            }));
+            
+        });
+        this.joinDialog.addEventListener("close", () => {
+            const detail = event.detail;
+            const type = detail["type"];
+            if (type === "reject") {
+                this.codeInput.parentElement.classList.add("invalid");
+                this.codeInputError.innerText = localization.get("new.join.code-rejected");
+            }
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": undefined
+                }
+            }));
+        });
+        this.createBtn.addEventListener("click", () => {
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": this.createDialog
+                }
+            }));
+        });
+        this.createDialog.addEventListener("close", () => {
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": undefined
+                }
+            }));
+        });
     };
     open = () => {
         this.screen.classList.remove("hide");
+        this.codeInput.parentElement.classList.remove("invalid");
+        
+        this.joinLoad(false);
     };
     close = () => {
         this.screen.classList.add("hide");
+
+        this.codeInput.value = "";
+        this.joinLoad(false);
     };
+
+    joinLoad(isOn) {
+        if (isOn) {
+            this.codeInput.parentElement.classList.add("prefix");
+            this.joinLoading.classList.remove("hide");
+            this.codeInput.disabled = true;
+        } else {
+            this.codeInput.parentElement.classList.remove("prefix");
+            this.joinLoading.classList.add("hide");
+            this.codeInput.disabled = false;
+        }
+    }
 };
 
 const DownloadsScreen = class extends EventTarget {
@@ -1738,6 +2124,10 @@ const MainUI = class {
 
         this.settingsDialog.addEventListener("close", () => {
             this.dialogSwitch(undefined);
+        });
+
+        this.newScreen.addEventListener("dialog", (event) => {
+            this.dialogSwitch(event.detail.dialog);
         });
 
         // load path

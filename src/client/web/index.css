@@ -328,3 +328,32 @@ body.dark {
     display: flex;
     flex-direction: column;
 }
+
+
+/* Create dialog*/
+.room-create-fields {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+}
+
+.room-create-fields > div:nth-child(1) {
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+.room-create-fields > button:nth-child(2) {
+    min-width: 40px;
+}
+
+
+.dialog-room-request-buttons {
+    display: flex;
+    justify-content: space-around;
+}
+
+.join-nav {
+    align-items: initial;
+}
