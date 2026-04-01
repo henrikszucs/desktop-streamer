@@ -217,9 +217,20 @@ globalThis.enviroment = enviroment;
 const Server = class extends EventTarget {
     constructor() {
         super();
+        this.address = "";
+        this.communicator = null;
+        this.isOnline = false;
+        this.ws = null;
+
+        this.webRTCConfig = {};
+        this.joinId = "";
+        this.peerCode = "";
+        this.hostCode = "";
+        this.webRTC = null;
     };
-    async load(address) {
+    async load(address, webRTCConfig={}) {
         this.address = address;
+        this.webRTCConfig = webRTCConfig;
         this.communicator = new Communicator({
             "sender": function() {},
             "interactTimeout": 3000,    //the max timeout between two packet arrive
@@ -334,12 +345,10 @@ const Server = class extends EventTarget {
 
         // pair accept (peer)
         if (message["type"] === "pair-accept") {
-            this.dispatchEvent(new CustomEvent("pair-accept", {
-                "detail": {
-                    "joinId": message["joinId"],
-                    "peerCode": message["peerCode"]
-                }
-            }));
+            this.joinId = message["joinId"];
+            this.peerCode = message["peerCode"];
+
+            this.dispatchEvent(new CustomEvent("pair-accept"));
             return;
         }
 
@@ -398,10 +407,9 @@ const Server = class extends EventTarget {
         if (!data["success"]) {
             throw new Error("Failed to request pair");
         }
-        return {
-            "joinId": data["joinId"],
-            "hostCode": data["hostCode"]
-        };
+        this.joinId = data["joinId"];
+        this.hostCode = data["hostCode"];
+        return;
     };
     async pairReject() {
         const msg = this.communicator.invoke({
@@ -427,28 +435,50 @@ const Server = class extends EventTarget {
     };
 
     // joining
-    async joinConnect(joinId, peerCode, hostCode) {
+    async joinConnect() {
+        if (this.joinId === undefined) {
+            throw new Error("joinId is required");
+        }
+        if (this.peerCode === undefined && this.hostCode === undefined) {
+            throw new Error("Either peerCode or hostCode is required");
+        }
         const startMsg = {
             "type": "join-connect",
-            "joinId": joinId,
+            "joinId": this.joinId,
         };
-        if (peerCode !== undefined) {
-            startMsg["peerCode"] = peerCode;
-        } else if (hostCode !== undefined) {
-            startMsg["hostCode"] = hostCode;
+        if (this.peerCode !== undefined) {
+            startMsg["peerCode"] = this.peerCode;
+        } else if (this.hostCode !== undefined) {
+            startMsg["hostCode"] = this.hostCode;
         }
-        const msg = this.communicator.invoke({
-            "peerCode": peerCode,
-            "hostCode": hostCode
-        });
+        const msg = this.communicator.invoke(startMsg);
         await msg.wait();
-
+        if (!msg.data["success"]) {
+            throw new Error("Failed to connect join");
+        }
+        return;
     };
     async joinRequest() {
-        
+        // webRTC start request
+        const msg = this.communicator.invoke({
+            "type": "join-request",
+            "isInvoke": true,
+            "value": {
+                "hello": "world"
+            }
+        });
+        await msg.wait();
     };
     async joinDisconnect(joinId) {
-
+        const msg = this.communicator.invoke({
+            "type": "join-disconnect",
+            "joinId": joinId
+        });
+        await msg.wait();
+        this.joinId = "";
+        this.peerCode = "";
+        this.hostCode = "";
+        this.webRTC = null;
     };
 };
 const server = new Server();
@@ -507,7 +537,7 @@ const MenuComponent = class extends EventTarget {
             close = () => {
                 this.overlay.classList.remove("active");
                 this.dialog.classList.remove("active");
-                window.addEventListener("resize", this.resize);
+                window.removeEventListener("resize", this.resize);
                 this.overlay.removeEventListener("click", this.triggerClose);
                 
             };
@@ -1732,7 +1762,7 @@ const NewScreen = class extends EventTarget {
                 server.addEventListener("pair-reject", this.closeRequest);
 
             };
-            closeRequest = (event) => {
+            closeRequest = () => {
                 server.removeEventListener("pair-reject", this.closeRequest);
                 this.closeBtn.addEventListener("click", this.triggerClose);
                 this.overlay.addEventListener("click", this.triggerClose);
@@ -1749,12 +1779,20 @@ const NewScreen = class extends EventTarget {
                 this.closeRequest();
             };
             acceptRequest = async () => {
+                let isError = false;
                 try {
-                    await server.pairReject();
+                    await server.pairAccept();
                 } catch (e) {
-                    
+                    isError = true;
                 }
-                this.closeRequest();
+                if (isError) {
+                    this.closeRequest();
+                    return;
+                }
+                
+                console.log("Pair request accepted.");
+                this.dispatchEvent(new CustomEvent("join"));
+                return;
             };
             
         };
@@ -1779,6 +1817,7 @@ const NewScreen = class extends EventTarget {
                 this.closeBtn.addEventListener("click", this.cancelRequest);
                 this.overlay.addEventListener("click", this.cancelRequest);
                 server.addEventListener("pair-reject", this.rejectRequest);
+                server.addEventListener("pair-accept", this.acceptRequest);
 
                 this.startTime = Date.now();
                 this.loadingInterval = setInterval(() => {
@@ -1792,6 +1831,8 @@ const NewScreen = class extends EventTarget {
                 this.closeBtn.removeEventListener("click", this.cancelRequest);
                 this.overlay.removeEventListener("click", this.cancelRequest);
                 server.removeEventListener("pair-reject", this.rejectRequest);
+                server.removeEventListener("pair-accept", this.acceptRequest);
+                clearInterval(this.loadingInterval);
             };
             setInit(ip, timeout) {
                 let infoText = localization.get("new.join.dialog-info");
@@ -1820,6 +1861,10 @@ const NewScreen = class extends EventTarget {
                         "type": "reject"
                     }
                 }));
+            };
+            acceptRequest = async () => {
+                console.log("Pair request accepted.");
+                this.dispatchEvent(new CustomEvent("join"));
             };
         };
 
@@ -1875,6 +1920,10 @@ const NewScreen = class extends EventTarget {
                 }
             }));
         });
+        this.joinDialog.addEventListener("join", () => {
+            this.dispatchEvent(new CustomEvent("join"));
+        });
+
         this.createBtn.addEventListener("click", () => {
             this.dispatchEvent(new CustomEvent("dialog", {
                 "detail": {
@@ -1889,6 +1938,9 @@ const NewScreen = class extends EventTarget {
                 }
             }));
         });
+        this.createDialog.addEventListener("join", () => {
+            this.dispatchEvent(new CustomEvent("join"));
+        });
     };
     open = () => {
         this.screen.classList.remove("hide");
@@ -1898,6 +1950,11 @@ const NewScreen = class extends EventTarget {
     };
     close = () => {
         this.screen.classList.add("hide");
+        this.dispatchEvent(new CustomEvent("dialog", {
+            "detail": {
+                "dialog": undefined
+            }
+        }));
 
         this.codeInput.value = "";
         this.joinLoad(false);
@@ -2063,8 +2120,29 @@ const DownloadsScreen = class extends EventTarget {
 };
 
 
+const RoomScreen = class extends EventTarget {
+    constructor() {
+        super();
+        this.navLeft = document.getElementById("nav-left");
+        this.navTop = document.getElementById("nav-top");
+        this.main = document.getElementById("screen-main");
+        this.screen = document.getElementById("screen-room");
+    }
+    open = () => {
+        this.navLeft.classList.add("hide");
+        this.navTop.classList.add("hide");
+        this.main.classList.add("hide");
+        this.screen.classList.remove("hide");
+    };
+    close = () => {
+        this.navLeft.classList.remove("hide");
+        this.navTop.classList.remove("hide");
+        this.main.classList.remove("hide");
+        this.screen.classList.add("hide");
+    };
+};
 
- 
+
 
 const MainUI = class {
     constructor() {
@@ -2100,6 +2178,8 @@ const MainUI = class {
         this.newScreen = new NewScreen();
         this.downloadsScreen = new DownloadsScreen();
         this.settingsDialog = new SettingsDialog();
+        this.roomScreen = new RoomScreen();
+        globalThis.roomScreen = this.roomScreen;
 
         // connect buttons to component calls
         this.dialog = this.loadingDialog;
@@ -2129,6 +2209,9 @@ const MainUI = class {
         this.newScreen.addEventListener("dialog", (event) => {
             this.dialogSwitch(event.detail.dialog);
         });
+        this.newScreen.addEventListener("join", () => {
+            this.screenSwitch(undefined);
+        });
 
         // load path
         window.addEventListener("popstate", this.loadPath);
@@ -2139,14 +2222,21 @@ const MainUI = class {
         this.loadPath();
     };
     switchOffline() {
+        this.screenSwitch(undefined);
         this.dialogSwitch(this.loadingDialog);
     };
     dialogSwitch(newDialog) {
+        if (this.dialog === newDialog) {
+            return;
+        }
         this.dialog?.close();
         this.dialog = newDialog;
         this.dialog?.open();
     };
     screenSwitch(newScreen) {
+        if (this.screen === newScreen) {
+            return;
+        }
         console.log("switch screen");
         this.dialogSwitch(undefined);
         this.screen?.close();
@@ -2171,9 +2261,20 @@ const MainUI = class {
             this.screenSwitch(this.newScreen);
         }
     };
+    setClosePrevention(isPrevented) {
+        if (isPrevented) {
+            window.addEventListener("beforeunload", this.closePreventHandler);
+        } else {
+            window.removeEventListener("beforeunload", this.closePreventHandler);
+        }
+    };
+    closePreventHandler(event) {
+        event.preventDefault();
+        event.returnValue = true;
+    };
 };
 const mainUI = new MainUI();
-
+globalThis.mainUI = mainUI;
 
 const main = async function() {
     // load enviroment (DOM, configuration, desktop libs, etc.)
@@ -2191,6 +2292,6 @@ const main = async function() {
     });
 
     // load server connection
-    await server.load("wss://" + enviroment.server["domain"] + ":" + enviroment.server["ws"]);
+    await server.load("wss://" + enviroment.server["domain"] + ":" + enviroment.server["ws"], enviroment.server["webRTCConfig"]);
 };
 main();

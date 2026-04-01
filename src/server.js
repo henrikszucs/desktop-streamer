@@ -773,14 +773,16 @@ const Server = class {
                 });
                 return;
             }
-            if (pair["hostClientId"] !== clientId) {
+            const hostClientId = pair["hostClientId"];
+            const peerClientId = pair["peerClientId"];
+            if (hostClientId !== clientId) {
                 messageObj.send({
                     "success": false
                 });
                 return;
             }
             
-            const joinInfo = await this.joinCreate(pair["hostClientId"], pair["peerClientId"]);
+            const joinInfo = await this.joinCreate(hostClientId, peerClientId);
             if (joinInfo === undefined) {
                 messageObj.send({
                     "success": false
@@ -788,18 +790,20 @@ const Server = class {
                 return;
             }
 
-            const peerClient = this.clients.get(pair["peerClientId"]);
-            peerClient["com"].send({
+            const peerClient = this.clients.get(peerClientId);
+            const peerMessage = peerClient["com"].send({
                 "type": "pair-accept",
-                "hostCode": joinInfo["hostCode"],
-                "joinCode": joinInfo["peerCode"]
+                "joinId": joinInfo["joinId"],
+                "peerCode": joinInfo["peerCode"]
             });
+            await peerMessage.wait();
 
             messageObj.send({
                 "success": true,
-                "hostCode": joinInfo["hostCode"],
-                "joinCode": joinInfo["peerCode"]
+                "joinId": joinInfo["joinId"],
+                "hostCode": joinInfo["hostCode"]
             });
+            await messageObj.wait();
             return;
         }
 
@@ -871,11 +875,16 @@ const Server = class {
 
         if (message["type"] === "join-request") {
             /*{
+                "isInvoke": boolean,
                 "value": string,
             }*/
             /*{
+                "success": boolean,
+                "isInvoke": boolean,
                 "value": boolean,
             }*/
+            await this.joinRequest(clientId, messageObj);
+            return;
         }
 
         if (message["type"] === "join-disconnect") {
@@ -1071,6 +1080,7 @@ const Server = class {
         hostClient["joinId"] = joinId;
         peerClient["joinId"] = joinId;
 
+        const pairCode = hostClient["pairCode"];
         await this.pairDelete(pairCode, false, false, false);
         await this.pairDelete(pairCode, true, false, false);
 
@@ -1114,7 +1124,7 @@ const Server = class {
         }
         return true;
     };
-    async joinRequest(clientId, value) {
+    async joinRequest(clientId, messageObj) {
         // check client
         const client = this.clients.get(clientId);
         if (client === undefined) {
@@ -1126,14 +1136,66 @@ const Server = class {
         if (join === undefined) {
             return false;
         }
-        // send request to other side and wait for response
         const otherClientId = join["hostClientId"] === clientId ? join["peerClientId"] : join["hostClientId"];
         const otherClient = this.clients.get(otherClientId);
         if (otherClient === undefined) {
             return false;
         }
-        // TODO: add timeout and retry
 
+        // TODO: add timeout and retry
+        let isError = false;
+        let isEnd = false;
+        while (isError === false && isEnd === false) {
+            let otherMessageObj;
+            if (messageObj.data["isInvoke"] === true) {
+                otherMessageObj = otherClient["com"].invoke({
+                    "type": "join-request",
+                    "isInvoke": true,
+                    "value": messageObj.data["value"]
+                });
+            } else {
+                otherMessageObj = otherClient["com"].send({
+                    "type": "join-request",
+                    "isInvoke": false,
+                    "value": messageObj.data["value"]
+                });
+            }
+            await otherMessageObj.wait();
+            if (otherMessageObj.error !== "") {
+                messageObj.send({
+                    "success": false
+                });
+                isError = true;
+            } else {
+                if (otherMessageObj.data["isInvoke"] === true) {
+                    messageObj.invoke({
+                        "success": true,
+                        "isInvoke": true,
+                        "value": otherMessageObj.data["value"]
+                    });
+                } else {
+                    messageObj.send({
+                        "success": true,
+                        "isInvoke": false,
+                        "value": otherMessageObj.data["value"]
+                    });
+                    isEnd = true;
+                }
+                await messageObj.wait();
+                if (messageObj.error !== "") {
+                    otherMessageObj.send({
+                        "success": false
+                    });
+                    isError = true;
+                }
+                if (isEnd === true) {
+                    otherMessageObj.send({
+                        "success": true,
+                        "isInvoke": false
+                    });
+                }
+            }
+        }
     };
     async joinDisconnectByClientId(clientId) {
         // filter clientId
