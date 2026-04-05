@@ -46,6 +46,20 @@ const dict = {
             "hu": "Menü"
         },
     },
+    "downloads": {
+        "title": {
+            "en": "Download Desktop Streamer",
+            "hu": "Desktop Streamer letöltése"
+        },
+        "info": {
+            "en": "Get the Desktop Streamer client program for your computer to full remote control.",
+            "hu": "Szerezd meg a Desktop Streamer kliens programot a számítógépedhez a teljes távoli vezérléshez."
+        },
+        "btn": {
+            "en": "Download",
+            "hu": "Letöltés"
+        }
+    },
     "settings": {
         "title": {
             "en": "Settings",
@@ -433,6 +447,46 @@ const dict = {
                 "en": "Establishing connection from <span class=\"bold\">{ipAddress}</span> IP address. Please wait...",
                 "hu": "Kapcsolódás a kiszolgáló eszközhöz <span class=\"bold\">{ipAddress}</span> IP címről. Kérlek várj..."
             },
+        }
+    },
+    "room": {
+        "exit": {
+            "title": {
+                "en": "Exit connection",
+                "hu": "Kapcsolat bontása"
+            },
+            "info": {
+                "en": "Are you sure you want to exit the room?",
+                "hu": "Biztosan bontani akarod a kapcsolatot?"
+            },
+            "cancel": {
+                "en": "Cancel",
+                "hu": "Mégse"
+            },
+            "confirm": {
+                "en": "Exit",
+                "hu": "Kilépés"
+            }
+        },
+        "bitrate": {
+            "en": "Bitrate",
+            "hu": "Bitráta"
+        },
+        "framerate": {
+            "en": "Framerate",
+            "hu": "Képkocka sebesség"
+        },
+        "ai": {
+            "en": "AI enchante",
+            "hu": "AI javítás"
+        },
+        "resolution": {
+            "en": "Resolution",
+            "hu": "Felbontás"
+        },
+        "permission": {
+            "en": "Request permission",
+            "hu": "Engedélykérés"
         }
     }
 };

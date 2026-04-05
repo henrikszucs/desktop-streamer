@@ -419,6 +419,30 @@
             </div>
         </dialog>
 
+        <dialog class="" id="dialog-room-exit">
+            <nav>
+                <h5 data-i18n="room.exit.title">Exit room</h5>
+                <div class="max"></div>
+                <button class="circle transparent" id="btn-room-exit-cancel">
+                    <i>close</i>
+                </button>
+            </nav>
+            <div class="no-border">
+                <p data-i18n="room.exit.info">Are you sure you want to exit the room?</p>
+                <div class="space"></div>
+                <div class="dialog-room-exit-buttons">
+                    <button class="tertiary round" id="btn-room-exit-cancel-2">
+                        <i>close</i>
+                        <span data-i18n="room.exit.cancel">Cancel</span>
+                    </button>
+                    <button class="primary round" id="btn-room-exit-confirm">
+                        <i>check</i>
+                        <span data-i18n="room.exit.confirm">Exit</span>
+                    </button>
+                </div>
+            </div>
+        </dialog>
+
         <!-- Surfaces -->
         <main class="surface-container round padding bottom-margin center-align" id="screen-main">
             <!-- New screen -->
@@ -451,8 +475,8 @@
 
             <!-- Downloads page -->
             <div class="hide center-align" id="screen-downloads">
-                <h3>Download Desktop Streamer</h3>
-                <h6 class="small">Get the Desktop Streamer client program for your computer to full remote control.</h6>
+                <h3 data-i18n="downloads.title">Download Desktop Streamer</h3>
+                <h6 class="small" data-i18n="downloads.info">Get the Desktop Streamer client program for your computer to full remote control.</h6>
                 <div class="row center-align wrap gap padding-top">
                     <button class="small-round extra border hide" id="download-win32">
                         <img class="responsive" src="/media/logo-win32.svg">
@@ -484,7 +508,7 @@
                 <div class="row center-align wrap gap padding-top">
                     <button class="small-round extra" id="download-finish">
                         <i>download</i>
-                        Download
+                        <span data-i18n="downloads.btn">Download</span>
                     </button>
                 </div>
             </div>
@@ -493,41 +517,52 @@
         <main class="room-layout hide" id="screen-room">
             <div>
                 <video id="video" playsinline></video>
+                <div id="room-loading">
+                    <progress class="circle indeterminate" value="50" max="100"></progress>
+                </div>
             </div>
             <nav>
                 <div></div>
-                <nav class="toolbar">
+                <nav class="toolbar hide" id="room-toolbar-host">
+                    <a>
+                        <button id="room-host-permission">
+                            <i>share</i>
+                            <span data-i18n="room.permission">Request permission</span>
+                        </button>
+                    </a>
+                </nav>
+                <nav class="toolbar" id="room-toolbar-peer">
                     <a>
                         <button class="circle transparent">
                             <i>speed</i>
-                            <span class="tooltip right">Bitrate</span>
+                            <span class="tooltip right" data-i18n="room.bitrate">Bitrate</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li>
+                            <li class="room-bitrate" data-value="1">
                                 <span>1 Mbps</span>
                                 <i>check</i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="5">
                                 <span>5 Mbps</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="10">
                                 <span>10 Mbps</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="15">
                                 <span>15 Mbps</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="20">
                                 <span>20 Mbps</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="30">
                                 <span>30 Mbps</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="40">
                                 <span>40 Mbps</span>
                                 <i></i>
                             </li>
@@ -536,18 +571,18 @@
                     <a>
                         <button class="circle transparent">
                             <i>motion_blur</i>
-                            <span class="tooltip right">Framerate</span>
+                            <span class="tooltip right" data-i18n="room.framerate">Framerate</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li>
+                            <li class="room-framerate" data-value="25">
                                 <span>25 fps</span>
                                 <i>check</i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="30">
                                 <span>30 fps</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="60">
                                 <span>60 fps</span>
                                 <i></i>
                             </li>
@@ -556,14 +591,14 @@
                     <a>
                         <button class="circle transparent">
                             <i>wand_stars</i>
-                            <span class="tooltip right">AI enchante</span>
+                            <span class="tooltip right" data-i18n="room.ai">AI enchante</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li>
+                            <li class="room-bitrate" data-value="1">
                                 <span>2x framerate</span>
                                 <i>check</i>
                             </li>
-                            <li>
+                            <li class="room-bitrate" data-value="2">
                                 <span>2x resolution</span>
                                 <i></i>
                             </li>
@@ -572,44 +607,38 @@
                     <a>
                         <button class="circle transparent ">
                             <i>screenshot_monitor</i>
-                            <span class="tooltip right">Resolution</span>
+                            <span class="tooltip right" data-i18n="room.resolution">Resolution</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li>Resolution</li>
-                            <li><hr></li>
-                            <li>
+                            <li class="room-resolution" data-value="360">
                                 <span>360p</span>
                                 <i>check</i>
                             </li>
-                            <li>
+                            <li class="room-resolution" data-value="480">
                                 <span>480p</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-resolution" data-value="720">
                                 <span>720p</span>
                                 <i></i>
                             </li>
-                            <li>
+                            <li class="room-resolution" data-value="1080">
                                 <span>1080p</span>
-                                <i></i>
-                            </li>
-                            <li>
-                                <span>4K</span>
                                 <i></i>
                             </li>
                         </menu>
                     </a>
-                    <a>
+                    <a class="room-volume">
                         <i>volume_off</i>
                     </a>
-                    <a>
+                    <a class="room-control">
                         <i>touchpad_mouse_off</i>
                     </a>
-                    <a>
+                    <a class="room-fullscreen">
                         <i>fullscreen</i>
                     </a>
                 </nav>
-                <button class="extra round circle error">
+                <button class="extra round circle error" id="room-exit">
                     <i>close</i>
                 </button>
             </nav>

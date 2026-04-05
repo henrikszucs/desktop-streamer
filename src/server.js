@@ -880,7 +880,6 @@ const Server = class {
             }*/
             /*{
                 "success": boolean,
-                "isInvoke": boolean,
                 "value": boolean,
             }*/
             await this.joinRequest(clientId, messageObj);
@@ -1142,60 +1141,20 @@ const Server = class {
             return false;
         }
 
-        // TODO: add timeout and retry
-        let isError = false;
-        let isEnd = false;
-        while (isError === false && isEnd === false) {
-            let otherMessageObj;
-            if (messageObj.data["isInvoke"] === true) {
-                otherMessageObj = otherClient["com"].invoke({
-                    "type": "join-request",
-                    "isInvoke": true,
-                    "value": messageObj.data["value"]
-                });
-            } else {
-                otherMessageObj = otherClient["com"].send({
-                    "type": "join-request",
-                    "isInvoke": false,
-                    "value": messageObj.data["value"]
-                });
-            }
-            await otherMessageObj.wait();
-            if (otherMessageObj.error !== "") {
-                messageObj.send({
-                    "success": false
-                });
-                isError = true;
-            } else {
-                if (otherMessageObj.data["isInvoke"] === true) {
-                    messageObj.invoke({
-                        "success": true,
-                        "isInvoke": true,
-                        "value": otherMessageObj.data["value"]
-                    });
-                } else {
-                    messageObj.send({
-                        "success": true,
-                        "isInvoke": false,
-                        "value": otherMessageObj.data["value"]
-                    });
-                    isEnd = true;
-                }
-                await messageObj.wait();
-                if (messageObj.error !== "") {
-                    otherMessageObj.send({
-                        "success": false
-                    });
-                    isError = true;
-                }
-                if (isEnd === true) {
-                    otherMessageObj.send({
-                        "success": true,
-                        "isInvoke": false
-                    });
-                }
-            }
+        const otherMessageObj = otherClient["com"].send({
+            "type": "join-request",
+            "value": messageObj.data["value"]
+        });
+
+        if (otherMessageObj.error !== "") {
+            messageObj.send({
+                "success": false
+            });
+            return;
         }
+        messageObj.send({
+            "success": true,
+        });
     };
     async joinDisconnectByClientId(clientId) {
         // filter clientId
@@ -1214,7 +1173,7 @@ const Server = class {
             await this.joinDelete(joinId, true, false, true, "join-disconnect");
         } else if (join["peerClientId"] === clientId) {
             // delete peer with notification and notify host
-             await this.joinDelete(joinId, false, false, true, "join-disconnect");
+            await this.joinDelete(joinId, false, false, true, "join-disconnect");
         }
     };
     async joinDeleteByClientId(clientId) {
@@ -1255,8 +1214,8 @@ const Server = class {
                         "type": type
                     });
                 }
-                if (isNotifyOther) {
-                    const peerClient = this.clients.get(join["peerClientId"]);
+                const peerClient = this.clients.get(join["peerClientId"]);
+                if (isNotifyOther && peerClient !== undefined) {
                     peerClient["com"].send({
                         "type": type
                     });
@@ -1274,8 +1233,8 @@ const Server = class {
                         "type": type
                     });
                 }
-                if (isNotifyOther) {
-                    const hostClient = this.clients.get(join["hostClientId"]);
+                const hostClient = this.clients.get(join["hostClientId"]);
+                if (isNotifyOther && hostClient !== undefined) {
                     hostClient["com"].send({
                         "type": type
                     });
@@ -1292,6 +1251,7 @@ const Server = class {
     
     async clientDisconnect(clientId) {
         this.pairDeleteByClientId(clientId);
+        this.joinDisconnectByClientId(clientId);
         this.clients.delete(clientId);
         console.log("Client disconnected (" + clientId + ")");
     };

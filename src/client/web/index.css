@@ -400,6 +400,13 @@ body.dark {
     padding: 0 !important;
 }
 
-menu {
-    transition: none;
+.dialog-room-exit-buttons {
+    display: flex;
+    justify-content: space-between;
+}
+
+#room-loading {
+    position: absolute;
+    top: calc(50% - 1.5rem);
+    left: calc(50% - 1.5rem);
 }

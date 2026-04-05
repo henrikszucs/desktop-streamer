@@ -213,6 +213,204 @@ const enviroment = new Enviroment();
 globalThis.enviroment = enviroment;
 
 // Server
+const WebRTCTransport = class extends EventTarget {
+    constructor(server, offer) {
+        super();
+        this.server = server;
+
+        this.pc = null;
+        if (offer === undefined) {
+            this.startFunction = this.startHost();
+        } else {
+            this.startFunction = this.startPeer(offer);
+        }
+    };
+
+    async startHost() {
+        this.pc = new RTCPeerConnection(this.server.webRTCConfig);
+        this.pc.addEventListener("icecandidate", this.onIceCandidate);
+        this.pc.addEventListener("connectionstatechange", this.onConnectionStateChange);
+        this.addEventListener("ice-candidate", this.onIceCandidateIncoming);
+
+        await new Promise(async (resolve) => {
+            // data channel open
+            let openedChannels = 0;
+            const openChannel = () => {
+                openedChannels++;
+                if (openedChannels === 6) {
+                    console.log("All channels opened");
+                    resolve();
+                }
+            };
+            this.openDataChannel("system", 0, openChannel);
+            this.openDataChannel("video", 1, openChannel);
+            this.openDataChannel("audio", 2, openChannel);
+            this.openDataChannel("mouse", 3, openChannel);
+            this.openDataChannel("keyboard", 4, openChannel);
+            this.openDataChannel("icon", 5, openChannel);
+
+            // wait answer
+            const handler = async (event) => {
+                const remoteDesc = new RTCSessionDescription(event.detail);
+                await this.pc.setRemoteDescription(remoteDesc);
+
+                this.removeEventListener("answer", handler);
+            };
+            this.addEventListener("answer", handler);
+
+            // send offer
+            const offer = await this.pc.createOffer();
+            await this.pc.setLocalDescription(offer);
+            this.server.communicator.invoke({
+                "type": "join-request",
+                "value": {
+                    "type": "offer",
+                    "value": offer
+                }
+            });
+        });
+
+    
+    };
+
+    async startPeer(offer) {
+        this.pc = new RTCPeerConnection(this.server.webRTCConfig);
+        this.pc.addEventListener("icecandidate", this.onIceCandidate);
+        this.pc.addEventListener("connectionstatechange", this.onConnectionStateChange);
+        this.addEventListener("ice-candidate", this.onIceCandidateIncoming);
+        
+        await new Promise(async (resolve) => {
+            // data channel open
+            let openedChannels = 0;
+            const openChannel = () => {
+                openedChannels++;
+                if (openedChannels === 6) {
+                    console.log("All channels opened");
+                    resolve();
+                }
+            };
+            this.openDataChannel("system", 0, openChannel);
+            this.openDataChannel("video", 1, openChannel);
+            this.openDataChannel("audio", 2, openChannel);
+            this.openDataChannel("mouse", 3, openChannel);
+            this.openDataChannel("keyboard", 4, openChannel);
+            this.openDataChannel("icon", 5, openChannel);
+
+            // set offer
+            const offerDesc = new RTCSessionDescription(offer);
+            await this.pc.setRemoteDescription(offerDesc);
+
+            // create and send answer
+            const answer = await this.pc.createAnswer();
+            await this.pc.setLocalDescription(answer);
+            this.server.communicator.invoke({
+                "type": "join-request",
+                "value": {
+                    "type": "answer",
+                    "value": answer
+                }
+            });
+        });
+    };
+
+    onIceCandidate = async (event) => {
+        const messageObj = this.server.communicator.invoke({
+            "type": "join-request",
+            "value": {
+                "type": "iceCandidate",
+                "value": event.candidate
+            }
+        });
+        await messageObj.wait();
+    };
+
+    onConnectionStateChange = (event) => {
+        console.log("connectionstatechange:", this.pc.connectionState);
+        if (this.pc.connectionState === "connected") {
+                    
+        } else if (this.pc.connectionState === "failed" || this.pc.connectionState === "closed" || this.pc.connectionState === "disconnected") {
+            this.close();
+        }
+    };
+
+    onIceCandidateIncoming = async (event) => {
+        try {
+            await this.pc.addIceCandidate(event.detail);
+        } catch(err) {
+            console.log("Error adding received ICE candidate:", err);
+        }
+    };
+
+    addDataRequest = (data) => {
+        const type = data["type"];
+        const value = data["value"];
+        if (type === "iceCandidate") {
+            this.dispatchEvent(new CustomEvent("ice-candidate", {
+                "detail": value
+            }));
+        } else if (type === "offer") {
+            this.dispatchEvent(new CustomEvent("offer", {
+                "detail": value
+            }));
+        } else if (type === "answer") {
+            this.dispatchEvent(new CustomEvent("answer", {
+                "detail": value
+            }));
+        }
+    };
+
+    openDataChannel = (label, id, cb) => {
+        const channel = this.pc.createDataChannel(label, {"ordered": false, "negotiated": true, "id": id});
+        channel.binaryType = "arraybuffer";
+        channel.addEventListener("open", () => {
+            console.log(`${label} - Data channel opened`);
+            cb(channel);
+        }, { "once": true });
+
+        const communicator = new Communicator({
+            "sender": function() {},
+            "interactTimeout": 3000,    //the max timeout between two packet arrive
+            "timeout": 5000,            //the time for transmit message
+            "packetSize": 1000,         //the maximum size of one packet in bytes (only for ArrayBuffer)
+            "packetTimeout": 1000,      //the max timeout for packets
+            "packetRetry": Infinity,    //number of retring attemts for one packet
+            "sendThreads": 16
+        });
+        communicator.configure({
+            "sender": (data) => {
+                if ((data instanceof ArrayBuffer) === false) {
+                    data = JSON.stringify(data);
+                }
+                channel.send(data);
+            }
+        });
+        channel.addEventListener("message", (event) => {
+            let data = event.data;
+            if (typeof data === "string") {
+                data = JSON.parse(data);
+            }
+            communicator.receive(data);
+        });
+
+        this[`${label}Channel`] = channel;
+        this[`${label}Communicator`] = communicator;
+    };
+
+    close() {
+        this.systemChannel?.close?.();
+        this.videoChannel?.close?.();
+        this.audioChannel?.close?.();
+        this.mouseChannel?.close?.();
+        this.keyboardChannel?.close?.();
+        this.iconChannel?.close?.();
+        this.pc.close();
+    };
+
+    async wait() {
+        await this.startFunction;
+    };
+};
+
 // Handle API calls with WebSocket backend and WebRTC connection
 const Server = class extends EventTarget {
     constructor() {
@@ -352,7 +550,7 @@ const Server = class extends EventTarget {
             return;
         }
 
-
+        // join
         if (message["type"] === "join-connect") {
             this.dispatchEvent(new CustomEvent("join-connect"));
             return;
@@ -369,9 +567,19 @@ const Server = class extends EventTarget {
         }
 
         if (message["type"] === "join-request") {
-            this.dispatchEvent(new CustomEvent("join-request"));
+            // create webRTC connection
+            console.log("Received join request");
+            console.log(message["value"]);
+            if (message["value"]["type"] === "offer") {
+                this.webRTC = new WebRTCTransport(this, message["value"]["value"]);
+                await this.webRTC.wait();
+                this.dispatchEvent(new CustomEvent("join-request"));
+                return;
+            }
+            this.webRTC.addDataRequest(message["value"]);
             return;
         }
+
     };
 
     // pairing
@@ -459,17 +667,14 @@ const Server = class extends EventTarget {
         return;
     };
     async joinRequest() {
-        // webRTC start request
-        const msg = this.communicator.invoke({
-            "type": "join-request",
-            "isInvoke": true,
-            "value": {
-                "hello": "world"
-            }
-        });
-        await msg.wait();
+        this.webRTC = new WebRTCTransport(this);
+        await this.webRTC.wait();
     };
-    async joinDisconnect(joinId) {
+    async joinDisconnect() {
+        if (this.joinId === undefined) {
+            throw new Error("joinId is required");
+        }
+        const joinId = this.joinId;
         const msg = this.communicator.invoke({
             "type": "join-disconnect",
             "joinId": joinId
@@ -1667,7 +1872,7 @@ const NewScreen = class extends EventTarget {
                 this.overlay.classList.add("active");
                 this.dialog.classList.add("active");
                 this.closeBtn.addEventListener("click", this.triggerClose);
-                this.overlay.addEventListener("click", this.triggerClose);
+                //this.overlay.addEventListener("click", this.triggerClose);
 
                 // 2. Queue the async work
                 this.taskQueue = this.taskQueue.then(async () => {
@@ -1815,7 +2020,7 @@ const NewScreen = class extends EventTarget {
                 this.overlay.classList.add("active");
                 this.dialog.classList.add("active");
                 this.closeBtn.addEventListener("click", this.cancelRequest);
-                this.overlay.addEventListener("click", this.cancelRequest);
+                //this.overlay.addEventListener("click", this.cancelRequest);
                 server.addEventListener("pair-reject", this.rejectRequest);
                 server.addEventListener("pair-accept", this.acceptRequest);
 
@@ -2119,7 +2324,6 @@ const DownloadsScreen = class extends EventTarget {
     };
 };
 
-
 const RoomScreen = class extends EventTarget {
     constructor() {
         super();
@@ -2127,19 +2331,130 @@ const RoomScreen = class extends EventTarget {
         this.navTop = document.getElementById("nav-top");
         this.main = document.getElementById("screen-main");
         this.screen = document.getElementById("screen-room");
-    }
+
+        this.toolbarPeer = document.getElementById("room-toolbar-peer");
+        this.toolbarHost = document.getElementById("room-toolbar-host");
+        
+        this.exitBtn = document.getElementById("room-exit");
+
+        // exiting
+        const ExitDialog = class extends EventTarget {
+            constructor() {
+                super();
+                this.overlay = document.getElementById("dialog-overlay");
+                this.el = document.getElementById("dialog-room-exit");
+                this.confirmBtn = document.getElementById("btn-room-exit-confirm");
+                this.cancelBtn = document.getElementById("btn-room-exit-cancel");
+                this.cancelBtn2 = document.getElementById("btn-room-exit-cancel-2");
+            };
+            open = () => {
+                this.overlay.classList.add("active");
+                this.el.classList.add("active");
+                this.confirmBtn.addEventListener("click", this.confirm);
+                this.cancelBtn.addEventListener("click", this.cancel);
+                this.cancelBtn2.addEventListener("click", this.cancel);
+            };
+            close = () => {
+                this.overlay.classList.remove("active");
+                this.el.classList.remove("active");
+                this.confirmBtn.removeEventListener("click", this.confirm);
+                this.cancelBtn.removeEventListener("click", this.cancel);
+                this.cancelBtn2.removeEventListener("click", this.cancel);
+                
+            };
+            confirm = () => {
+                this.dispatchEvent(new CustomEvent("confirm"));
+            };
+            cancel = () => {
+                this.dispatchEvent(new CustomEvent("cancel"));
+            };
+        };
+        this.exitDialog = new ExitDialog();
+        this.exitBtn.addEventListener("click", () => {
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": this.exitDialog
+                }
+            }));
+        });
+        this.exitDialog.addEventListener("confirm", () => {
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": undefined
+                }
+            }));
+            this.exitRequest();
+        });
+        this.exitDialog.addEventListener("cancel", () => {
+            this.dispatchEvent(new CustomEvent("dialog", {
+                "detail": {
+                    "dialog": undefined
+                }
+            }));
+        });
+
+        // host (for browser)
+        this.permissionBtn = document.getElementById("room-host-permission");
+        this.permissionBtn.addEventListener("click", this.permissionRequest.bind(this));
+
+        // peer
+        document.querySelectorAll(".room-bitrate").forEach((el) => {
+            el.addEventListener("click", () => {
+                const bitrate = el.getAttribute("data-value");
+                console.log("Set bitrate to", bitrate);
+            });
+        });
+        
+
+        // for debug
+        globalThis.exitDialog = this.exitDialog;
+    };
     open = () => {
+        this.setClosePrevention(true);
         this.navLeft.classList.add("hide");
         this.navTop.classList.add("hide");
         this.main.classList.add("hide");
         this.screen.classList.remove("hide");
+
+        if (enviroment.desktop.isAvailable === false && server.hostCode !== "") {
+            this.toolbarPeer.classList.add("hide");
+            this.toolbarHost.classList.remove("hide");
+        }
+
+        if (server.peerCode !== "") {
+            this.toolbarPeer.classList.remove("hide");
+            this.toolbarHost.classList.add("hide");
+        }
+
+        server.addEventListener("join-delete", this.exitRequest);
     };
     close = () => {
+        this.setClosePrevention(false);
         this.navLeft.classList.remove("hide");
         this.navTop.classList.remove("hide");
         this.main.classList.remove("hide");
         this.screen.classList.add("hide");
+
+        this.removeEventListener("join-delete", this.exitRequest);
     };
+    exitRequest = () => {
+        this.dispatchEvent(new CustomEvent("exit"));
+    };
+    async permissionRequest() {
+        console.log("Requesting permissions...");
+    };
+    setClosePrevention(isPrevented) {
+        if (isPrevented) {
+            window.addEventListener("beforeunload", this.closePreventHandler);
+        } else {
+            window.removeEventListener("beforeunload", this.closePreventHandler);
+        }
+    };
+    closePreventHandler(event) {
+        event.preventDefault();
+        event.returnValue = true;
+    };
+
 };
 
 
@@ -2210,7 +2525,17 @@ const MainUI = class {
             this.dialogSwitch(event.detail.dialog);
         });
         this.newScreen.addEventListener("join", () => {
-            this.screenSwitch(undefined);
+            window.history.pushState({}, "", "/room");
+            this.screenSwitch(this.roomScreen);
+        });
+
+        this.roomScreen.addEventListener("dialog", (event) => {
+            this.dialogSwitch(event.detail.dialog);
+        });
+        this.roomScreen.addEventListener("exit", () => {
+            server.joinDisconnect();
+            window.history.pushState({}, "", "/");
+            this.screenSwitch(this.newScreen);
         });
 
         // load path
@@ -2243,13 +2568,20 @@ const MainUI = class {
         this.screen = newScreen;
         this.screen?.open();
     };
-    loadPath = () => {
+    loadPath = async () => {
+        // prevent loading path if room
+        if (this.screen === this.roomScreen) {
+            window.history.pushState({}, "", "/room");
+            return;
+        }
+
         let path = window.location.pathname || "/";
         path = path.slice(1);
         path = path.split("/");
 
         if (path[0] === "new") {
             this.screenSwitch(this.newScreen);
+            return;
         } else if (path[0] === "downloads") {
             if (enviroment.desktop.isAvailable || enviroment.server["clients"].length === 0) {
                 window.history.pushState({}, "", "/");
@@ -2257,20 +2589,22 @@ const MainUI = class {
                 return;
             }
             this.screenSwitch(this.downloadsScreen);
+            return;
+        } else if (path[0] === "room") {
+            try {
+                await server.joinConnect();
+            } catch (e) {
+                window.history.pushState({}, "", "/");
+                this.screenSwitch(this.newScreen);
+                return;
+            }
+            this.screenSwitch(this.roomScreen);
+            return;
         } else {
+            window.history.pushState({}, "", "/");
             this.screenSwitch(this.newScreen);
+            return;
         }
-    };
-    setClosePrevention(isPrevented) {
-        if (isPrevented) {
-            window.addEventListener("beforeunload", this.closePreventHandler);
-        } else {
-            window.removeEventListener("beforeunload", this.closePreventHandler);
-        }
-    };
-    closePreventHandler(event) {
-        event.preventDefault();
-        event.returnValue = true;
     };
 };
 const mainUI = new MainUI();
