@@ -217,6 +217,7 @@ const WebRTCTransport = class extends EventTarget {
     constructor(server, offer) {
         super();
         this.server = server;
+        this.isOpen = false;
 
         this.pc = null;
         if (offer === undefined) {
@@ -270,7 +271,8 @@ const WebRTCTransport = class extends EventTarget {
             });
         });
 
-    
+        this.isOpen = true;
+        this.dispatchEvent(new CustomEvent("open"));
     };
 
     async startPeer(offer) {
@@ -311,6 +313,9 @@ const WebRTCTransport = class extends EventTarget {
                 }
             });
         });
+
+        this.isOpen = true;
+        this.dispatchEvent(new CustomEvent("open"));
     };
 
     onIceCandidate = async (event) => {
@@ -558,10 +563,12 @@ const Server = class extends EventTarget {
 
         if (message["type"] === "join-disconnect") {
             this.dispatchEvent(new CustomEvent("join-disconnect"));
+            this.webRTC?.close?.();
             return;
         }
 
         if (message["type"] === "join-delete") {
+            this.webRTC?.close?.();
             this.dispatchEvent(new CustomEvent("join-delete"));
             return;
         }
@@ -680,6 +687,7 @@ const Server = class extends EventTarget {
             "joinId": joinId
         });
         await msg.wait();
+        this.webRTC?.close?.();
         this.joinId = "";
         this.peerCode = "";
         this.hostCode = "";
@@ -2331,6 +2339,7 @@ const RoomScreen = class extends EventTarget {
         this.navTop = document.getElementById("nav-top");
         this.main = document.getElementById("screen-main");
         this.screen = document.getElementById("screen-room");
+        this.loading = document.getElementById("room-loading");
 
         this.toolbarPeer = document.getElementById("room-toolbar-peer");
         this.toolbarHost = document.getElementById("room-toolbar-host");
@@ -2393,6 +2402,8 @@ const RoomScreen = class extends EventTarget {
             }));
         });
 
+        this.isStarted = false;
+
         // host (for browser)
         this.permissionBtn = document.getElementById("room-host-permission");
         this.permissionBtn.addEventListener("click", this.permissionRequest.bind(this));
@@ -2405,7 +2416,6 @@ const RoomScreen = class extends EventTarget {
             });
         });
         
-
         // for debug
         globalThis.exitDialog = this.exitDialog;
     };
@@ -2416,7 +2426,7 @@ const RoomScreen = class extends EventTarget {
         this.main.classList.add("hide");
         this.screen.classList.remove("hide");
 
-        if (enviroment.desktop.isAvailable === false && server.hostCode !== "") {
+        if (server.hostCode !== "" && enviroment.desktop.isAvailable === false) {
             this.toolbarPeer.classList.add("hide");
             this.toolbarHost.classList.remove("hide");
         }
@@ -2426,7 +2436,9 @@ const RoomScreen = class extends EventTarget {
             this.toolbarHost.classList.add("hide");
         }
 
+        server.addEventListener("join-disconnect", this.waitForConnection);
         server.addEventListener("join-delete", this.exitRequest);
+        this.waitForConnection();
     };
     close = () => {
         this.setClosePrevention(false);
@@ -2435,7 +2447,11 @@ const RoomScreen = class extends EventTarget {
         this.main.classList.remove("hide");
         this.screen.classList.add("hide");
 
-        this.removeEventListener("join-delete", this.exitRequest);
+        this.isStarted = false;
+
+        server.removeEventListener("join-disconnect", this.waitForConnection);
+        server.removeEventListener("join-delete", this.exitRequest);
+        server.removeEventListener("join-connect", this.openConnection);
     };
     exitRequest = () => {
         this.dispatchEvent(new CustomEvent("exit"));
@@ -2455,6 +2471,35 @@ const RoomScreen = class extends EventTarget {
         event.returnValue = true;
     };
 
+    openConnection = async () => {
+        server.removeEventListener("join-connect", this.openConnection);
+        await server.joinRequest();
+        this.openConnection();
+    };
+    waitForConnection = async () => {
+        this.loading.classList.remove("hide");
+        if (server.hostCode !== "") {
+            if (this.isStarted === false) {
+                this.isStarted = true;
+                await server.joinRequest();
+                this.openConnection();
+            } else {
+                server.addEventListener("join-connect", this.openConnection);
+            }
+        }
+
+        if (server.peerCode !== "") {
+            if (server.webRTC === null || server.webRTC.isOpen === false) {
+                server.addEventListener("join-request", this.openConnection);
+            } else {
+                this.openConnection();
+            }
+        }
+    };
+    openConnection = () => {
+        this.loading.classList.add("hide");
+        console.log("Connection opened.");
+    };
 };
 
 
