@@ -584,7 +584,7 @@ const Communicator = class {
 
         // delete outdated packets
         const now = Date.now() % 4294967295 - 100;
-        if (sendTime < now || now - sendTime > this.interactTimeout) {
+        if (Math.abs(sendTime - now) > this.interactTimeout) {
             console.warn("outdated packet", sendTime, now);
             return;
         }

@@ -45,6 +45,14 @@ const dict = {
             "en": "Menu",
             "hu": "Menü"
         },
+        "tray-open": {
+            "en": "Open",
+            "hu": "Megnyitás"
+        },
+        "tray-close": {
+            "en": "Close",
+            "hu": "Bezárás"
+        }
     },
     "downloads": {
         "title": {

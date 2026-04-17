@@ -1,12 +1,12 @@
 "use strict";
 
 // import dependencies
+import pako from "./libs/pako/pako.min.mjs";
 import IDB from "./libs/idb/idb.js";
 import Communicator from "./libs/communicator/communicator.js";
 import {BrowserAudioEncoder} from "./libs/ffmpeg-chunkifier/encoder-browser.js";
 import {Decoder, Player} from "./libs/ffmpeg-chunkifier/decoder.js";
 import localization from "./localization.js";
-
 
 // Configuration
 // Task to load enviroment and essential data and desktop libs for the application.
@@ -228,6 +228,7 @@ const WebRTCTransport = class extends EventTarget {
     };
 
     async startHost() {
+        // open connection
         this.pc = new RTCPeerConnection(this.server.webRTCConfig);
         this.pc.addEventListener("icecandidate", this.onIceCandidate);
         this.pc.addEventListener("connectionstatechange", this.onConnectionStateChange);
@@ -246,9 +247,10 @@ const WebRTCTransport = class extends EventTarget {
             this.openDataChannel("system", 0, openChannel);
             this.openDataChannel("video", 1, openChannel);
             this.openDataChannel("audio", 2, openChannel);
-            this.openDataChannel("mouse", 3, openChannel);
-            this.openDataChannel("keyboard", 4, openChannel);
-            this.openDataChannel("icon", 5, openChannel);
+            this.openDataChannel("icon", 3, openChannel);
+            this.openDataChannel("mouse", 4, openChannel);
+            this.openDataChannel("keyboard", 5, openChannel);
+            
 
             // wait answer
             const handler = async (event) => {
@@ -271,15 +273,296 @@ const WebRTCTransport = class extends EventTarget {
             });
         });
 
+        this.audioEncoderBrowser = new BrowserAudioEncoder();
+        this.videoEncoderFFmpeg = new enviroment.desktop.FFmpegVideoEncoder();
         this.isOpen = true;
         this.dispatchEvent(new CustomEvent("open"));
+
+        // setup communication
+        this["systemCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            if (messageObj.data["type"] === "set-video") {
+                const videoSettings = messageObj.data["value"];
+                console.log("Received video settings:", videoSettings);
+                let bitrate = videoSettings["bitrate"];
+                if (bitrate === "0") {
+                    bitrate = "1M";
+                } else if (bitrate === "1") {
+                    bitrate = "5M";
+                } else if (bitrate === "2") {
+                    bitrate = "10M";
+                } else if (bitrate === "3") {
+                    bitrate = "15M";
+                } else if (bitrate === "4") {
+                    bitrate = "20M";
+                } else if (bitrate === "5") {
+                    bitrate = "30M";
+                } else {
+                    bitrate = "40M";
+                }
+                let framerate = videoSettings["framerate"];
+                if (framerate === "0") {
+                    framerate = "25";
+                } else if (framerate === "1") {
+                    framerate = "30";
+                } else {
+                    framerate = "60";
+                }
+                let resolution = videoSettings["resolution"];
+                let width, height;
+                if (resolution === "0") {
+                    width = 640;
+                    height = 360;
+                } else if (resolution === "1") {
+                    width = 854;
+                    height = 480;
+                } else if (resolution === "2") {
+                    width = 1280;
+                    height = 720;
+                } else {
+                    width = 1920;
+                    height = 1080;
+                }
+
+                await this.videoEncoderFFmpeg.end();
+                const ctx = document.getElementById("video").getContext("2d");
+                ctx.width = 1920;
+                ctx.height = 1080;
+                const player = new Player(false, null, ctx);
+                const decoder = new Decoder();
+                decoder.onVideoFrame = (frame) => {
+                    player.appendVideoFrame(frame);
+                };
+                this.videoEncoderFFmpeg.onConfiguration = (config) => {
+                    //console.log("Video configuration:", config);
+                    decoder.appendVideoConfiguration(config);
+                    config["description"] = config["description"].toBase64();
+                    this["systemCommunicator"].send({
+                        "type": "video-configuration",
+                        "value": config
+                    });
+                };
+                this.videoEncoderFFmpeg.onChunk = (chunk) => {
+                    decoder.appendVideoChunk(chunk);
+                    //console.log("Video chunk:", chunk);
+
+                    const chunkAsBinary = new Uint8Array(1 + 4 + 4 + chunk.byteLength);
+                    const view = new DataView(chunkAsBinary.buffer);
+                    if (chunk.type === "key") {
+                        view.setUint8(0, 0);
+                    } else {
+                        view.setUint8(0, 1);
+                    }
+                    view.setUint32(1, chunk.timestamp, true);
+                    view.setUint32(5, chunk.duration, true);
+                    const chunkBuffer = new Uint8Array(chunk.byteLength);
+                    chunk.copyTo(chunkBuffer);
+                    chunkAsBinary.set(chunkBuffer, 9);
+
+                    //console.log("Chunk as binary:", chunkAsBinary);
+                    
+                    this["videoCommunicator"].send(chunkAsBinary.buffer);
+                };
+                this.videoEncoderFFmpeg.onEnd = (error) => {
+                    console.log("Video encoding ended with error code:", error);
+                };
+
+                await this.videoEncoderFFmpeg.start(
+                    enviroment.desktop.ffmpegPath,
+                    [
+                        "-fflags", "+nobuffer+flush_packets",
+                        "-flags", "+low_delay",
+                        "-analyzeduration", "0",         // Don't analyze input
+                        "-probesize", "32",              // Minimum probe size
+                        "-thread_queue_size", "8",       // Small queue"
+
+                        "-filter_complex",
+                        "gfxcapture=monitor_idx=0" +
+                        ":capture_cursor=false" +
+                        ":max_framerate=" + framerate +
+                        ",hwdownload,format=bgra",
+
+                        "-c:v", "h264_nvenc",
+                        "-b:v", bitrate,
+                        "-tune:v", "3",
+                        "-profile:v", "2",
+                        "-level:v", "51",
+                        "-rc:v", "1",
+                        "-rgb_mode:v", "1",
+                        "-delay:v", "0",
+                        "-zerolatency:v", "1",
+                        
+                        "-framerate", framerate,
+                        "-g", "30",             // Keyframe interval (every 30 frames = 0.5s at 60fps)
+                        "-keyint_min", "30",
+                        "-force_key_frames", "expr:gte(t,n_forced*0.5)",
+                        "-f", "mp4",
+                        "-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
+                        "-frag_duration", "16666",
+                        "pipe:1"
+                    ],
+                    {
+                        "codec": "avc1.640033",
+                        "codedWidth": width,
+                        "codedHeight": height,
+                        "hardwareAcceleration": "prefer-hardware",
+                        "optimizeForLatency": true
+                    }
+                );
+
+                // start mouse icon
+                clearInterval(this.iconInterval);
+                this.iconData = [];
+                this.iconInterval = setInterval(async () => {
+                    const icon = enviroment.desktop.Control.Mouse.getIcon();
+                    const width = icon["width"];
+                    const height = icon["height"];
+                    const data = icon["data"];
+                    const xOffset = icon["xOffset"];
+                    const yOffset = icon["yOffset"];
+                    // ignore if same as previous
+                    if (this.iconData.length === data.length && this.iconData.every((value, index) => value === data[index])) {
+                        return;
+                    }
+                    // send icon data
+                    //console.log("Mouse icon:", icon);
+                    this.iconData = data;
+                    const iconAsBinary = new Uint8Array(4 + 4 + 4 + 4 + icon.data.length);
+                    const view = new DataView(iconAsBinary.buffer);
+                    view.setUint32(0, icon.width);
+                    view.setUint32(4, icon.height);
+                    view.setInt32(8, icon.xOffset);
+                    view.setInt32(12, icon.yOffset);
+                    const iconBuffer = new Uint8Array(data);
+                    iconAsBinary.set(iconBuffer, 16);
+                    const compressed = pako.deflate(iconAsBinary);
+                    //console.log("Compressed icon size:", compressed.byteLength);
+                    this["iconCommunicator"].send(compressed.buffer);
+                }, 1000 / 25);
+
+                // test latency on system channel
+                let test = null;
+                test = async () => {
+                    const startTime = Date.now();
+                    const MB = 10;
+                    const data = new ArrayBuffer(1048576*MB);
+                    const msg = this["audioCommunicator"].send(data);
+                    await msg.wait();
+                    const endTime = Date.now();
+                    console.log("Round-trip latency for "+MB+"MB message:", endTime - startTime, "ms");
+                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                    test();
+                };
+
+            } else if (messageObj.data["type"] === "set-audio") {
+                const audioSettings = messageObj.data["value"];
+                console.log("Received video settings:", audioSettings);
+                let mute = audioSettings["mute"];
+
+
+
+                // audio setup
+                await this.audioEncoderBrowser.end();
+                if (mute === "1") {
+                    return;
+                }
+                this.audioEncoderBrowser.onConfiguration = (config) => {
+                    console.log("Audio configuration:", config);
+                    config["description"] = new Uint8Array(config["description"]).toBase64();
+                    this["systemCommunicator"].send({
+                        "type": "audio-configuration",
+                        "value": config
+                    });
+                };
+                this.audioEncoderBrowser.onChunk = (chunk) => {
+                    //console.log("Audio chunk:", chunk);
+                    const chunkAsBinary = new Uint8Array(1 + 4 + 4 + chunk.byteLength);
+                    const view = new DataView(chunkAsBinary.buffer);
+                    if (chunk.type === "key") {
+                        view.setUint8(0, 0);
+                    } else {
+                        view.setUint8(0, 1);
+                    }
+                    view.setUint32(1, chunk.timestamp, true);
+                    view.setUint32(5, chunk.duration, true);
+                    const chunkBuffer = new Uint8Array(chunk.byteLength);
+                    chunk.copyTo(chunkBuffer);
+                    chunkAsBinary.set(chunkBuffer, 9);
+
+                    //console.log("Chunk as binary:", chunkAsBinary);
+
+                    this["audioCommunicator"].send(chunkAsBinary.buffer);
+                };
+                this.audioEncoderBrowser.onEnd = (error) => {
+                    console.log("Audio encoding ended with error code:", error);
+                };
+                await this.audioEncoderBrowser.start({
+                    "codec": "mp4a.40.2",
+                    "sampleRate": 48000,
+                    "numberOfChannels": 2
+                });
+            }
+        });
+
+        const display = enviroment.desktop.Control.Display.list()[0];
+        const fullscreenWidth = display["width"] * display["scaleFactor"];
+        const fullscreenHeight = display["height"] * display["scaleFactor"];
+
+        this["mouseCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            const data = messageObj.data;
+            if (typeof data["x"] === "number") {
+                enviroment.desktop.Control.Mouse.setX(data["x"] * fullscreenWidth);
+            }
+            if (typeof data["y"] === "number") {
+                enviroment.desktop.Control.Mouse.setX(data["y"] * fullscreenHeight);
+            }
+            if (typeof data["button"] === "object") {
+                const key = data["button"]["key"];
+                const state = data["button"]["state"];
+                if (state === "down") {
+                    enviroment.desktop.Control.Mouse.buttonDown(key);
+                } else if (state === "up") {
+                    enviroment.desktop.Control.Mouse.buttonUp(key);
+                }
+            }
+            if (typeof data["wheel"] === "object") {
+                const direction = data["button"]["direction"];
+                const amount = data["button"]["amount"];
+                if (direction === "up") {
+                    enviroment.desktop.Control.Mouse.scrollUp(amount);
+                } else if (direction === "down") {
+                    enviroment.desktop.Control.Mouse.scrollDown(amount);
+                } else if (direction === "left") {
+                    enviroment.desktop.Control.Mouse.scrollUp(amount, true);
+                } else if (direction === "right") {
+                    enviroment.desktop.Control.Mouse.scrollDown(amount, true);
+                }
+            }
+        });
+
+        this["keyboardCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            const data = messageObj.data;
+            if (typeof data["button"] === "object") {
+                const key = data["key"]["key"];
+                const state = data["key"]["state"];
+                if (state === "up") {
+                    enviroment.desktop.Control.Keyboard.keyUp(key);
+                } else if (state === "down") {
+                    enviroment.desktop.Control.Keyboard.keyDown(key);
+                }
+            }
+        });
     };
 
     async startPeer(offer) {
+        // open connection
         this.pc = new RTCPeerConnection(this.server.webRTCConfig);
         this.pc.addEventListener("icecandidate", this.onIceCandidate);
         this.pc.addEventListener("connectionstatechange", this.onConnectionStateChange);
         this.addEventListener("ice-candidate", this.onIceCandidateIncoming);
+        
         
         await new Promise(async (resolve) => {
             // data channel open
@@ -294,9 +577,9 @@ const WebRTCTransport = class extends EventTarget {
             this.openDataChannel("system", 0, openChannel);
             this.openDataChannel("video", 1, openChannel);
             this.openDataChannel("audio", 2, openChannel);
-            this.openDataChannel("mouse", 3, openChannel);
-            this.openDataChannel("keyboard", 4, openChannel);
-            this.openDataChannel("icon", 5, openChannel);
+            this.openDataChannel("icon", 3, openChannel);
+            this.openDataChannel("mouse", 4, openChannel);
+            this.openDataChannel("keyboard", 5, openChannel);
 
             // set offer
             const offerDesc = new RTCSessionDescription(offer);
@@ -316,6 +599,82 @@ const WebRTCTransport = class extends EventTarget {
 
         this.isOpen = true;
         this.dispatchEvent(new CustomEvent("open"));
+
+        this["systemCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            const data = messageObj.data;
+            if (data["type"] === "video-configuration") {
+                data["value"]["description"] = Uint8Array.fromBase64(data["value"]["description"]);
+                console.log(data["value"]);
+                this.decoder.appendVideoConfiguration(data["value"]);
+            } else if (data["type"] === "audio-configuration") {
+                data["value"]["description"] = Uint8Array.fromBase64(data["value"]["description"]).buffer;
+                console.log(data["value"]);
+                this.decoder.appendAudioConfiguration(data["value"]);
+            }
+        });
+
+        this["videoCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            const data = messageObj.data;
+            //console.log("Received video chunk:", data);
+            const view = new DataView(data);
+            const type = view.getUint8(0) === 0 ? "key" : "delta";
+            const timestamp = view.getUint32(1);
+            const duration = view.getUint32(5);
+            const chunkData = new Uint8Array(data, 9);
+
+            const chunk = new EncodedVideoChunk({
+                "type": type,
+                "timestamp": timestamp,
+                "duration": duration,
+                "data": chunkData,
+                "trandsfer": [chunkData.buffer]
+            });
+
+            this.decoder.appendVideoChunk(chunk);
+        });
+
+        this["audioCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            const data = messageObj.data;
+            //console.log("Received audio chunk:", data);
+            const view = new DataView(data);
+            const type = view.getUint8(0) === 0 ? "key" : "delta";
+            const timestamp = view.getUint32(1);
+            const duration = view.getUint32(5);
+            const chunkData = new Uint8Array(data, 9);
+
+            const chunk = new EncodedAudioChunk({
+                "type": type,
+                "timestamp": timestamp,
+                "duration": duration,
+                "data": chunkData,
+                "trandsfer": [chunkData.buffer]
+            });
+            this.decoder.appendAudioChunk(chunk);
+        });
+
+        this["iconCommunicator"].onIncoming(async (messageObj) => {
+            await messageObj.wait();
+            const data = messageObj.data;
+            const decompressed = pako.inflate(new Uint8Array(data));
+            const view = new DataView(decompressed.buffer);
+            const width = view.getUint32(0);
+            const height = view.getUint32(4);
+            const xOffset = view.getInt32(8);
+            const yOffset = view.getInt32(12);
+            const iconData = new Uint8Array(decompressed.buffer, 16);
+            this.icon = {
+                "width": width,
+                "height": height,
+                "xOffset": xOffset,
+                "yOffset": yOffset,
+                "data": iconData
+            };
+            console.log("Received mouse icon:", this.icon);
+            
+        });
     };
 
     onIceCandidate = async (event) => {
@@ -365,19 +724,26 @@ const WebRTCTransport = class extends EventTarget {
     };
 
     openDataChannel = (label, id, cb) => {
-        const channel = this.pc.createDataChannel(label, {"ordered": false, "negotiated": true, "id": id});
+        const channel = this.pc.createDataChannel(label, {
+            "ordered": false,
+            "maxPacketLifeTime": 500,
+            "negotiated": true,
+            "id": id
+        });
         channel.binaryType = "arraybuffer";
-        channel.addEventListener("open", () => {
+        channel.addEventListener("open", async () => {
             console.log(`${label} - Data channel opened`);
+            await communicator.sideSync();
+            await communicator.timeSync();
             cb(channel);
         }, { "once": true });
 
         const communicator = new Communicator({
             "sender": function() {},
-            "interactTimeout": 3000,    //the max timeout between two packet arrive
-            "timeout": 5000,            //the time for transmit message
-            "packetSize": 1000,         //the maximum size of one packet in bytes (only for ArrayBuffer)
-            "packetTimeout": 1000,      //the max timeout for packets
+            "interactTimeout": 2000,    //the max timeout between two packet arrive
+            "timeout": 3000,            //the time for transmit message
+            "packetSize": 16383,        //the maximum size of one packet in bytes (only for ArrayBuffer)
+            "packetTimeout": 500,       //the max timeout for packets
             "packetRetry": Infinity,    //number of retring attemts for one packet
             "sendThreads": 16
         });
@@ -391,9 +757,11 @@ const WebRTCTransport = class extends EventTarget {
         });
         channel.addEventListener("message", (event) => {
             let data = event.data;
+            //console.log(data);
             if (typeof data === "string") {
                 data = JSON.parse(data);
             }
+            
             communicator.receive(data);
         });
 
@@ -409,10 +777,49 @@ const WebRTCTransport = class extends EventTarget {
         this.keyboardChannel?.close?.();
         this.iconChannel?.close?.();
         this.pc.close();
+
+        this?.videoEncoderFFmpeg?.end();
+        this?.audioEncoderBrowser?.end();
+        clearInterval(this.iconInterval);
+        this.iconInterval = -1;
+
+        this.isOpen = false;
+        this.dispatchEvent(new CustomEvent("close"));
     };
 
     async wait() {
         await this.startFunction;
+    };
+
+    setVideo(bitrate, framerate, resolution) {
+        const ctx = document.getElementById("video").getContext("2d");
+        ctx.width = 1920;
+        ctx.height = 1080;
+        const player = new Player(true, null, ctx);
+        this.decoder = new Decoder();
+        this.decoder.onVideoFrame = (frame) => {
+            player.appendVideoFrame(frame);
+        };
+        this.decoder.onAudioFrame = (frame) => {
+            player.appendAudioFrame(frame);
+        };
+        this["systemCommunicator"].send({
+            "type": "set-video",
+            "value": {
+                "bitrate": bitrate,
+                "framerate": framerate,
+                "resolution": resolution
+            }
+        });
+    };
+
+    setAudio(mute="0") {
+        this["systemCommunicator"].send({
+            "type": "set-audio",
+            "value": {
+                "mute": mute
+            }
+        });
     };
 };
 
@@ -1378,7 +1785,7 @@ const SettingsDialog = class extends EventTarget {
 
                         this.decoder = new Decoder();
                         this.decoder.onVideoFrame = async (frame) => {
-                            console.log("Decoded video frame:", frame);
+                            //console.log("Decoded video frame:", frame);
                             try {
                                 await writer.write(frame);
                             } catch (e) {
@@ -1389,15 +1796,15 @@ const SettingsDialog = class extends EventTarget {
                         };
                         this.videoEncoderFFmpeg = new enviroment.desktop.FFmpegVideoEncoder();
                         this.videoEncoderFFmpeg.onConfiguration = (config) => {
-                            console.log("Video configuration:", config);
+                            //console.log("Video configuration:", config);
                             this.decoder.appendVideoConfiguration(config);
                         };
                         this.videoEncoderFFmpeg.onChunk = (chunk) => {
-                            console.log("Video chunk:", chunk);
+                            //console.log("Video chunk:", chunk);
                             this.decoder.appendVideoChunk(chunk);
                         };
                         this.videoEncoderFFmpeg.onEnd = (error) => {
-                            console.log("Video encoding ended with error code:", error);
+                            //console.log("Video encoding ended with error code:", error);
                         };
 
                         const ffpmegParams = [];
@@ -2409,10 +2816,71 @@ const RoomScreen = class extends EventTarget {
         this.permissionBtn.addEventListener("click", this.permissionRequest.bind(this));
 
         // peer
+        this.bitrate = "0";
+        this.resolution = "0";
+        this.framerate = "0";
         document.querySelectorAll(".room-bitrate").forEach((el) => {
             el.addEventListener("click", () => {
-                const bitrate = el.getAttribute("data-value");
-                console.log("Set bitrate to", bitrate);
+                document.querySelector(".room-bitrate[data-value='" + this.bitrate + "'] > i").innerHTML = "";
+                this.bitrate = el.getAttribute("data-value");
+                document.querySelector(".room-bitrate[data-value='" + this.bitrate + "'] > i").innerHTML = "check";
+                console.log("Set bitrate to", this.bitrate);
+                server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+            });
+        });
+        document.querySelectorAll(".room-resolution").forEach((el) => {
+            el.addEventListener("click", () => {
+                document.querySelector(".room-resolution[data-value='" + this.resolution + "'] > i").innerHTML = "";
+                this.resolution = el.getAttribute("data-value");
+                document.querySelector(".room-resolution[data-value='" + this.resolution + "'] > i").innerHTML = "check";
+                console.log("Set resolution to", this.resolution);
+                server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+            });
+        });
+        document.querySelectorAll(".room-framerate").forEach((el) => {
+            el.addEventListener("click", () => {
+                document.querySelector(".room-framerate[data-value='" + this.framerate + "'] > i").innerHTML = "";
+                this.framerate = el.getAttribute("data-value");
+                document.querySelector(".room-framerate[data-value='" + this.framerate + "'] > i").innerHTML = "check";
+                console.log("Set framerate to", this.framerate);
+                server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+            });
+        });
+
+        this.mute = "1";
+        document.querySelector(".room-audio").addEventListener("click", () => {
+            if (this.mute === "0") {
+                this.mute = "1";
+                document.querySelector(".room-audio > i").innerHTML = "volume_off";
+            } else {
+                this.mute = "0";
+                document.querySelector(".room-audio > i").innerHTML = "volume_up";
+            }
+            server.webRTC.setAudio(this.mute);
+        });
+
+        this.enchate1 = "0";
+        this.enchate2 = "0";
+        document.querySelectorAll(".room-enchante").forEach((el) => {
+            el.addEventListener("click", () => {
+                const value = el.getAttribute("data-value");
+                if (value === "0") {
+                    if (this.enchate1 === "1") {
+                        this.enchate1 = "0";
+                        document.querySelector(".room-enchante[data-value='0'] > i").innerHTML = "";
+                    } else {
+                        this.enchate1 = "1";
+                        document.querySelector(".room-enchante[data-value='0'] > i").innerHTML = "check";
+                    }
+                } else if (value === "1") {
+                    if (this.enchate2 === "1") {
+                        this.enchate2 = "0";
+                        document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = "";
+                    } else {
+                        this.enchate2 = "1";
+                        document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = "check";
+                    }
+                }
             });
         });
         
@@ -2471,11 +2939,6 @@ const RoomScreen = class extends EventTarget {
         event.returnValue = true;
     };
 
-    openConnection = async () => {
-        server.removeEventListener("join-connect", this.openConnection);
-        await server.joinRequest();
-        this.openConnection();
-    };
     waitForConnection = async () => {
         this.loading.classList.remove("hide");
         if (server.hostCode !== "") {
@@ -2497,9 +2960,14 @@ const RoomScreen = class extends EventTarget {
         }
     };
     openConnection = () => {
+        if (server.peerCode !== "") {
+            server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+            server.webRTC.setAudio(this.mute);
+        }
         this.loading.classList.add("hide");
         console.log("Connection opened.");
     };
+
 };
 
 
@@ -2528,7 +2996,7 @@ const MainUI = class {
 
         // call desktop specific UI setup
         if (enviroment.desktop.isAvailable) {
-            enviroment.desktop.ipcRenderer.invoke("api", "set-tray-text", localization.get("tray-open"), localization.get("tray-close"));
+            enviroment.desktop.ipcRenderer.invoke("api", "set-tray-text", localization.get("main.tray-open"), localization.get("main.tray-close"));
             enviroment.desktop.ipcRenderer.send("api", "set-tray", enviroment.configuration["minimizing"]);
         }
 

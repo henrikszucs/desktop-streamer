@@ -106,7 +106,7 @@ const Decoder = class {
         this.videoConfiguration = config
         this.videoDecoder.configure(this.videoConfiguration);
     };
-    appendVideoChunk(chunk) {
+    async appendVideoChunk(chunk) {
         if (this.videoDecoder.state !== "configured") {
             return;
         }
@@ -114,6 +114,7 @@ const Decoder = class {
             if (chunk.type === "delta") {
                 return;
             } else {
+                await this.videoDecoder.flush();
                 this.wasVideoKeyframe = true;
             }
         }

@@ -73,6 +73,13 @@ const main = async function() {
         const pathFull = url.pathToFileURL(path.join(app.getAppPath(), pathname)).toString();
         return net.fetch(pathFull);
     });
+    // allow getDisplayMedia
+    ses.setDisplayMediaRequestHandler((request, callback) => {
+        desktopCapturer.getSources({"types": ["screen"]}).then((sources) => {
+            // Grant access to the first screen found.
+            callback({"video": sources[0], "audio": "loopback"})
+        });
+    })
     
     // Main window create "local://local.local/"
     const createMainWindow = function(url="https://localhost") {

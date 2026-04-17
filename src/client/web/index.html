@@ -516,7 +516,7 @@
 
         <main class="room-layout hide" id="screen-room">
             <div>
-                <video id="video" playsinline></video>
+                <canvas id="video" width="1920" height="1080" style="display: flex;"></canvas>
                 <div id="room-loading">
                     <progress class="circle indeterminate" value="50" max="100"></progress>
                 </div>
@@ -531,38 +531,38 @@
                         </button>
                     </a>
                 </nav>
-                <nav class="toolbar" id="room-toolbar-peer">
+                <nav class="toolbar hide" id="room-toolbar-peer">
                     <a>
                         <button class="circle transparent">
                             <i>speed</i>
                             <span class="tooltip right" data-i18n="room.bitrate">Bitrate</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li class="room-bitrate" data-value="1">
+                            <li class="room-bitrate" data-value="0">
                                 <span>1 Mbps</span>
                                 <i>check</i>
                             </li>
-                            <li class="room-bitrate" data-value="5">
+                            <li class="room-bitrate" data-value="1">
                                 <span>5 Mbps</span>
                                 <i></i>
                             </li>
-                            <li class="room-bitrate" data-value="10">
+                            <li class="room-bitrate" data-value="2">
                                 <span>10 Mbps</span>
                                 <i></i>
                             </li>
-                            <li class="room-bitrate" data-value="15">
+                            <li class="room-bitrate" data-value="3">
                                 <span>15 Mbps</span>
                                 <i></i>
                             </li>
-                            <li class="room-bitrate" data-value="20">
+                            <li class="room-bitrate" data-value="4">
                                 <span>20 Mbps</span>
                                 <i></i>
                             </li>
-                            <li class="room-bitrate" data-value="30">
+                            <li class="room-bitrate" data-value="5">
                                 <span>30 Mbps</span>
                                 <i></i>
                             </li>
-                            <li class="room-bitrate" data-value="40">
+                            <li class="room-bitrate" data-value="6">
                                 <span>40 Mbps</span>
                                 <i></i>
                             </li>
@@ -574,32 +574,16 @@
                             <span class="tooltip right" data-i18n="room.framerate">Framerate</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li class="room-framerate" data-value="25">
+                            <li class="room-framerate" data-value="0">
                                 <span>25 fps</span>
                                 <i>check</i>
                             </li>
-                            <li class="room-bitrate" data-value="30">
+                            <li class="room-framerate" data-value="1">
                                 <span>30 fps</span>
                                 <i></i>
                             </li>
-                            <li class="room-bitrate" data-value="60">
+                            <li class="room-framerate" data-value="2">
                                 <span>60 fps</span>
-                                <i></i>
-                            </li>
-                        </menu>
-                    </a>
-                    <a>
-                        <button class="circle transparent">
-                            <i>wand_stars</i>
-                            <span class="tooltip right" data-i18n="room.ai">AI enchante</span>
-                        </button>
-                        <menu class="top no-wrap">
-                            <li class="room-bitrate" data-value="1">
-                                <span>2x framerate</span>
-                                <i>check</i>
-                            </li>
-                            <li class="room-bitrate" data-value="2">
-                                <span>2x resolution</span>
                                 <i></i>
                             </li>
                         </menu>
@@ -610,29 +594,42 @@
                             <span class="tooltip right" data-i18n="room.resolution">Resolution</span>
                         </button>
                         <menu class="top no-wrap">
-                            <li class="room-resolution" data-value="360">
+                            <li class="room-resolution" data-value="0">
                                 <span>360p</span>
                                 <i>check</i>
                             </li>
-                            <li class="room-resolution" data-value="480">
+                            <li class="room-resolution" data-value="1">
                                 <span>480p</span>
                                 <i></i>
                             </li>
-                            <li class="room-resolution" data-value="720">
+                            <li class="room-resolution" data-value="2">
                                 <span>720p</span>
                                 <i></i>
                             </li>
-                            <li class="room-resolution" data-value="1080">
+                            <li class="room-resolution" data-value="3">
                                 <span>1080p</span>
                                 <i></i>
                             </li>
                         </menu>
                     </a>
-                    <a class="room-volume">
-                        <i>volume_off</i>
+                    <a>
+                        <button class="circle transparent">
+                            <i>wand_stars</i>
+                            <span class="tooltip right" data-i18n="room.ai">AI enchante</span>
+                        </button>
+                        <menu class="top no-wrap">
+                            <li class="room-enchante" data-value="0">
+                                <span>2x framerate</span>
+                                <i></i>
+                            </li>
+                            <li class="room-enchante" data-value="1">
+                                <span>2x resolution</span>
+                                <i></i>
+                            </li>
+                        </menu>
                     </a>
-                    <a class="room-control">
-                        <i>touchpad_mouse_off</i>
+                    <a class="room-audio">
+                        <i>volume_off</i>
                     </a>
                     <a class="room-fullscreen">
                         <i>fullscreen</i>
