@@ -520,7 +520,7 @@ const WebRTCTransport = class extends EventTarget {
                 environment.desktop.Control.Mouse.setX(data["x"] * fullscreenWidth);
             }
             if (typeof data["y"] === "number") {
-                environment.desktop.Control.Mouse.setX(data["y"] * fullscreenHeight);
+                environment.desktop.Control.Mouse.setY(data["y"] * fullscreenHeight);
             }
             if (typeof data["button"] === "object") {
                 const key = data["button"]["key"];
@@ -829,6 +829,37 @@ const WebRTCTransport = class extends EventTarget {
             "type": "set-audio",
             "value": {
                 "mute": mute
+            }
+        });
+    };
+
+    setMousePos(x, y) {
+        this["mouseCommunicator"].send({
+            "x": x,
+            "y": y
+        });
+    };
+    setMouseButton(button, state) {
+        this["mouseCommunicator"].send({
+            "button": {
+                "key": button,
+                "state": state
+            }
+        });
+    };
+    setMouseWheel(direction, amount) {
+        this["mouseCommunicator"].send({
+            "wheel": {
+                "direction": direction,
+                "amount": amount
+            }
+        });
+    };
+    setKeyboard(key, state) {
+        this["keyboardCommunicator"].send({
+            "key": {
+                "key": key,
+                "state": state
             }
         });
     };
@@ -3070,8 +3101,9 @@ const RoomScreen = class extends EventTarget {
         // Clamp values between 0.0 and 1.0 (in case the mouse goes slightly off-bounds)
         const relativeX = Math.max(0, Math.min(1, x));
         const relativeY = Math.max(0, Math.min(1, y));
-                    
+        
         console.log(`Mouse moved relative - x: ${relativeX.toFixed(3)}, y: ${relativeY.toFixed(3)}`);
+        server.webRTC.setMousePos(relativeX, relativeY);
     };
     getMouseButton = (buttonCode) => {
         switch (buttonCode) {
@@ -3087,9 +3119,12 @@ const RoomScreen = class extends EventTarget {
     downMouse = (event) => {
         event.preventDefault();
         const button = this.getMouseButton(event.button);
-        if (!button) return;
+        if (!button) {
+            return;
+        };
 
         console.log(`Mouse down - button: ${button}`);
+        server.webRTC.setMouseButton(button, "down");
     };
     
     upMouse = (event) => {
@@ -3098,6 +3133,7 @@ const RoomScreen = class extends EventTarget {
         if (!button) return;
 
         console.log(`Mouse up - button: ${button}`);
+        server.webRTC.setMouseButton(button, "up");
     };
 
     wheelMouse = (event) => {
@@ -3115,16 +3151,17 @@ const RoomScreen = class extends EventTarget {
         
         if (state !== "") {
             console.log(`Mouse wheel - state: ${state}, amount: ${amount}`);
+            server.webRTC.setMouseWheel(state, amount);
         }
     };
     contextMenu = (event) => {
         event.preventDefault(); // Prevents the right-click menu from showing
     };
     downKey = (event) => {
-        
+        server.webRTC.setKeyboard(event.code, "down");
     };
     upKey = (event) => {
-
+        server.webRTC.setKeyboard(event.code, "up");
     };
     enterDesktopFullscreen = () => {
         if (!this.isFullscreen) {
