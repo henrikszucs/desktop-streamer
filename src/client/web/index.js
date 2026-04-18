@@ -1,5 +1,6 @@
 "use strict";
 
+
 // import dependencies
 import pako from "./libs/pako/pako.min.mjs";
 import IDB from "./libs/idb/idb.js";
@@ -9,8 +10,8 @@ import {Decoder, Player} from "./libs/ffmpeg-chunkifier/decoder.js";
 import localization from "./localization.js";
 
 // Configuration
-// Task to load enviroment and essential data and desktop libs for the application.
-const Enviroment = class {
+// Task to load environment and essential data and desktop libs for the application.
+const Environment = class {
     constructor() {
         this.DATABBASE_NAME = "desktop_streamer";
         this.CONF_TABLE = "configuration";
@@ -209,8 +210,8 @@ const Enviroment = class {
         return "x86";
     };
 };
-const enviroment = new Enviroment();
-globalThis.enviroment = enviroment;
+const environment = new Environment();
+globalThis.environment = environment;
 
 // Server
 const WebRTCTransport = class extends EventTarget {
@@ -274,7 +275,7 @@ const WebRTCTransport = class extends EventTarget {
         });
 
         this.audioEncoderBrowser = new BrowserAudioEncoder();
-        this.videoEncoderFFmpeg = new enviroment.desktop.FFmpegVideoEncoder();
+        this.videoEncoderFFmpeg = new environment.desktop.FFmpegVideoEncoder();
         this.isOpen = true;
         this.dispatchEvent(new CustomEvent("open"));
 
@@ -325,7 +326,7 @@ const WebRTCTransport = class extends EventTarget {
                 }
 
                 await this.videoEncoderFFmpeg.end();
-                const ctx = document.getElementById("video").getContext("2d");
+                const ctx = document.getElementById("room-video").getContext("2d");
                 ctx.width = 1920;
                 ctx.height = 1080;
                 const player = new Player(false, null, ctx);
@@ -368,7 +369,7 @@ const WebRTCTransport = class extends EventTarget {
                 };
 
                 await this.videoEncoderFFmpeg.start(
-                    enviroment.desktop.ffmpegPath,
+                    environment.desktop.ffmpegPath,
                     [
                         "-fflags", "+nobuffer+flush_packets",
                         "-flags", "+low_delay",
@@ -414,27 +415,31 @@ const WebRTCTransport = class extends EventTarget {
                 clearInterval(this.iconInterval);
                 this.iconData = [];
                 this.iconInterval = setInterval(async () => {
-                    const icon = enviroment.desktop.Control.Mouse.getIcon();
-                    const width = icon["width"];
-                    const height = icon["height"];
+                    const icon = environment.desktop.Control.Mouse.getIcon();
+                    
                     const data = icon["data"];
-                    const xOffset = icon["xOffset"];
-                    const yOffset = icon["yOffset"];
+                    
                     // ignore if same as previous
                     if (this.iconData.length === data.length && this.iconData.every((value, index) => value === data[index])) {
                         return;
                     }
                     // send icon data
                     //console.log("Mouse icon:", icon);
+                    const xOffset = icon["xOffset"];
+                    const yOffset = icon["yOffset"];
+                    const width = icon["width"];
+                    const height = icon["height"];
+                    const scaleFactor = environment.desktop.Control.Screen.list()[0]["scaleFactor"]; 
                     this.iconData = data;
-                    const iconAsBinary = new Uint8Array(4 + 4 + 4 + 4 + icon.data.length);
+                    const iconAsBinary = new Uint8Array(4 + 4 + 4 + 4 + 4 + icon.data.length);
                     const view = new DataView(iconAsBinary.buffer);
                     view.setUint32(0, icon.width);
                     view.setUint32(4, icon.height);
                     view.setInt32(8, icon.xOffset);
                     view.setInt32(12, icon.yOffset);
+                    view.setFloat32(16, scaleFactor);
                     const iconBuffer = new Uint8Array(data);
-                    iconAsBinary.set(iconBuffer, 16);
+                    iconAsBinary.set(iconBuffer, 20);
                     const compressed = pako.deflate(iconAsBinary);
                     //console.log("Compressed icon size:", compressed.byteLength);
                     this["iconCommunicator"].send(compressed.buffer);
@@ -504,7 +509,7 @@ const WebRTCTransport = class extends EventTarget {
             }
         });
 
-        const display = enviroment.desktop.Control.Display.list()[0];
+        const display = environment.desktop.Control.Screen.list()[0];
         const fullscreenWidth = display["width"] * display["scaleFactor"];
         const fullscreenHeight = display["height"] * display["scaleFactor"];
 
@@ -512,31 +517,31 @@ const WebRTCTransport = class extends EventTarget {
             await messageObj.wait();
             const data = messageObj.data;
             if (typeof data["x"] === "number") {
-                enviroment.desktop.Control.Mouse.setX(data["x"] * fullscreenWidth);
+                environment.desktop.Control.Mouse.setX(data["x"] * fullscreenWidth);
             }
             if (typeof data["y"] === "number") {
-                enviroment.desktop.Control.Mouse.setX(data["y"] * fullscreenHeight);
+                environment.desktop.Control.Mouse.setX(data["y"] * fullscreenHeight);
             }
             if (typeof data["button"] === "object") {
                 const key = data["button"]["key"];
                 const state = data["button"]["state"];
                 if (state === "down") {
-                    enviroment.desktop.Control.Mouse.buttonDown(key);
+                    environment.desktop.Control.Mouse.buttonDown(key);
                 } else if (state === "up") {
-                    enviroment.desktop.Control.Mouse.buttonUp(key);
+                    environment.desktop.Control.Mouse.buttonUp(key);
                 }
             }
             if (typeof data["wheel"] === "object") {
                 const direction = data["button"]["direction"];
                 const amount = data["button"]["amount"];
                 if (direction === "up") {
-                    enviroment.desktop.Control.Mouse.scrollUp(amount);
+                    environment.desktop.Control.Mouse.scrollUp(amount);
                 } else if (direction === "down") {
-                    enviroment.desktop.Control.Mouse.scrollDown(amount);
+                    environment.desktop.Control.Mouse.scrollDown(amount);
                 } else if (direction === "left") {
-                    enviroment.desktop.Control.Mouse.scrollUp(amount, true);
+                    environment.desktop.Control.Mouse.scrollUp(amount, true);
                 } else if (direction === "right") {
-                    enviroment.desktop.Control.Mouse.scrollDown(amount, true);
+                    environment.desktop.Control.Mouse.scrollDown(amount, true);
                 }
             }
         });
@@ -548,9 +553,9 @@ const WebRTCTransport = class extends EventTarget {
                 const key = data["key"]["key"];
                 const state = data["key"]["state"];
                 if (state === "up") {
-                    enviroment.desktop.Control.Keyboard.keyUp(key);
+                    environment.desktop.Control.Keyboard.keyUp(key);
                 } else if (state === "down") {
-                    enviroment.desktop.Control.Keyboard.keyDown(key);
+                    environment.desktop.Control.Keyboard.keyDown(key);
                 }
             }
         });
@@ -664,16 +669,22 @@ const WebRTCTransport = class extends EventTarget {
             const height = view.getUint32(4);
             const xOffset = view.getInt32(8);
             const yOffset = view.getInt32(12);
-            const iconData = new Uint8Array(decompressed.buffer, 16);
+            const scaleFactor = view.getFloat32(16);
+            const iconData = new Uint8Array(decompressed.buffer, 20);
             this.icon = {
                 "width": width,
                 "height": height,
                 "xOffset": xOffset,
                 "yOffset": yOffset,
+                "scaleFactor": scaleFactor,
                 "data": iconData
             };
-            console.log("Received mouse icon:", this.icon);
-            
+            //console.log("Received mouse icon:", this.icon);
+            this.dispatchEvent(
+                new CustomEvent("icon", {
+                    "detail": this.icon
+                }
+            ));
         });
     };
 
@@ -792,7 +803,7 @@ const WebRTCTransport = class extends EventTarget {
     };
 
     setVideo(bitrate, framerate, resolution) {
-        const ctx = document.getElementById("video").getContext("2d");
+        const ctx = document.getElementById("room-video").getContext("2d");
         ctx.width = 1920;
         ctx.height = 1080;
         const player = new Player(true, null, ctx);
@@ -1141,7 +1152,7 @@ const MenuComponent = class extends EventTarget {
                 this.downloadsBtn = document.getElementById("btn-downloads-2");
 
                 // hide if no clients available or desktop
-                if (enviroment.desktop.isAvailable || enviroment.server["clients"].length === 0) {
+                if (environment.desktop.isAvailable || environment.server["clients"].length === 0) {
                     this.downloadsBtn.classList.add("hide");
                 }
             };
@@ -1215,7 +1226,7 @@ const MenuComponent = class extends EventTarget {
         }
 
         // hide if no clients available or desktop
-        if (enviroment.desktop.isAvailable || enviroment.server["clients"].length === 0) {
+        if (environment.desktop.isAvailable || environment.server["clients"].length === 0) {
             this.downloadsBtn.classList.add("hide");
         }
     };
@@ -1324,31 +1335,31 @@ const SettingsDialog = class extends EventTarget {
                 this.langSelect = document.getElementById("select-appearance-lang");
                 this.langSelect.addEventListener("change", async (event) => {
                     let lang = event.target.value;
-                    await enviroment.setDatabaseValue("lang", lang);
+                    await environment.setDatabaseValue("lang", lang);
                     localization.setLang(lang);
                     localization.translate();
-                    if (enviroment.desktop.isAvailable) {
-                        enviroment.desktop.ipcRenderer.send("api", "set-lang", lang);
+                    if (environment.desktop.isAvailable) {
+                        environment.desktop.ipcRenderer.send("api", "set-lang", lang);
                     }
                 });
 
                 // theme settings
                 this.themeBtn = document.getElementById("btn-appearance-theme");
                 this.themeBtn.addEventListener("click", async () => {
-                    if (enviroment.configuration["mode"] === "auto") {
-                        enviroment.configuration["mode"] = "light";
-                    } else if (enviroment.configuration["mode"] === "light") {
-                        enviroment.configuration["mode"] = "dark";
+                    if (environment.configuration["mode"] === "auto") {
+                        environment.configuration["mode"] = "light";
+                    } else if (environment.configuration["mode"] === "light") {
+                        environment.configuration["mode"] = "dark";
                     } else {
-                        enviroment.configuration["mode"] = "auto";
+                        environment.configuration["mode"] = "auto";
                     }
-                    let mode = enviroment.configuration["mode"];
+                    let mode = environment.configuration["mode"];
                     if (mode === "auto") {
                         mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
                     }
                     globalThis.ui("mode", mode);
                     this.setThemeIcon();
-                    await enviroment.setDatabaseValue("mode", enviroment.configuration["mode"]);
+                    await environment.setDatabaseValue("mode", environment.configuration["mode"]);
                 });
                 document.getElementById("btn-appearance-theme-color").addEventListener("change", (event) => {
                     const color = event.target.value;
@@ -1383,14 +1394,14 @@ const SettingsDialog = class extends EventTarget {
                 this.trayCheckbox = document.getElementById("checkbox-tray");
                 this.trayLabel = document.getElementById("label-tray");
                 this.trayError = document.getElementById("error-tray");
-                if (enviroment.desktop.isAvailable) {
+                if (environment.desktop.isAvailable) {
                     this.trayLabel.classList.remove("hide");
-                    this.trayCheckbox.checked = enviroment.configuration["minimizing"];
+                    this.trayCheckbox.checked = environment.configuration["minimizing"];
                     this.trayCheckbox.addEventListener("change", async (event) => {
                         const isChecked = event.target.checked;
-                        enviroment.configuration["minimizing"] = isChecked;
-                        enviroment.desktop.ipcRenderer.send("api", "set-tray", isChecked);
-                        await enviroment.setDatabaseValue("minimizing", isChecked);
+                        environment.configuration["minimizing"] = isChecked;
+                        environment.desktop.ipcRenderer.send("api", "set-tray", isChecked);
+                        await environment.setDatabaseValue("minimizing", isChecked);
                     });
                 } else {
                     this.trayError.classList.remove("hide");
@@ -1400,23 +1411,23 @@ const SettingsDialog = class extends EventTarget {
                 this.autoLaunchLabel = document.getElementById("label-auto-launch");
                 this.autoLaunchCheckbox = document.getElementById("checkbox-auto-launch");
                 this.autoLaunchError = document.getElementById("error-auto-launch");
-                if (enviroment.desktop.isAvailable) {
+                if (environment.desktop.isAvailable) {
                     this.autoLaunchLabel.classList.remove("hide");
-                    console.log(enviroment.desktop.autoLaunch);
-                    enviroment.desktop.autoLaunch.isEnabled().then((isEnabled) => {
+                    console.log(environment.desktop.autoLaunch);
+                    environment.desktop.autoLaunch.isEnabled().then((isEnabled) => {
                         this.autoLaunchCheckbox.checked = isEnabled;
                     });
                     this.autoLaunchCheckbox.addEventListener("change", async (event) => {
                         const isChecked = event.target.checked;
                         if (isChecked) {
-                            await enviroment.desktop.autoLaunch.enable();
+                            await environment.desktop.autoLaunch.enable();
                         } else {
-                            await enviroment.desktop.autoLaunch.disable();
+                            await environment.desktop.autoLaunch.disable();
                         }
-                        const isEnabled = await enviroment.desktop.autoLaunch.isEnabled();
+                        const isEnabled = await environment.desktop.autoLaunch.isEnabled();
                         event.target.checked = isEnabled;
-                        enviroment.configuration["autoLaunch"] = isEnabled;
-                        await enviroment.setDatabaseValue("autoLaunch", isEnabled);
+                        environment.configuration["autoLaunch"] = isEnabled;
+                        await environment.setDatabaseValue("autoLaunch", isEnabled);
                     });
 
                 } else {
@@ -1424,7 +1435,7 @@ const SettingsDialog = class extends EventTarget {
                 }
             };
             open = () => {
-                this.langSelect.value = enviroment.configuration["lang"];
+                this.langSelect.value = environment.configuration["lang"];
                 this.setThemeIcon();
 
                 this.win.classList.remove("hide");
@@ -1437,9 +1448,9 @@ const SettingsDialog = class extends EventTarget {
                 this.btn.classList.add("fill");
             };
             setThemeIcon() {
-                if (enviroment.configuration["mode"] === "auto") {
+                if (environment.configuration["mode"] === "auto") {
                     this.themeBtn.children[0].innerText = "hdr_auto";
-                } else if (enviroment.configuration["mode"] === "light") {
+                } else if (environment.configuration["mode"] === "light") {
                     this.themeBtn.children[0].innerText = "light_mode";
                 } else {
                     this.themeBtn.children[0].innerText = "dark_mode";
@@ -1447,7 +1458,7 @@ const SettingsDialog = class extends EventTarget {
             };
             async setColor(color) {
                 globalThis.ui("theme", color);
-                await enviroment.setDatabaseValue("color", color);
+                await environment.setDatabaseValue("color", color);
             };
         };
 
@@ -1455,7 +1466,7 @@ const SettingsDialog = class extends EventTarget {
             constructor() {
                 this.win = document.getElementById("settings-audio");
                 this.btn = document.getElementById("btn-settings-audio");
-                const browser = enviroment.checkBrowser();
+                const browser = environment.checkBrowser();
 
                 this.audioSpeakerContext = null;
                 this.audioMicContext = null;
@@ -1473,7 +1484,7 @@ const SettingsDialog = class extends EventTarget {
                 this.systemAudioSupport = document.getElementById("system-audio-support");
                 this.systemAudioPartial = document.getElementById("system-audio-partial");
                 this.systemAudioUnsupport = document.getElementById("system-audio-unsupport");
-                if (enviroment.desktop.isAvailable) {
+                if (environment.desktop.isAvailable) {
                     this.systemAudioSupport.classList.remove("hide");
                 } else if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
                     this.systemAudioPartial.classList.remove("hide");
@@ -1738,9 +1749,9 @@ const SettingsDialog = class extends EventTarget {
                 this.displayVideo = document.getElementById("video-display-test");
                 this.displayVideoBox = document.getElementById("video-display-test-box");
                 this.displayTestStream = null;
-                if (enviroment.desktop.isAvailable) {
+                if (environment.desktop.isAvailable) {
                     this.listDisplay = async () => {
-                        const screens = enviroment.desktop.Control.Screen.list();
+                        const screens = environment.desktop.Control.Screen.list();
                         if (screens.length === 0) {
                             // remove all old options
                             const select = this.displaySelect;
@@ -1794,7 +1805,7 @@ const SettingsDialog = class extends EventTarget {
                                 frame.close();
                             }
                         };
-                        this.videoEncoderFFmpeg = new enviroment.desktop.FFmpegVideoEncoder();
+                        this.videoEncoderFFmpeg = new environment.desktop.FFmpegVideoEncoder();
                         this.videoEncoderFFmpeg.onConfiguration = (config) => {
                             //console.log("Video configuration:", config);
                             this.decoder.appendVideoConfiguration(config);
@@ -1815,7 +1826,7 @@ const SettingsDialog = class extends EventTarget {
                             "-probesize", "32",              // Minimum probe size
                             "-thread_queue_size", "8"       // Small queue");
                         );
-                        if (enviroment.desktop.os.platform() === "win32") {
+                        if (environment.desktop.os.platform() === "win32") {
                             ffpmegParams.push(
                                 "-filter_complex",
                                 "gfxcapture=monitor_idx=" + screenIndex +
@@ -1845,7 +1856,7 @@ const SettingsDialog = class extends EventTarget {
                             "pipe:1"
                         );
                         await this.videoEncoderFFmpeg.start(
-                            enviroment.desktop.ffmpegPath,
+                            environment.desktop.ffmpegPath,
                             ffpmegParams,
                             {
                                 "codec": "avc1.640033",
@@ -1954,7 +1965,7 @@ const SettingsDialog = class extends EventTarget {
                 // check mouse share support
                 this.mouseShareSupport = document.getElementById("mouse-share-support");
                 this.mouseShareUnsupport = document.getElementById("mouse-share-unsupport");
-                if (enviroment.desktop.isAvailable) {
+                if (environment.desktop.isAvailable) {
                     this.mouseShareSupport.classList.remove("hide");
                 } else {
                     this.mouseShareUnsupport.classList.remove("hide");
@@ -2074,11 +2085,11 @@ const SettingsDialog = class extends EventTarget {
                         "keys": shortcut.keys
                     });
                 }
-                await enviroment.setDatabaseValue("exitShortcuts", JSON.stringify(shortcutObj));
+                await environment.setDatabaseValue("exitShortcuts", JSON.stringify(shortcutObj));
             };
             open = () => {
                 // add browser specific shortcuts
-                if (enviroment.desktop.isAvailable === true) {
+                if (environment.desktop.isAvailable === true) {
                     this.addShortcut("5", ["ESC"], false);
                 } else {
                     this.addShortcut("1", ["ESC"], false);
@@ -2087,7 +2098,7 @@ const SettingsDialog = class extends EventTarget {
 
                 // add user defined shortcut
                 this.shortcuts = [];
-                const loadedShortcuts = JSON.parse(enviroment.configuration["exitShortcuts"]);
+                const loadedShortcuts = JSON.parse(environment.configuration["exitShortcuts"]);
                 for (const shortcut of loadedShortcuts) {
                     this.addShortcut(shortcut.delay, shortcut.keys, true);
                 }
@@ -2111,7 +2122,7 @@ const SettingsDialog = class extends EventTarget {
                 this.win = document.getElementById("settings-about");
                 this.btn = document.getElementById("btn-settings-about");
 
-                const browser = enviroment.checkBrowser();
+                const browser = environment.checkBrowser();
 
                 this.version = document.getElementById("about-version");
                 this.version.innerText = "0.1.0";
@@ -2121,14 +2132,14 @@ const SettingsDialog = class extends EventTarget {
 
                 // check autolaunch support
                 this.autoLanuch = document.getElementById("about-auto-launch");
-                if (enviroment.desktop.isAvailable === false) {
+                if (environment.desktop.isAvailable === false) {
                     isMissing = true;
                     this.autoLanuch.classList.remove("hide");
                 }
 
                 // check tray support
                 this.tray = document.getElementById("about-tray");
-                if (enviroment.desktop.isAvailable === false) {
+                if (environment.desktop.isAvailable === false) {
                     isMissing = true;
                     this.tray.classList.remove("hide");
                 }
@@ -2136,7 +2147,7 @@ const SettingsDialog = class extends EventTarget {
                 // check system audio share support
                 this.systemAudio = document.getElementById("about-audio");
                 this.systemAudio2 = document.getElementById("about-audio-unsupported");
-                if (enviroment.desktop.isAvailable === false) {
+                if (environment.desktop.isAvailable === false) {
                     isMissing = true;
                     if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
                         this.systemAudio.classList.remove("hide");
@@ -2147,21 +2158,21 @@ const SettingsDialog = class extends EventTarget {
 
                 // check screen share support
                 this.screenShare = document.getElementById("about-screen");
-                if (enviroment.desktop.isAvailable === false) {
+                if (environment.desktop.isAvailable === false) {
                     isMissing = true;
                     this.screenShare.classList.remove("hide");
                 }
 
                 // check play support
                 this.playback = document.getElementById("about-play");
-                if (enviroment.desktop.isAvailable === false && (typeof VideoDecoder === "undefined" || typeof AudioDecoder === "undefined")) {
+                if (environment.desktop.isAvailable === false && (typeof VideoDecoder === "undefined" || typeof AudioDecoder === "undefined")) {
                     isMissing = true;
                     this.playback.classList.remove("hide");
                 }
 
                 // check control share support
                 this.controlShare = document.getElementById("about-control");
-                if (enviroment.desktop.isAvailable === false) {
+                if (environment.desktop.isAvailable === false) {
                     isMissing = true;
                     this.controlShare.classList.remove("hide");
                 }
@@ -2640,12 +2651,12 @@ const DownloadsScreen = class extends EventTarget {
         });
 
         this.list = new Map();
-        const clients = enviroment.server["clients"];
+        const clients = environment.server["clients"];
         for (let client of clients) {
             this.addClient(client);
         }
 
-        this.os = enviroment.getOS();
+        this.os = environment.getOS();
         this.osElement = undefined;
         this.arch = undefined;
         this.archElement = undefined;
@@ -2677,7 +2688,7 @@ const DownloadsScreen = class extends EventTarget {
         this.osElement?.classList?.remove("border");
         this.os = os;
 
-        let arch = enviroment.getArch();
+        let arch = environment.getArch();
         if (this.list.has(os) === false) {
             arch = this.list.get(os).values().next().value;
         }
@@ -2751,6 +2762,7 @@ const RoomScreen = class extends EventTarget {
         this.toolbarPeer = document.getElementById("room-toolbar-peer");
         this.toolbarHost = document.getElementById("room-toolbar-host");
         
+        this.videoCanvas = document.getElementById("room-video");
         this.exitBtn = document.getElementById("room-exit");
 
         // exiting
@@ -2883,6 +2895,17 @@ const RoomScreen = class extends EventTarget {
                 }
             });
         });
+
+        this.isFullscreen = false;
+        this.escapeTimeout = null;
+        document.querySelector(".room-fullscreen").addEventListener("click", () => {
+            if (environment.desktop.isAvailable === true) {
+                this.enterDesktopFullscreen();
+            } else {
+                this.videoCanvas.requestFullscreen();
+            }
+            
+        });
         
         // for debug
         globalThis.exitDialog = this.exitDialog;
@@ -2894,7 +2917,7 @@ const RoomScreen = class extends EventTarget {
         this.main.classList.add("hide");
         this.screen.classList.remove("hide");
 
-        if (server.hostCode !== "" && enviroment.desktop.isAvailable === false) {
+        if (server.hostCode !== "" && environment.desktop.isAvailable === false) {
             this.toolbarPeer.classList.add("hide");
             this.toolbarHost.classList.remove("hide");
         }
@@ -2907,6 +2930,9 @@ const RoomScreen = class extends EventTarget {
         server.addEventListener("join-disconnect", this.waitForConnection);
         server.addEventListener("join-delete", this.exitRequest);
         this.waitForConnection();
+
+        window.addEventListener("keydown", this.handleFullscreenKeyDown);
+        window.addEventListener("keyup", this.handleFullscreenKeyUp);
     };
     close = () => {
         this.setClosePrevention(false);
@@ -2920,6 +2946,19 @@ const RoomScreen = class extends EventTarget {
         server.removeEventListener("join-disconnect", this.waitForConnection);
         server.removeEventListener("join-delete", this.exitRequest);
         server.removeEventListener("join-connect", this.openConnection);
+        server.webRTC?.removeEventListener("icon", this.setIcon);
+        this.videoCanvas.removeEventListener("mousemove", this.moveMouse);
+        this.videoCanvas.removeEventListener("mousedown", this.downMouse);
+        this.videoCanvas.removeEventListener("mouseup", this.upMouse);
+        this.videoCanvas.removeEventListener("wheel", this.wheelMouse);
+        this.videoCanvas.removeEventListener("contextmenu", this.contextMenu);
+        
+        window.removeEventListener("keydown", this.handleFullscreenKeyDown);
+        window.removeEventListener("keyup", this.handleFullscreenKeyUp);
+        
+        if (this.isFullscreen) {
+            this.exitDesktopFullscreen();
+        }
     };
     exitRequest = () => {
         this.dispatchEvent(new CustomEvent("exit"));
@@ -2963,11 +3002,252 @@ const RoomScreen = class extends EventTarget {
         if (server.peerCode !== "") {
             server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
             server.webRTC.setAudio(this.mute);
+            server.webRTC.addEventListener("icon", this.setIcon);
+            this.videoCanvas.addEventListener("mousemove", this.moveMouse);
+            this.videoCanvas.addEventListener("mousedown", this.downMouse);
+            this.videoCanvas.addEventListener("mouseup", this.upMouse);
+            this.videoCanvas.addEventListener("wheel", this.wheelMouse, { passive: false });
+            this.videoCanvas.addEventListener("contextmenu", this.contextMenu);
         }
         this.loading.classList.add("hide");
         console.log("Connection opened.");
     };
+    setIcon = (event) => {
+        //console.log("Received new icon data:", event.detail);
+        const icon = event.detail;
+        
+        // Ensure dimensions are valid
+        if (icon.width > 0 && icon.height > 0) {
+            const scaleFactor = icon.scaleFactor || 1;
+            
+            // Create a temporary canvas for the original image
+            const originalCanvas = document.createElement("canvas");
+            originalCanvas.width = icon.width;
+            originalCanvas.height = icon.height;
+            const originalCtx = originalCanvas.getContext("2d");
+            
+            // Create ImageData from the RGBA Uint8Array
+            const imgData = new ImageData(
+                new Uint8ClampedArray(icon.data), 
+                icon.width, 
+                icon.height
+            );
+            
+            // Draw the pixel data to the original canvas
+            originalCtx.putImageData(imgData, 0, 0);
 
+            // Calculate scaled dimensions
+            const scaledWidth = Math.max(1, Math.round(icon.width / scaleFactor));
+            const scaledHeight = Math.max(1, Math.round(icon.height / scaleFactor));
+            const scaledXOffset = Math.round(icon.xOffset / scaleFactor);
+            const scaledYOffset = Math.round(icon.yOffset / scaleFactor);
+
+            // Create a secondary canvas for the scaled image
+            const scaledCanvas = document.createElement("canvas");
+            scaledCanvas.width = scaledWidth;
+            scaledCanvas.height = scaledHeight;
+            const scaledCtx = scaledCanvas.getContext("2d");
+
+            // Draw the original canvas onto the scaled canvas
+            scaledCtx.drawImage(originalCanvas, 0, 0, scaledWidth, scaledHeight);
+            
+            // Export to base64 PNG Data URL
+            const dataUrl = scaledCanvas.toDataURL("image/png");
+            //console.log("Generated scaled cursor data URL:", dataUrl);
+
+            // Set the cursor style on the video element with the scaled hotspot offset
+            document.getElementById("room-video").style.cursor = `url(${dataUrl}) ${scaledXOffset} ${scaledYOffset}, auto`;
+        } else {
+            // Fallback to default or hide cursor if no valid icon
+            document.getElementById("room-video").style.cursor = "auto";
+        }
+    };
+    moveMouse = (event) => {
+        const rect = this.videoCanvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width;
+        const y = (event.clientY - rect.top) / rect.height;
+                    
+        // Clamp values between 0.0 and 1.0 (in case the mouse goes slightly off-bounds)
+        const relativeX = Math.max(0, Math.min(1, x));
+        const relativeY = Math.max(0, Math.min(1, y));
+                    
+        console.log(`Mouse moved relative - x: ${relativeX.toFixed(3)}, y: ${relativeY.toFixed(3)}`);
+    };
+    getMouseButton = (buttonCode) => {
+        switch (buttonCode) {
+            case 0: return "left";
+            case 1: return "middle";
+            case 2: return "right";
+            case 3: return "back";
+            case 4: return "forward";
+            default: return null;
+        }
+    };
+
+    downMouse = (event) => {
+        event.preventDefault();
+        const button = this.getMouseButton(event.button);
+        if (!button) return;
+
+        console.log(`Mouse down - button: ${button}`);
+    };
+    
+    upMouse = (event) => {
+        event.preventDefault()
+        const button = this.getMouseButton(event.button);
+        if (!button) return;
+
+        console.log(`Mouse up - button: ${button}`);
+    };
+
+    wheelMouse = (event) => {
+        // Prevent the page from scrolling when zooming/scrolling on the canvas
+        event.preventDefault(); 
+        
+        const amount = Math.abs(event.deltaY);
+        let state = "";
+        
+        if (event.deltaY > 0) {
+            state = "down";
+        } else if (event.deltaY < 0) {
+            state = "up";
+        }
+        
+        if (state !== "") {
+            console.log(`Mouse wheel - state: ${state}, amount: ${amount}`);
+        }
+    };
+    contextMenu = (event) => {
+        event.preventDefault(); // Prevents the right-click menu from showing
+    };
+    downKey = (event) => {
+        
+    };
+    upKey = (event) => {
+
+    };
+    enterDesktopFullscreen = () => {
+        if (!this.isFullscreen) {
+            this.isFullscreen = true;
+            environment.desktop.ipcRenderer.invoke("api", "set-fullscreen", true);
+            
+            // Hide toolbars
+            this.toolbarPeer.classList.add("hide");
+            this.toolbarHost.classList.add("hide");
+            
+            // Show only video canvas by making it fixed and on top
+            this.videoCanvas.style.position = "fixed";
+            this.videoCanvas.style.top = "0";
+            this.videoCanvas.style.left = "0";
+            this.videoCanvas.style.width = "100vw";
+            this.videoCanvas.style.height = "100vh";
+            this.videoCanvas.style.zIndex = "9999";
+            this.videoCanvas.style.backgroundColor = "black";
+        }
+    };
+
+    exitDesktopFullscreen = () => {
+        if (this.isFullscreen) {
+            this.isFullscreen = false;
+            environment.desktop.ipcRenderer.invoke("api", "set-fullscreen", false);
+            
+            // Restore the active toolbar after exiting
+            if (server.hostCode !== "" && environment.desktop.isAvailable === false) {
+                this.toolbarHost.classList.remove("hide");
+            }
+            if (server.peerCode !== "") {
+                this.toolbarPeer.classList.remove("hide");
+            }
+                
+            // Reset video canvas styling
+            this.videoCanvas.style.position = "";
+            this.videoCanvas.style.top = "";
+            this.videoCanvas.style.left = "";
+            this.videoCanvas.style.width = "";
+            this.videoCanvas.style.height = "";
+            this.videoCanvas.style.zIndex = "";
+            this.videoCanvas.style.backgroundColor = "";
+        }
+    };
+
+    handleFullscreenKeyDown = (e) => {
+        if (e.key === "Escape" && this.isFullscreen) {
+            if (!this.escapeTimeout) {
+                // Initialize progress UI dynamically if not exists
+                if (!this.exitProgressContainer) {
+                    this.exitProgressContainer = document.createElement("div");
+                    this.exitProgressContainer.style.position = "fixed";
+                    this.exitProgressContainer.style.bottom = "20px";
+                    this.exitProgressContainer.style.left = "50%";
+                    this.exitProgressContainer.style.transform = "translateX(-50%)";
+                    this.exitProgressContainer.style.zIndex = "10000";
+                    this.exitProgressContainer.style.display = "none";
+                    this.exitProgressContainer.style.flexDirection = "column";
+                    this.exitProgressContainer.style.alignItems = "center";
+                    this.exitProgressContainer.style.gap = "8px";
+                    this.exitProgressContainer.style.padding = "16px";
+                    this.exitProgressContainer.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
+                    this.exitProgressContainer.style.borderRadius = "8px";
+                    this.exitProgressContainer.style.color = "white";
+
+                    const text = document.createElement("div");
+                    text.innerText = localization.get("room.fullscreen-exit");
+                    text.style.fontFamily = "sans-serif";
+                    
+                    this.exitProgressBar = document.createElement("progress");
+                    this.exitProgressBar.max = 400; // Represents 4 seconds (400 ticks of 10ms)
+                    this.exitProgressBar.value = 0;
+                    this.exitProgressBar.style.width = "200px";
+
+                    this.exitProgressContainer.appendChild(text);
+                    this.exitProgressContainer.appendChild(this.exitProgressBar);
+                    document.body.appendChild(this.exitProgressContainer);
+                }
+
+                // Track time and animate
+                this.escapeHoldTime = 0;
+                this.escapeInterval = setInterval(() => {
+                    this.escapeHoldTime += 10;
+                    
+                    // Show progress bar after 1 second (1000ms)
+                    if (this.escapeHoldTime >= 1000) {
+                        this.exitProgressContainer.style.display = "flex";
+                        this.exitProgressBar.value = (this.escapeHoldTime - 1000) / 8;
+                    }
+                }, 10);
+
+                // Set a 5-second combined hold timeout
+                this.escapeTimeout = setTimeout(() => {
+                    clearInterval(this.escapeInterval);
+                    this.escapeInterval = undefined;
+                    if (this.exitProgressContainer) {
+                        this.exitProgressContainer.style.display = "none";
+                    }
+                    this.exitDesktopFullscreen();
+                    this.escapeTimeout = undefined;
+                }, 4000);
+            }
+        }
+    };
+
+    handleFullscreenKeyUp = (e) => {
+        if (e.key === "Escape") {
+            if (this.escapeTimeout) {
+                clearTimeout(this.escapeTimeout);
+                this.escapeTimeout = undefined;
+                
+                if (this.escapeInterval) {
+                    clearInterval(this.escapeInterval);
+                    this.escapeInterval = undefined;
+                }
+                
+                if (this.exitProgressContainer) {
+                    this.exitProgressContainer.style.display = "none";
+                    this.exitProgressBar.value = 0;
+                }
+            }
+        }
+    };
 };
 
 
@@ -2978,11 +3258,11 @@ const MainUI = class {
     };
     async load() {
         // load color theme
-        globalThis.ui("theme", enviroment.configuration["color"]);
+        globalThis.ui("theme", environment.configuration["color"]);
         // set light/dark
         await new Promise((resolve) => {
             setTimeout(() => {
-                let mode = enviroment.configuration["mode"];
+                let mode = environment.configuration["mode"];
                 if (mode === "auto") {
                     mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
                 }
@@ -2991,13 +3271,14 @@ const MainUI = class {
             }, 1);
         });
         // set language
-        localization.setLang(enviroment.configuration["lang"]);
+        localization.setLang(environment.configuration["lang"]);
         localization.translate();
 
         // call desktop specific UI setup
-        if (enviroment.desktop.isAvailable) {
-            enviroment.desktop.ipcRenderer.invoke("api", "set-tray-text", localization.get("main.tray-open"), localization.get("main.tray-close"));
-            enviroment.desktop.ipcRenderer.send("api", "set-tray", enviroment.configuration["minimizing"]);
+        if (environment.desktop.isAvailable) {
+            environment.desktop.ipcRenderer.invoke("api", "set-tray-text", localization.get("main.tray-open"), localization.get("main.tray-close"));
+            environment.desktop.ipcRenderer.invoke("api", "set-close-text", localization.get("main.close-text"), localization.get("main.close-text-2"), localization.get("main.close-confirm"), localization.get("main.close-cancel"));
+            environment.desktop.ipcRenderer.send("api", "set-tray", environment.configuration["minimizing"]);
         }
 
         // loading DOM components
@@ -3096,7 +3377,7 @@ const MainUI = class {
             this.screenSwitch(this.newScreen);
             return;
         } else if (path[0] === "downloads") {
-            if (enviroment.desktop.isAvailable || enviroment.server["clients"].length === 0) {
+            if (environment.desktop.isAvailable || environment.server["clients"].length === 0) {
                 window.history.pushState({}, "", "/");
                 this.screenSwitch(this.newScreen);
                 return;
@@ -3124,8 +3405,8 @@ const mainUI = new MainUI();
 globalThis.mainUI = mainUI;
 
 const main = async function() {
-    // load enviroment (DOM, configuration, desktop libs, etc.)
-    await enviroment.load();
+    // load environment (DOM, configuration, desktop libs, etc.)
+    await environment.load();
 
     // load visible components and switch by server connection
     await mainUI.load();
@@ -3139,6 +3420,6 @@ const main = async function() {
     });
 
     // load server connection
-    await server.load("wss://" + enviroment.server["domain"] + ":" + enviroment.server["ws"], enviroment.server["webRTCConfig"]);
+    await server.load("wss://" + environment.server["domain"] + ":" + environment.server["ws"], environment.server["webRTCConfig"]);
 };
 main();

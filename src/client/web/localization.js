@@ -52,6 +52,22 @@ const dict = {
         "tray-close": {
             "en": "Close",
             "hu": "Bezárás"
+        },
+        "close-text": {
+            "en": "Do you want to leave?",
+            "hu": "Biztosan be akarod zárni?"
+        },
+        "close-text-2": {
+            "en": "The connection will be closed.",
+            "hu": "A kapcsolat bontásra kerül."
+        },
+        "close-confirm": {
+            "en": "Exit",
+            "hu": "Kilépés"
+        },
+        "close-cancel": {
+            "en": "Stay",
+            "hu": "Maradok"
         }
     },
     "downloads": {
@@ -495,6 +511,18 @@ const dict = {
         "permission": {
             "en": "Request permission",
             "hu": "Engedélykérés"
+        },
+        "fullscreen-exit": {
+            "en": "Exiting from fullscreen mode...",
+            "hu": "Kilépés a teljes képernyős módból..."
+        },
+        "resolution-2x": {
+            "en": "2x resolution",
+            "hu": "2x felbontás"
+        },
+        "framerate-2x": {
+            "en": "2x framerate",
+            "hu": "2x képkocka sebesség"
         }
     }
 };

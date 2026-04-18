@@ -9,7 +9,8 @@ const {
     net,
     session,
     screen,
-    desktopCapturer
+    desktopCapturer,
+    dialog
 } = require("electron");
 const path = require("node:path");
 const url = require("node:url");
@@ -82,6 +83,10 @@ const main = async function() {
     })
     
     // Main window create "local://local.local/"
+    let closeText = "Do you want to leave?";
+    let closeText2 = "The connection will be closed.";
+    let closeTextConfirm = "Exit";
+    let closeTextCancel = "Stay";
     const createMainWindow = function(url="https://localhost") {
         const win = new BrowserWindow({
             "width": 800,
@@ -104,18 +109,39 @@ const main = async function() {
                 win.hide();
             }
         });
-        // for debug
-        win.webContents.on("before-input-event", async function(event, input) {
+
+        // Track Escape key timeout
+        let escapeTimeout = null;
+
+        // Note: remove "async" here to guarantee synchronous preventDefault()
+        win.webContents.on("before-input-event", function(event, input) {
+            
+            // Developer tools shortcut
             if (input.type === "keyDown" && input.key === "F12") {
                 if (win.webContents.isDevToolsOpened()) {
                     win.webContents.closeDevTools();
                 } else {
                     win.webContents.openDevTools({
-                        "mode:": "right"
+                        mode: "right"
                     });
                 }
             }
         });
+
+        win.webContents.on("will-prevent-unload", (event) => {
+            const choice = dialog.showMessageBoxSync(win, {
+                "type": "question",
+                "buttons": [closeTextConfirm, closeTextCancel],
+                "title": closeText,
+                "message": closeText2,
+                "defaultId": 0,
+                "cancelId": 1
+            })
+            const leave = (choice === 0)
+            if (leave) {
+                event.preventDefault()
+            }
+        })
         return win;
     };
     winMain = createMainWindow();
@@ -214,6 +240,14 @@ const main = async function() {
             menu.append(menuClose);
             tray.setContextMenu(menu);
             return true;
+        } else if (handle === "set-close-text") {
+            closeText = args[0];
+            closeText2 = args[1];
+            closeTextConfirm = args[2];
+            closeTextCancel = args[3];
+        } else if (handle === "set-fullscreen") {
+            const isOn = args[0];
+            winMain.setFullScreen(isOn);
         }
     };
     ipcMain.on("api", async function(event, ...args) {

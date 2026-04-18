@@ -515,8 +515,8 @@
         </main>
 
         <main class="room-layout hide" id="screen-room">
-            <div>
-                <canvas id="video" width="1920" height="1080" style="display: flex;"></canvas>
+            <div id="room-video-container">
+                <canvas id="room-video" width="1920" height="1080" style="display: flex;"></canvas>
                 <div id="room-loading">
                     <progress class="circle indeterminate" value="50" max="100"></progress>
                 </div>
@@ -619,11 +619,11 @@
                         </button>
                         <menu class="top no-wrap">
                             <li class="room-enchante" data-value="0">
-                                <span>2x framerate</span>
+                                <span data-i18n="room.framerate-2x">2x framerate</span>
                                 <i></i>
                             </li>
                             <li class="room-enchante" data-value="1">
-                                <span>2x resolution</span>
+                                <span data-i18n="room.resolution-2x">2x resolution</span>
                                 <i></i>
                             </li>
                         </menu>

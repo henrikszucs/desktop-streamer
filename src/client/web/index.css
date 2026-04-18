@@ -92,11 +92,6 @@ body.dark {
     width: -webkit-fill-available
 }
 
-.canvas {
-    display: flex;
-    background-color: black;
-}
-
 
 /* Side menu fix */
 .nav-side-fix > a {
@@ -406,4 +401,14 @@ body.dark {
     position: absolute;
     top: calc(50% - 1.5rem);
     left: calc(50% - 1.5rem);
+}
+
+#room-video-container {
+    display: flex;
+    justify-content: center;
+}
+
+#room-video {
+    display: flex;
+    background-color: black;
 }
