@@ -532,12 +532,12 @@ const WebRTCTransport = class extends EventTarget {
                 }
             }
             if (typeof data["wheel"] === "object") {
-                const direction = data["button"]["direction"];
-                const amount = data["button"]["amount"];
+                const direction = data["wheel"]["direction"];
+                const amount = data["wheel"]["amount"];
                 if (direction === "up") {
-                    environment.desktop.Control.Mouse.scrollUp(amount);
+                    environment.desktop.Control.Mouse.scrollUp(amount, false);
                 } else if (direction === "down") {
-                    environment.desktop.Control.Mouse.scrollDown(amount);
+                    environment.desktop.Control.Mouse.scrollDown(amount, false);
                 } else if (direction === "left") {
                     environment.desktop.Control.Mouse.scrollUp(amount, true);
                 } else if (direction === "right") {
@@ -549,7 +549,7 @@ const WebRTCTransport = class extends EventTarget {
         this["keyboardCommunicator"].onIncoming(async (messageObj) => {
             await messageObj.wait();
             const data = messageObj.data;
-            if (typeof data["button"] === "object") {
+            if (typeof data["key"] === "object") {
                 const key = data["key"]["key"];
                 const state = data["key"]["state"];
                 if (state === "up") {
@@ -2794,6 +2794,7 @@ const RoomScreen = class extends EventTarget {
         this.toolbarHost = document.getElementById("room-toolbar-host");
         
         this.videoCanvas = document.getElementById("room-video");
+        this.videoCanvasFocus = false;
         this.exitBtn = document.getElementById("room-exit");
 
         // exiting
@@ -2984,6 +2985,11 @@ const RoomScreen = class extends EventTarget {
         this.videoCanvas.removeEventListener("wheel", this.wheelMouse);
         this.videoCanvas.removeEventListener("contextmenu", this.contextMenu);
         
+        window.removeEventListener("mousedown", this.checkFocus);
+
+        window.removeEventListener("keydown", this.downKey);
+        window.removeEventListener("keyup", this.upKey);
+
         window.removeEventListener("keydown", this.handleFullscreenKeyDown);
         window.removeEventListener("keyup", this.handleFullscreenKeyUp);
         
@@ -3039,6 +3045,11 @@ const RoomScreen = class extends EventTarget {
             this.videoCanvas.addEventListener("mouseup", this.upMouse);
             this.videoCanvas.addEventListener("wheel", this.wheelMouse, { passive: false });
             this.videoCanvas.addEventListener("contextmenu", this.contextMenu);
+            window.addEventListener("mousedown", this.checkFocus);
+
+            window.addEventListener("keydown", this.downKey);
+            window.addEventListener("keyup", this.upKey);
+            this.videoCanvas.focus();
         }
         this.loading.classList.add("hide");
         console.log("Connection opened.");
@@ -3102,7 +3113,7 @@ const RoomScreen = class extends EventTarget {
         const relativeX = Math.max(0, Math.min(1, x));
         const relativeY = Math.max(0, Math.min(1, y));
         
-        console.log(`Mouse moved relative - x: ${relativeX.toFixed(3)}, y: ${relativeY.toFixed(3)}`);
+        //console.log(`Mouse moved relative - x: ${relativeX.toFixed(3)}, y: ${relativeY.toFixed(3)}`);
         server.webRTC.setMousePos(relativeX, relativeY);
     };
     getMouseButton = (buttonCode) => {
@@ -3157,10 +3168,28 @@ const RoomScreen = class extends EventTarget {
     contextMenu = (event) => {
         event.preventDefault(); // Prevents the right-click menu from showing
     };
+
+    checkFocus = (event) => {
+        if (event.target === this.videoCanvas) {
+            this.videoCanvasFocus = true;
+        } else {
+            this.videoCanvasFocus = false;
+        }
+    };
     downKey = (event) => {
+        if (this.videoCanvasFocus === false) {
+            return;
+        }
+        event.preventDefault();
+        console.log(`Key down - code: ${event.code}`);
         server.webRTC.setKeyboard(event.code, "down");
     };
     upKey = (event) => {
+        if (this.videoCanvasFocus === false) {
+            return;
+        }
+        event.preventDefault();
+        console.log(`Key up - code: ${event.code}`);
         server.webRTC.setKeyboard(event.code, "up");
     };
     enterDesktopFullscreen = () => {
