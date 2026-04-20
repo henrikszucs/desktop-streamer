@@ -3398,9 +3398,8 @@ const RoomScreen = class extends EventTarget {
         server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate, this.videoCanvas2);
     }
     processFrame = async () => {
-        if (true) {
-            await globalThis.enchanter.upscale(this.videoCanvas2, this.videoCanvas);
-        } else if (!this.enchate1 && !this.enchate2) {
+        if (!this.enchate1 && !this.enchate2) {
+            
             // Match dimensions if needed
             if (this.videoCanvas.width !== this.videoCanvas2.width || this.videoCanvas.height !== this.videoCanvas2.height) {
                 this.videoCanvas.width = this.videoCanvas2.width;
@@ -3487,6 +3486,15 @@ const RoomScreen = class extends EventTarget {
                 }
 
                 if (this.webgpuInitialized) {
+                    if (this.justUsedEnchanter) {
+                        this.gpuContext.configure({
+                            device: this.device,
+                            format: navigator.gpu.getPreferredCanvasFormat(),
+                            alphaMode: "premultiplied"
+                        });
+                        this.justUsedEnchanter = false;
+                    }
+
                     let bindGroupNeedsUpdate = false;
                     if (!this.frameTexture || 
                         this.frameTexture.width !== this.videoCanvas2.width || 
@@ -3542,10 +3550,17 @@ const RoomScreen = class extends EventTarget {
                     this.device.queue.submit([commandEncoder.finish()]);
                 }
             }
-        } else if (this.enchate1) {
-            await globalThis.enchanter.upscale(this.videoCanvas2, this.videoCanvas);
-        } else if (this.enchate2) {
-            // TODO: framegen
+        } else { 
+            if (this.enchate1) {
+                this.justUsedEnchanter = true;
+                await enchanter.upscale(this.videoCanvas2, this.videoCanvas);
+                console.log("Frame upscaled with Enchanter.");
+            }
+            if (this.enchate2) {
+                this.justUsedEnchanter = true;
+                // TODO: framegen
+                console.log("Frame processed with Enchanter frame generation (not implemented).");
+            }
         }
                 
         // Continue the loop
