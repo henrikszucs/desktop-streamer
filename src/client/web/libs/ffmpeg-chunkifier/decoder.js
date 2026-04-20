@@ -297,10 +297,135 @@ const Player = class {
         this.nextPlaybackTime += audioBuffer.duration;
     };
 
-    appendVideoFrame(frame) {
-        this.videoDrawCtx.drawImage(frame, 0, 0, this.videoDrawCtx.canvas.width, this.videoDrawCtx.canvas.height);
-    };
+    async appendVideoFrame(frame) {
+        const context = this.videoDrawCtx;
+        
+        // Initialize WebGPU resources on the first frame
+        if (!this.webgpuInitialized) {
+            if (this.webgpuInitializing) {
+                // Drop frame if we're still waiting for the GPU device
+                return;
+            }
+            this.webgpuInitializing = true;
 
+            try {
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) throw new Error('No appropriate GPUAdapter found.');
+                
+                this.device = await adapter.requestDevice();
+                const format = navigator.gpu.getPreferredCanvasFormat();
+                
+                context.configure({
+                    device: this.device,
+                    format: format,
+                    alphaMode: 'premultiplied'
+                });
+
+                const shaderCode = `
+                    struct VertexOutput {
+                        @builtin(position) position : vec4<f32>,
+                        @location(0) texCoord : vec2<f32>,
+                    }
+
+                    @vertex
+                    fn vert_main(@builtin(vertex_index) VertexIndex : u32) -> VertexOutput {
+                        var pos = array<vec2<f32>, 4>(
+                            vec2<f32>(-1.0,  1.0),
+                            vec2<f32>( 1.0,  1.0),
+                            vec2<f32>(-1.0, -1.0),
+                            vec2<f32>( 1.0, -1.0)
+                        );
+                        var tex = array<vec2<f32>, 4>(
+                            vec2<f32>(0.0, 0.0),
+                            vec2<f32>(1.0, 0.0),
+                            vec2<f32>(0.0, 1.0),
+                            vec2<f32>(1.0, 1.0)
+                        );
+                        
+                        var output : VertexOutput;
+                        output.position = vec4<f32>(pos[VertexIndex], 0.0, 1.0);
+                        output.texCoord = tex[VertexIndex];
+                        return output;
+                    }
+
+                    @group(0) @binding(0) var mySampler: sampler;
+                    @group(0) @binding(1) var myTexture: texture_external;
+
+                    @fragment
+                    fn frag_main(@location(0) texCoord : vec2<f32>) -> @location(0) vec4<f32> {
+                        // Sample from the external texture
+                        return textureSampleBaseClampToEdge(myTexture, mySampler, texCoord);
+                    }
+                `;
+
+                const module = this.device.createShaderModule({ code: shaderCode });
+
+                this.pipeline = this.device.createRenderPipeline({
+                    layout: 'auto',
+                    vertex: {
+                        module,
+                        entryPoint: 'vert_main',
+                    },
+                    fragment: {
+                        module,
+                        entryPoint: 'frag_main',
+                        targets: [{ format }],
+                    },
+                    primitive: {
+                        topology: 'triangle-strip',
+                    },
+                });
+
+                this.sampler = this.device.createSampler({
+                    magFilter: 'linear',
+                    minFilter: 'linear',
+                });
+
+                this.webgpuInitialized = true;
+            } catch (err) {
+                console.error('Failed to initialize WebGPU:', err);
+                return;
+            } finally {
+                this.webgpuInitializing = false;
+            }
+        }
+
+        // Import the VideoFrame as an external texture
+        const externalTexture = this.device.importExternalTexture({ source: frame });
+
+        const bindGroup = this.device.createBindGroup({
+            layout: this.pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: this.sampler },
+                { binding: 1, resource: externalTexture }
+            ]
+        });
+
+        const commandEncoder = this.device.createCommandEncoder();
+        const textureView = context.getCurrentTexture().createView();
+
+        const renderPassDescriptor = {
+            colorAttachments: [{
+                view: textureView,
+                clearValue: [0.0, 0.0, 0.0, 1.0],
+                loadOp: 'clear',
+                storeOp: 'store',
+            }],
+        };
+
+        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+        passEncoder.setPipeline(this.pipeline);
+        passEncoder.setBindGroup(0, bindGroup);
+        passEncoder.draw(4);
+        passEncoder.end();
+
+        this.device.queue.submit([commandEncoder.finish()]);
+        /*
+        appendVideoFrame(frame) {
+            this.videoDrawCtx.drawImage(frame, 0, 0, this.videoDrawCtx.canvas.width, this.videoDrawCtx.canvas.height);
+        };
+        */
+    };
 };
 
 export {

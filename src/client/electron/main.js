@@ -144,7 +144,8 @@ const main = async function() {
         })
         return win;
     };
-    winMain = createMainWindow("https://g28azi.ddns.net");
+    // "https://g28azi.ddns.net"
+    winMain = createMainWindow();
     app.on("activate", function() {
         if (BrowserWindow.getAllWindows().length === 0) {
             winMain = createMainWindow();

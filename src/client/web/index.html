@@ -7,6 +7,9 @@
         <meta name="keywords" content="desktop, streamer, remote, access"/>
         <title>Desktop Streamer</title>
         <link href="/media/favicon.svg" rel="icon"  type="image/svg+xml"/>
+        
+        <script src="/libs/tensorflow/tf.min.js"> </script>
+        <script src="/libs/tensorflow/tf-backend-webgpu.js"></script>
 
         <link href="/libs/beercss/beer.min.css" rel="stylesheet"/>
         <script src="/libs/beercss/beer.min.js" type="module" async></script>
@@ -516,7 +519,8 @@
 
         <main class="room-layout hide" id="screen-room">
             <div id="room-video-container">
-                <canvas id="room-video" width="1920" height="1080" style="display: flex;"></canvas>
+                <canvas id="room-video" width="960" height="540"></canvas>
+                <canvas id="room-video-2" width="1920" height="1080" class="hide"></canvas>
                 <div id="room-loading">
                     <progress class="circle indeterminate" value="50" max="100"></progress>
                 </div>
@@ -619,11 +623,11 @@
                         </button>
                         <menu class="top no-wrap">
                             <li class="room-enchante" data-value="0">
-                                <span data-i18n="room.framerate-2x">2x framerate</span>
+                                <span data-i18n="room.resolution-2x">2x resolution</span>
                                 <i></i>
                             </li>
                             <li class="room-enchante" data-value="1">
-                                <span data-i18n="room.resolution-2x">2x resolution</span>
+                                <span data-i18n="room.framerate-2x">2x framerate</span>
                                 <i></i>
                             </li>
                         </menu>

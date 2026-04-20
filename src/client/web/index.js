@@ -326,9 +326,7 @@ const WebRTCTransport = class extends EventTarget {
                 }
 
                 await this.videoEncoderFFmpeg.end();
-                const ctx = document.getElementById("room-video").getContext("2d");
-                ctx.width = 1920;
-                ctx.height = 1080;
+                const ctx = document.getElementById("room-video").getContext("webgpu");
                 const player = new Player(false, null, ctx);
                 const decoder = new Decoder();
                 decoder.onVideoFrame = (frame) => {
@@ -802,10 +800,8 @@ const WebRTCTransport = class extends EventTarget {
         await this.startFunction;
     };
 
-    setVideo(bitrate, framerate, resolution) {
-        const ctx = document.getElementById("room-video").getContext("2d");
-        ctx.width = 1920;
-        ctx.height = 1080;
+    setVideo(bitrate, framerate, resolution, outCanvas) {
+        const ctx = outCanvas.getContext("webgpu");
         const player = new Player(true, null, ctx);
         this.decoder = new Decoder();
         this.decoder.onVideoFrame = (frame) => {
@@ -1145,6 +1141,75 @@ const Server = class extends EventTarget {
 };
 const server = new Server();
 globalThis.server = server;
+
+// Image enchanter (Native WebGPU with Zero PCIe Copy Overhead)
+const Enchanter = class {
+    constructor() {
+        this.isAvailable = false;
+        this.model = null;
+    }
+    
+    async loadModels() {
+        console.log("Native WebGPU upscaler initialized (tf.browser.draw)");
+        await tf.setBackend("webgpu");
+        await tf.ready();
+        this.model = await tf.loadGraphModel("/models/upscaler/model.json");
+        this.isAvailable = true;
+    }
+    
+    async upscale(inCanvas, outCanvas) {
+        if (!this.isAvailable || !this.model) return;
+
+        // Yield CPU thread to prevent UI freezing
+        await tf.nextFrame();
+
+        const outTensor = tf.tidy(() => {
+            let tensor = tf.browser.fromPixels(inCanvas).toFloat();
+
+            const originalH = tensor.shape[0];
+            const originalW = tensor.shape[1];
+
+            // Pad to multiples of 32
+            const padH = (32 - (originalH % 32)) % 32;
+            const padW = (32 - (originalW % 32)) % 32;
+            if (padH > 0 || padW > 0) {
+                tensor = tf.pad(tensor, [[0, padH], [0, padW], [0, 0]]);
+            }
+
+            const ph = tensor.shape[0];
+            const pw = tensor.shape[1];
+            const numBlocksY = ph / 32;
+            const numBlocksX = pw / 32;
+
+            // GPU Accelerated Slicing via Matrix Transposing (Zero CPU Loops)
+            let blocks = tf.reshape(tensor, [numBlocksY, 32, numBlocksX, 32, 3]);
+            blocks = tf.transpose(blocks, [0, 2, 1, 3, 4]); 
+            blocks = tf.reshape(blocks, [numBlocksY * numBlocksX, 32, 32, 3]);
+
+            // Batch Predict natively on WebGPU
+            let upscaledBlocks = this.model.predict(blocks); 
+
+            // GPU Accelerated Reconstruction via Matrix Transposing (Zero CPU Loops)
+            upscaledBlocks = tf.reshape(upscaledBlocks, [numBlocksY, numBlocksX, 64, 64, 3]);
+            upscaledBlocks = tf.transpose(upscaledBlocks, [0, 2, 1, 3, 4]);
+            let finalImage = tf.reshape(upscaledBlocks, [numBlocksY * 64, numBlocksX * 64, 3]);
+
+            if (padH > 0 || padW > 0) {
+                finalImage = tf.slice(finalImage, [0, 0, 0], [originalH * 2, originalW * 2, 3]);
+            }
+
+            return finalImage.clipByValue(0, 255).cast("int32");
+        });
+
+        // Use the native WebGPU tf.browser.draw function to blast pixels straight to the output
+        await tf.browser.draw(outTensor, outCanvas);
+        
+        // Manual tensor cleanup
+        outTensor.dispose();
+    }
+};
+const enchanter = new Enchanter();
+globalThis.enchanter = enchanter;
 
 // UI classes
 // Display screen behaviour
@@ -2795,6 +2860,7 @@ const RoomScreen = class extends EventTarget {
         
         this.videoCanvas = document.getElementById("room-video");
         this.videoCanvasFocus = false;
+        this.videoCanvas2 = document.getElementById("room-video-2");
         this.exitBtn = document.getElementById("room-exit");
 
         // exiting
@@ -2869,7 +2935,7 @@ const RoomScreen = class extends EventTarget {
                 this.bitrate = el.getAttribute("data-value");
                 document.querySelector(".room-bitrate[data-value='" + this.bitrate + "'] > i").innerHTML = "check";
                 console.log("Set bitrate to", this.bitrate);
-                server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+                this.startVideo();
             });
         });
         document.querySelectorAll(".room-resolution").forEach((el) => {
@@ -2878,7 +2944,7 @@ const RoomScreen = class extends EventTarget {
                 this.resolution = el.getAttribute("data-value");
                 document.querySelector(".room-resolution[data-value='" + this.resolution + "'] > i").innerHTML = "check";
                 console.log("Set resolution to", this.resolution);
-                server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+                this.startVideo();
             });
         });
         document.querySelectorAll(".room-framerate").forEach((el) => {
@@ -2887,7 +2953,7 @@ const RoomScreen = class extends EventTarget {
                 this.framerate = el.getAttribute("data-value");
                 document.querySelector(".room-framerate[data-value='" + this.framerate + "'] > i").innerHTML = "check";
                 console.log("Set framerate to", this.framerate);
-                server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+                this.startVideo();
             });
         });
 
@@ -2903,30 +2969,32 @@ const RoomScreen = class extends EventTarget {
             server.webRTC.setAudio(this.mute);
         });
 
-        this.enchate1 = "0";
-        this.enchate2 = "0";
+        this.enchate1 = false;
+        this.enchate2 = false;
         document.querySelectorAll(".room-enchante").forEach((el) => {
             el.addEventListener("click", () => {
                 const value = el.getAttribute("data-value");
                 if (value === "0") {
-                    if (this.enchate1 === "1") {
-                        this.enchate1 = "0";
+                    if (this.enchate1 === true) {
+                        this.enchate1 = false;
                         document.querySelector(".room-enchante[data-value='0'] > i").innerHTML = "";
                     } else {
-                        this.enchate1 = "1";
+                        this.enchate1 = true;
                         document.querySelector(".room-enchante[data-value='0'] > i").innerHTML = "check";
                     }
                 } else if (value === "1") {
-                    if (this.enchate2 === "1") {
-                        this.enchate2 = "0";
+                    if (this.enchate2 === true) {
+                        this.enchate2 = false;
                         document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = "";
                     } else {
-                        this.enchate2 = "1";
+                        this.enchate2 = true;
                         document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = "check";
                     }
                 }
             });
         });
+        this.enchanteLoop = null;
+        
 
         this.isFullscreen = false;
         this.escapeTimeout = null;
@@ -2967,6 +3035,7 @@ const RoomScreen = class extends EventTarget {
         window.addEventListener("keyup", this.handleFullscreenKeyUp);
     };
     close = () => {
+        cancelAnimationFrame(this.enchanteLoop);
         this.setClosePrevention(false);
         this.navLeft.classList.remove("hide");
         this.navTop.classList.remove("hide");
@@ -3037,13 +3106,13 @@ const RoomScreen = class extends EventTarget {
     };
     openConnection = () => {
         if (server.peerCode !== "") {
-            server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate);
+            this.startVideo();
             server.webRTC.setAudio(this.mute);
             server.webRTC.addEventListener("icon", this.setIcon);
             this.videoCanvas.addEventListener("mousemove", this.moveMouse);
             this.videoCanvas.addEventListener("mousedown", this.downMouse);
             this.videoCanvas.addEventListener("mouseup", this.upMouse);
-            this.videoCanvas.addEventListener("wheel", this.wheelMouse, { passive: false });
+            this.videoCanvas.addEventListener("wheel", this.wheelMouse, { "passive": false });
             this.videoCanvas.addEventListener("contextmenu", this.contextMenu);
             window.addEventListener("mousedown", this.checkFocus);
 
@@ -3105,6 +3174,9 @@ const RoomScreen = class extends EventTarget {
         }
     };
     moveMouse = (event) => {
+        if (this.videoCanvasFocus === false) {
+            return;
+        }
         const rect = this.videoCanvas.getBoundingClientRect();
         const x = (event.clientX - rect.left) / rect.width;
         const y = (event.clientY - rect.top) / rect.height;
@@ -3211,7 +3283,6 @@ const RoomScreen = class extends EventTarget {
             this.videoCanvas.style.backgroundColor = "black";
         }
     };
-
     exitDesktopFullscreen = () => {
         if (this.isFullscreen) {
             this.isFullscreen = false;
@@ -3235,7 +3306,6 @@ const RoomScreen = class extends EventTarget {
             this.videoCanvas.style.backgroundColor = "";
         }
     };
-
     handleFullscreenKeyDown = (e) => {
         if (e.key === "Escape" && this.isFullscreen) {
             if (!this.escapeTimeout) {
@@ -3295,7 +3365,6 @@ const RoomScreen = class extends EventTarget {
             }
         }
     };
-
     handleFullscreenKeyUp = (e) => {
         if (e.key === "Escape") {
             if (this.escapeTimeout) {
@@ -3314,6 +3383,175 @@ const RoomScreen = class extends EventTarget {
             }
         }
     };
+
+    setEnchante = (enchante1=this.enchate1, enchante2=this.enchate2) => {
+        this.enchate1 = enchante1;
+        this.enchate2 = enchante2;
+        document.querySelector(".room-enchante[data-value='0'] > i").innerHTML = enchante1 === "1" ? "check" : "";
+        document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = enchante2 === "1" ? "check" : "";
+    };
+    startVideo = () => {
+        if (this.enchanteLoop) {
+            cancelAnimationFrame(this.enchanteLoop);
+        }
+        this.enchanteLoop = requestAnimationFrame(this.processFrame);
+        server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate, this.videoCanvas2);
+    }
+    processFrame = async () => {
+        if (true) {
+            await globalThis.enchanter.upscale(this.videoCanvas2, this.videoCanvas);
+        } else if (!this.enchate1 && !this.enchate2) {
+            // Match dimensions if needed
+            if (this.videoCanvas.width !== this.videoCanvas2.width || this.videoCanvas.height !== this.videoCanvas2.height) {
+                this.videoCanvas.width = this.videoCanvas2.width;
+                this.videoCanvas.height = this.videoCanvas2.height;
+            }
+
+            if (this.videoCanvas.width > 0 && this.videoCanvas.height > 0) {
+                
+                // Initialize WebGPU if not already done
+                if (!this.webgpuInitialized) {
+                    if (!this.webgpuInitializing) {
+                        this.webgpuInitializing = true;
+                        try {
+                            const adapter = await navigator.gpu.requestAdapter();
+                            if (adapter) {
+                                this.device = await adapter.requestDevice();
+                                this.gpuContext = this.videoCanvas.getContext("webgpu");
+                                const format = navigator.gpu.getPreferredCanvasFormat();
+                                
+                                this.gpuContext.configure({
+                                    device: this.device,
+                                    format: format,
+                                    alphaMode: "premultiplied"
+                                });
+
+                                const shaderCode = `
+                                    struct VertexOutput {
+                                        @builtin(position) position : vec4<f32>,
+                                        @location(0) texCoord : vec2<f32>,
+                                    }
+
+                                    @vertex
+                                    fn vert_main(@builtin(vertex_index) VertexIndex : u32) -> VertexOutput {
+                                        var pos = array<vec2<f32>, 4>(
+                                            vec2<f32>(-1.0,  1.0),
+                                            vec2<f32>( 1.0,  1.0),
+                                            vec2<f32>(-1.0, -1.0),
+                                            vec2<f32>( 1.0, -1.0)
+                                        );
+                                        var tex = array<vec2<f32>, 4>(
+                                            vec2<f32>(0.0, 0.0),
+                                            vec2<f32>(1.0, 0.0),
+                                            vec2<f32>(0.0, 1.0),
+                                            vec2<f32>(1.0, 1.0)
+                                        );
+                                        
+                                        var output : VertexOutput;
+                                        output.position = vec4<f32>(pos[VertexIndex], 0.0, 1.0);
+                                        output.texCoord = tex[VertexIndex];
+                                        return output;
+                                    }
+
+                                    @group(0) @binding(0) var mySampler: sampler;
+                                    @group(0) @binding(1) var myTexture: texture_2d<f32>;
+
+                                    @fragment
+                                    fn frag_main(@location(0) texCoord : vec2<f32>) -> @location(0) vec4<f32> {
+                                        return textureSample(myTexture, mySampler, texCoord);
+                                    }
+                                `;
+
+                                const module = this.device.createShaderModule({ code: shaderCode });
+
+                                this.pipeline = this.device.createRenderPipeline({
+                                    layout: "auto",
+                                    vertex: { module, entryPoint: "vert_main" },
+                                    fragment: { module, entryPoint: "frag_main", targets: [{ format }] },
+                                    primitive: { topology: "triangle-strip" },
+                                });
+
+                                this.sampler = this.device.createSampler({
+                                    magFilter: "linear",
+                                    minFilter: "linear",
+                                });
+
+                                this.webgpuInitialized = true;
+                            }
+                        } catch (err) {
+                            console.error("Failed to initialize WebGPU:", err);
+                        } finally {
+                            this.webgpuInitializing = false;
+                        }
+                    }
+                }
+
+                if (this.webgpuInitialized) {
+                    let bindGroupNeedsUpdate = false;
+                    if (!this.frameTexture || 
+                        this.frameTexture.width !== this.videoCanvas2.width || 
+                        this.frameTexture.height !== this.videoCanvas2.height) {
+                        
+                        if (this.frameTexture) {
+                            this.frameTexture.destroy();
+                        }
+
+                        this.frameTexture = this.device.createTexture({
+                            size: [this.videoCanvas2.width, this.videoCanvas2.height, 1],
+                            format: "rgba8unorm",
+                            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+                        });
+                        bindGroupNeedsUpdate = true;
+                    }
+
+                    // Copy the source canvas image data to the GPU Texture (flipY changed to false)
+                    this.device.queue.copyExternalImageToTexture(
+                        { source: this.videoCanvas2, flipY: false },
+                        { texture: this.frameTexture },
+                        [this.videoCanvas2.width, this.videoCanvas2.height]
+                    );
+
+                    if (!this.bindGroup || bindGroupNeedsUpdate) {
+                        this.bindGroup = this.device.createBindGroup({
+                            layout: this.pipeline.getBindGroupLayout(0),
+                            entries: [
+                                { binding: 0, resource: this.sampler },
+                                { binding: 1, resource: this.frameTexture.createView() }
+                            ]
+                        });
+                    }
+
+                    const commandEncoder = this.device.createCommandEncoder();
+                    const textureView = this.gpuContext.getCurrentTexture().createView();
+
+                    const renderPassDescriptor = {
+                        colorAttachments: [{
+                            view: textureView,
+                            clearValue: [0.0, 0.0, 0.0, 1.0],
+                            loadOp: "clear",
+                            storeOp: "store",
+                        }],
+                    };
+
+                    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+                    passEncoder.setPipeline(this.pipeline);
+                    passEncoder.setBindGroup(0, this.bindGroup);
+                    passEncoder.draw(4);
+                    passEncoder.end();
+
+                    this.device.queue.submit([commandEncoder.finish()]);
+                }
+            }
+        } else if (this.enchate1) {
+            await globalThis.enchanter.upscale(this.videoCanvas2, this.videoCanvas);
+        } else if (this.enchate2) {
+            // TODO: framegen
+        }
+                
+        // Continue the loop
+        this.enchanteLoop = requestAnimationFrame(this.processFrame);
+    };
+            
 };
 
 
@@ -3473,6 +3711,9 @@ globalThis.mainUI = mainUI;
 const main = async function() {
     // load environment (DOM, configuration, desktop libs, etc.)
     await environment.load();
+
+    // load ML enchanter
+    await enchanter.loadModels();
 
     // load visible components and switch by server connection
     await mainUI.load();
