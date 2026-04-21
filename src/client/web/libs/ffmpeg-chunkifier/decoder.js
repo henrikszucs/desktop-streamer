@@ -299,6 +299,14 @@ const Player = class {
 
     async appendVideoFrame(frame) {
         const context = this.videoDrawCtx;
+
+        console.log(`Received video frame: ${frame.codedWidth}x${frame.codedWidth}, format: ${frame.format}`);
+
+        if (context.canvas.width !== frame.displayWidth || context.canvas.height !== frame.displayHeight) {
+            context.canvas.width = frame.displayWidth;
+            context.canvas.height = frame.displayHeight;
+            if (this.webgpuInitialized) { context.configure({ device: this.device, format: navigator.gpu.getPreferredCanvasFormat(), alphaMode: 'premultiplied' }); }
+        }
         
         // Initialize WebGPU resources on the first frame
         if (!this.webgpuInitialized) {

@@ -379,7 +379,8 @@ const WebRTCTransport = class extends EventTarget {
                         "gfxcapture=monitor_idx=0" +
                         ":capture_cursor=false" +
                         ":max_framerate=" + framerate +
-                        ",hwdownload,format=bgra",
+                        ",hwdownload,format=bgra," +
+                        "scale=" + width + ":" + height,
 
                         "-c:v", "h264_nvenc",
                         "-b:v", bitrate,
@@ -3395,7 +3396,7 @@ const RoomScreen = class extends EventTarget {
             cancelAnimationFrame(this.enchanteLoop);
         }
         this.enchanteLoop = requestAnimationFrame(this.processFrame);
-        server.webRTC.setVideo(this.resolution, this.framerate, this.bitrate, this.videoCanvas2);
+        server.webRTC.setVideo(this.bitrate, this.framerate, this.resolution, this.videoCanvas2);
     }
     processFrame = async () => {
         if (!this.enchate1 && !this.enchate2) {
