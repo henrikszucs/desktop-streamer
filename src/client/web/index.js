@@ -1161,6 +1161,27 @@ const Enchanter = class {
     };
 
     async copyCanvas(inCanvas, outCanvas) {
+        // Yield CPU thread to prevent UI freezing
+        await tf.nextFrame();
+
+        // Read pixels from the input canvas directly into a tensor
+        const tensor = tf.tidy(() => {
+            return tf.browser.fromPixels(inCanvas);
+        });
+
+        // Use the native WebGPU tf.browser.draw function to blast pixels straight to the output
+        await tf.browser.draw(tensor, outCanvas);
+        
+        // Manual tensor cleanup
+        tensor.dispose();
+
+        return;
+        // Match dimensions if needed
+        if (outCanvas.width !== inCanvas.width || outCanvas.height !== inCanvas.height) {
+            outCanvas.width = inCanvas.width;
+            outCanvas.height = inCanvas.height;
+        }
+
         // Initialize WebGPU if not already done
         if (!this.webgpuInitialized) {
             if (!this.webgpuInitializing) {
@@ -3650,11 +3671,7 @@ const RoomScreen = class extends EventTarget {
     processFrame = async () => {
         if (!this.enchate1 && !this.enchate2) {
             
-            // Match dimensions if needed
-            if (this.videoCanvas.width !== this.videoCanvas2.width || this.videoCanvas.height !== this.videoCanvas2.height) {
-                this.videoCanvas.width = this.videoCanvas2.width;
-                this.videoCanvas.height = this.videoCanvas2.height;
-            }
+            
 
             if (this.videoCanvas.width > 0 && this.videoCanvas.height > 0) {
                 await enchanter.copyCanvas(this.videoCanvas2, this.videoCanvas);
