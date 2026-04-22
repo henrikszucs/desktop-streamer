@@ -1148,55 +1148,203 @@ const Enchanter = class {
     constructor() {
         this.isAvailable = false;
         this.model = null;
-    }
+    };
     
     async loadModels() {
         console.log("Native WebGPU upscaler initialized (tf.browser.draw)");
         await tf.setBackend("webgpu");
         await tf.ready();
         this.model = await tf.loadGraphModel("/models/upscaler/model.json");
+        this.upscalerModel = await tf.loadGraphModel("/models/upscaler/model.json");
+        this.framegenModel = await tf.loadGraphModel("/models/framegen/model.json");
         this.isAvailable = true;
-    }
+    };
+
+    async copyCanvas(inCanvas, outCanvas) {
+        // Initialize WebGPU if not already done
+        if (!this.webgpuInitialized) {
+            if (!this.webgpuInitializing) {
+                this.webgpuInitializing = true;
+                try {
+                    const adapter = await navigator.gpu.requestAdapter();
+                    if (adapter) {
+                        this.device = await adapter.requestDevice();
+                        this.gpuContext = outCanvas.getContext("webgpu");
+                        const format = navigator.gpu.getPreferredCanvasFormat();
+                        
+                        this.gpuContext.configure({
+                            device: this.device,
+                            format: format,
+                            alphaMode: "premultiplied"
+                        });
+
+                        const shaderCode = `
+                            struct VertexOutput {
+                                @builtin(position) position : vec4<f32>,
+                                @location(0) texCoord : vec2<f32>,
+                            }
+
+                            @vertex
+                            fn vert_main(@builtin(vertex_index) VertexIndex : u32) -> VertexOutput {
+                                var pos = array<vec2<f32>, 4>(
+                                    vec2<f32>(-1.0,  1.0),
+                                    vec2<f32>( 1.0,  1.0),
+                                    vec2<f32>(-1.0, -1.0),
+                                    vec2<f32>( 1.0, -1.0)
+                                );
+                                var tex = array<vec2<f32>, 4>(
+                                    vec2<f32>(0.0, 0.0),
+                                    vec2<f32>(1.0, 0.0),
+                                    vec2<f32>(0.0, 1.0),
+                                    vec2<f32>(1.0, 1.0)
+                                );
+                                
+                                var output : VertexOutput;
+                                output.position = vec4<f32>(pos[VertexIndex], 0.0, 1.0);
+                                output.texCoord = tex[VertexIndex];
+                                return output;
+                            }
+
+                            @group(0) @binding(0) var mySampler: sampler;
+                            @group(0) @binding(1) var myTexture: texture_2d<f32>;
+
+                            @fragment
+                            fn frag_main(@location(0) texCoord : vec2<f32>) -> @location(0) vec4<f32> {
+                                return textureSample(myTexture, mySampler, texCoord);
+                            }
+                        `;
+
+                        const module = this.device.createShaderModule({ code: shaderCode });
+
+                        this.pipeline = this.device.createRenderPipeline({
+                            layout: "auto",
+                            vertex: { module, entryPoint: "vert_main" },
+                            fragment: { module, entryPoint: "frag_main", targets: [{ format }] },
+                            primitive: { topology: "triangle-strip" },
+                        });
+
+                        this.sampler = this.device.createSampler({
+                            magFilter: "linear",
+                            minFilter: "linear",
+                        });
+
+                        this.webgpuInitialized = true;
+                    }
+                } catch (err) {
+                    console.error("Failed to initialize WebGPU:", err);
+                } finally {
+                    this.webgpuInitializing = false;
+                }
+            }
+        }
+
+        if (this.webgpuInitialized) {
+            if (this.justUsedEnchanter) {
+                this.gpuContext.configure({
+                    device: this.device,
+                    format: navigator.gpu.getPreferredCanvasFormat(),
+                    alphaMode: "premultiplied"
+                });
+                this.justUsedEnchanter = false;
+            }
+
+            let bindGroupNeedsUpdate = false;
+            if (!this.frameTexture || 
+                this.frameTexture.width !== inCanvas.width || 
+                this.frameTexture.height !== inCanvas.height) {
+                
+                if (this.frameTexture) {
+                    this.frameTexture.destroy();
+                }
+
+                this.frameTexture = this.device.createTexture({
+                    size: [inCanvas.width, inCanvas.height, 1],
+                    format: "rgba8unorm",
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+                });
+                bindGroupNeedsUpdate = true;
+            }
+
+            // Copy the source canvas image data to the GPU Texture (flipY changed to false)
+            this.device.queue.copyExternalImageToTexture(
+                { source: inCanvas, flipY: false },
+                { texture: this.frameTexture },
+                [inCanvas.width, inCanvas.height]
+            );
+
+            if (!this.bindGroup || bindGroupNeedsUpdate) {
+                this.bindGroup = this.device.createBindGroup({
+                    layout: this.pipeline.getBindGroupLayout(0),
+                    entries: [
+                        { binding: 0, resource: this.sampler },
+                        { binding: 1, resource: this.frameTexture.createView() }
+                    ]
+                });
+            }
+
+            const commandEncoder = this.device.createCommandEncoder();
+            const textureView = this.gpuContext.getCurrentTexture().createView();
+
+            const renderPassDescriptor = {
+                colorAttachments: [{
+                    view: textureView,
+                    clearValue: [0.0, 0.0, 0.0, 1.0],
+                    loadOp: "clear",
+                    storeOp: "store",
+                }],
+            };
+
+            const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+            passEncoder.setPipeline(this.pipeline);
+            passEncoder.setBindGroup(0, this.bindGroup);
+            passEncoder.draw(4);
+            passEncoder.end();
+
+            this.device.queue.submit([commandEncoder.finish()]);
+        }
+    };
     
     async upscale(inCanvas, outCanvas) {
-        if (!this.isAvailable || !this.model) return;
+        this.justUsedEnchanter = true;
 
         // Yield CPU thread to prevent UI freezing
         await tf.nextFrame();
 
+        const BLOCK_SIZE = 128;
+        const FACTOR = 2;
         const outTensor = tf.tidy(() => {
             let tensor = tf.browser.fromPixels(inCanvas).toFloat();
 
             const originalH = tensor.shape[0];
             const originalW = tensor.shape[1];
 
-            // Pad to multiples of 32
-            const padH = (32 - (originalH % 32)) % 32;
-            const padW = (32 - (originalW % 32)) % 32;
+            // Pad to multiples of BLOCK_SIZE
+            const padH = (BLOCK_SIZE - (originalH % BLOCK_SIZE)) % BLOCK_SIZE;
+            const padW = (BLOCK_SIZE - (originalW % BLOCK_SIZE)) % BLOCK_SIZE;
             if (padH > 0 || padW > 0) {
                 tensor = tf.pad(tensor, [[0, padH], [0, padW], [0, 0]]);
             }
 
             const ph = tensor.shape[0];
             const pw = tensor.shape[1];
-            const numBlocksY = ph / 32;
-            const numBlocksX = pw / 32;
+            const numBlocksY = ph / BLOCK_SIZE;
+            const numBlocksX = pw / BLOCK_SIZE;
 
             // GPU Accelerated Slicing via Matrix Transposing (Zero CPU Loops)
-            let blocks = tf.reshape(tensor, [numBlocksY, 32, numBlocksX, 32, 3]);
+            let blocks = tf.reshape(tensor, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
             blocks = tf.transpose(blocks, [0, 2, 1, 3, 4]); 
-            blocks = tf.reshape(blocks, [numBlocksY * numBlocksX, 32, 32, 3]);
+            blocks = tf.reshape(blocks, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
 
             // Batch Predict natively on WebGPU
-            let upscaledBlocks = this.model.predict(blocks); 
+            let upscaledBlocks = this.upscalerModel.predict(blocks); 
 
             // GPU Accelerated Reconstruction via Matrix Transposing (Zero CPU Loops)
-            upscaledBlocks = tf.reshape(upscaledBlocks, [numBlocksY, numBlocksX, 64, 64, 3]);
+            upscaledBlocks = tf.reshape(upscaledBlocks, [numBlocksY, numBlocksX, BLOCK_SIZE * FACTOR, BLOCK_SIZE * FACTOR, 3]);
             upscaledBlocks = tf.transpose(upscaledBlocks, [0, 2, 1, 3, 4]);
-            let finalImage = tf.reshape(upscaledBlocks, [numBlocksY * 64, numBlocksX * 64, 3]);
+            let finalImage = tf.reshape(upscaledBlocks, [numBlocksY * BLOCK_SIZE * FACTOR, numBlocksX * BLOCK_SIZE * FACTOR, 3]);
 
             if (padH > 0 || padW > 0) {
-                finalImage = tf.slice(finalImage, [0, 0, 0], [originalH * 2, originalW * 2, 3]);
+                finalImage = tf.slice(finalImage, [0, 0, 0], [originalH * FACTOR, originalW * FACTOR, 3]);
             }
 
             return finalImage.clipByValue(0, 255).cast("int32");
@@ -1207,6 +1355,105 @@ const Enchanter = class {
         
         // Manual tensor cleanup
         outTensor.dispose();
+    };
+
+    async framegen(inCanvas, outCanvas) {
+        this.justUsedEnchanter = true;
+
+        // Initialize frame counter if it doesn't exist
+        if (this.frameCounter === undefined) {
+            this.frameCounter = 0;
+        }
+        
+        this.frameCounter++;
+
+        // Yield CPU thread to prevent UI freezing
+        await tf.nextFrame();
+
+        const BLOCK_SIZE = 64;
+        const originalH = inCanvas.height;
+        const originalW = inCanvas.width;
+        
+        const currentPaddedTensor = tf.tidy(() => {
+            let tensor = tf.browser.fromPixels(inCanvas).toFloat();
+
+            // Pad to multiples of BLOCK_SIZE
+            const padH = (BLOCK_SIZE - (originalH % BLOCK_SIZE)) % BLOCK_SIZE;
+            const padW = (BLOCK_SIZE - (originalW % BLOCK_SIZE)) % BLOCK_SIZE;
+            if (padH > 0 || padW > 0) {
+                tensor = tf.pad(tensor, [[0, padH], [0, padW], [0, 0]]);
+            }
+            return tensor;
+        });
+
+        // If it's an even frame or we don't have a previous frame, we just save the current frame and output it
+        if (this.frameCounter % 2 === 0 || !this.prevFrameTensor) {
+            // Cleanup old previous frame if it exists
+            if (this.prevFrameTensor) {
+                this.prevFrameTensor.dispose();
+            }
+            // Save current frame as previous frame for the next prediction
+            this.prevFrameTensor = currentPaddedTensor.clone();
+            
+            // Draw the real frame, but slice it back to original size first so the canvas doesn't resize!
+            const unpaddedTensor = tf.tidy(() => {
+                let tensor = currentPaddedTensor;
+                if (tensor.shape[0] > originalH || tensor.shape[1] > originalW) {
+                    tensor = tf.slice(tensor, [0, 0, 0], [originalH, originalW, 3]);
+                }
+                return tensor.cast("int32");
+            });
+
+            await tf.browser.draw(unpaddedTensor, outCanvas);
+            unpaddedTensor.dispose();
+            currentPaddedTensor.dispose();
+            return;
+        }
+
+        // It's an odd frame with a previous frame available -> Generate intermediate frame
+        const outTensor = tf.tidy(() => {
+            const ph = currentPaddedTensor.shape[0];
+            const pw = currentPaddedTensor.shape[1];
+            const numBlocksY = ph / BLOCK_SIZE;
+            const numBlocksX = pw / BLOCK_SIZE;
+
+            // Prepare previous frame blocks
+            let prevBlocks = tf.reshape(this.prevFrameTensor, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
+            prevBlocks = tf.transpose(prevBlocks, [0, 2, 1, 3, 4]); 
+            prevBlocks = tf.reshape(prevBlocks, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+
+            // Prepare current frame blocks
+            let currBlocks = tf.reshape(currentPaddedTensor, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
+            currBlocks = tf.transpose(currBlocks, [0, 2, 1, 3, 4]); 
+            currBlocks = tf.reshape(currBlocks, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+
+            // Predict the generated frame
+            let generatedBlocks = this.framegenModel.predict([prevBlocks, currBlocks]);
+
+            // Reconstruct the image from blocks
+            generatedBlocks = tf.reshape(generatedBlocks, [numBlocksY, numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+            generatedBlocks = tf.transpose(generatedBlocks, [0, 2, 1, 3, 4]);
+            let finalImage = tf.reshape(generatedBlocks, [numBlocksY * BLOCK_SIZE, numBlocksX * BLOCK_SIZE, 3]);
+
+            // Slice back if padding was used to restore original width/height
+            if (ph > originalH || pw > originalW) {
+                finalImage = tf.slice(finalImage, [0, 0, 0], [originalH, originalW, 3]);
+            }
+
+            return finalImage.clipByValue(0, 255).cast("int32");
+        });
+
+        // Render the newly generated frame
+        await tf.browser.draw(outTensor, outCanvas);
+        
+        // Update previous frame and cleanup
+        if (this.prevFrameTensor) {
+            this.prevFrameTensor.dispose();
+        }
+        this.prevFrameTensor = currentPaddedTensor.clone();
+        
+        outTensor.dispose();
+        currentPaddedTensor.dispose();
     }
 };
 const enchanter = new Enchanter();
@@ -2862,6 +3109,8 @@ const RoomScreen = class extends EventTarget {
         this.videoCanvas = document.getElementById("room-video");
         this.videoCanvasFocus = false;
         this.videoCanvas2 = document.getElementById("room-video-2");
+        this.videoCanvas3 = document.getElementById("room-video-3");
+        this.videoCanvas3.getContext("webgpu");
         this.exitBtn = document.getElementById("room-exit");
 
         // exiting
@@ -3408,159 +3657,18 @@ const RoomScreen = class extends EventTarget {
             }
 
             if (this.videoCanvas.width > 0 && this.videoCanvas.height > 0) {
-                
-                // Initialize WebGPU if not already done
-                if (!this.webgpuInitialized) {
-                    if (!this.webgpuInitializing) {
-                        this.webgpuInitializing = true;
-                        try {
-                            const adapter = await navigator.gpu.requestAdapter();
-                            if (adapter) {
-                                this.device = await adapter.requestDevice();
-                                this.gpuContext = this.videoCanvas.getContext("webgpu");
-                                const format = navigator.gpu.getPreferredCanvasFormat();
-                                
-                                this.gpuContext.configure({
-                                    device: this.device,
-                                    format: format,
-                                    alphaMode: "premultiplied"
-                                });
-
-                                const shaderCode = `
-                                    struct VertexOutput {
-                                        @builtin(position) position : vec4<f32>,
-                                        @location(0) texCoord : vec2<f32>,
-                                    }
-
-                                    @vertex
-                                    fn vert_main(@builtin(vertex_index) VertexIndex : u32) -> VertexOutput {
-                                        var pos = array<vec2<f32>, 4>(
-                                            vec2<f32>(-1.0,  1.0),
-                                            vec2<f32>( 1.0,  1.0),
-                                            vec2<f32>(-1.0, -1.0),
-                                            vec2<f32>( 1.0, -1.0)
-                                        );
-                                        var tex = array<vec2<f32>, 4>(
-                                            vec2<f32>(0.0, 0.0),
-                                            vec2<f32>(1.0, 0.0),
-                                            vec2<f32>(0.0, 1.0),
-                                            vec2<f32>(1.0, 1.0)
-                                        );
-                                        
-                                        var output : VertexOutput;
-                                        output.position = vec4<f32>(pos[VertexIndex], 0.0, 1.0);
-                                        output.texCoord = tex[VertexIndex];
-                                        return output;
-                                    }
-
-                                    @group(0) @binding(0) var mySampler: sampler;
-                                    @group(0) @binding(1) var myTexture: texture_2d<f32>;
-
-                                    @fragment
-                                    fn frag_main(@location(0) texCoord : vec2<f32>) -> @location(0) vec4<f32> {
-                                        return textureSample(myTexture, mySampler, texCoord);
-                                    }
-                                `;
-
-                                const module = this.device.createShaderModule({ code: shaderCode });
-
-                                this.pipeline = this.device.createRenderPipeline({
-                                    layout: "auto",
-                                    vertex: { module, entryPoint: "vert_main" },
-                                    fragment: { module, entryPoint: "frag_main", targets: [{ format }] },
-                                    primitive: { topology: "triangle-strip" },
-                                });
-
-                                this.sampler = this.device.createSampler({
-                                    magFilter: "linear",
-                                    minFilter: "linear",
-                                });
-
-                                this.webgpuInitialized = true;
-                            }
-                        } catch (err) {
-                            console.error("Failed to initialize WebGPU:", err);
-                        } finally {
-                            this.webgpuInitializing = false;
-                        }
-                    }
-                }
-
-                if (this.webgpuInitialized) {
-                    if (this.justUsedEnchanter) {
-                        this.gpuContext.configure({
-                            device: this.device,
-                            format: navigator.gpu.getPreferredCanvasFormat(),
-                            alphaMode: "premultiplied"
-                        });
-                        this.justUsedEnchanter = false;
-                    }
-
-                    let bindGroupNeedsUpdate = false;
-                    if (!this.frameTexture || 
-                        this.frameTexture.width !== this.videoCanvas2.width || 
-                        this.frameTexture.height !== this.videoCanvas2.height) {
-                        
-                        if (this.frameTexture) {
-                            this.frameTexture.destroy();
-                        }
-
-                        this.frameTexture = this.device.createTexture({
-                            size: [this.videoCanvas2.width, this.videoCanvas2.height, 1],
-                            format: "rgba8unorm",
-                            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-                        });
-                        bindGroupNeedsUpdate = true;
-                    }
-
-                    // Copy the source canvas image data to the GPU Texture (flipY changed to false)
-                    this.device.queue.copyExternalImageToTexture(
-                        { source: this.videoCanvas2, flipY: false },
-                        { texture: this.frameTexture },
-                        [this.videoCanvas2.width, this.videoCanvas2.height]
-                    );
-
-                    if (!this.bindGroup || bindGroupNeedsUpdate) {
-                        this.bindGroup = this.device.createBindGroup({
-                            layout: this.pipeline.getBindGroupLayout(0),
-                            entries: [
-                                { binding: 0, resource: this.sampler },
-                                { binding: 1, resource: this.frameTexture.createView() }
-                            ]
-                        });
-                    }
-
-                    const commandEncoder = this.device.createCommandEncoder();
-                    const textureView = this.gpuContext.getCurrentTexture().createView();
-
-                    const renderPassDescriptor = {
-                        colorAttachments: [{
-                            view: textureView,
-                            clearValue: [0.0, 0.0, 0.0, 1.0],
-                            loadOp: "clear",
-                            storeOp: "store",
-                        }],
-                    };
-
-                    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-                    passEncoder.setPipeline(this.pipeline);
-                    passEncoder.setBindGroup(0, this.bindGroup);
-                    passEncoder.draw(4);
-                    passEncoder.end();
-
-                    this.device.queue.submit([commandEncoder.finish()]);
-                }
+                await enchanter.copyCanvas(this.videoCanvas2, this.videoCanvas);
             }
-        } else { 
-            if (this.enchate1) {
-                this.justUsedEnchanter = true;
+        } else {
+            if (this.enchate1 && this.enchate2) {
+                await enchanter.framegen(this.videoCanvas2, this.videoCanvas3);
+                await enchanter.upscale(this.videoCanvas3, this.videoCanvas);
+            }else if (this.enchate1) {
                 await enchanter.upscale(this.videoCanvas2, this.videoCanvas);
-                console.log("Frame upscaled with Enchanter.");
-            }
-            if (this.enchate2) {
-                this.justUsedEnchanter = true;
-                // TODO: framegen
-                console.log("Frame processed with Enchanter frame generation (not implemented).");
+                //console.log("Frame upscaled with Enchanter.");
+            } else if (this.enchate2) {
+                await enchanter.framegen(this.videoCanvas2, this.videoCanvas);
+                //console.log("Frame processed with Enchanter frame generation (not implemented).");
             }
         }
                 
