@@ -87,7 +87,7 @@ const main = async function() {
     let closeText2 = "The connection will be closed.";
     let closeTextConfirm = "Exit";
     let closeTextCancel = "Stay";
-    const createMainWindow = function(url="https://localhost") {
+    const createMainWindow = function(url="local://local.local/") {
         const win = new BrowserWindow({
             "width": 800,
             "height": 600,

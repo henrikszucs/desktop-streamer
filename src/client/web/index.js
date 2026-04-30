@@ -1158,6 +1158,13 @@ const Enchanter = class {
         this.upscalerModel = await tf.loadGraphModel("/models/upscaler/model.json");
         this.framegenModel = await tf.loadGraphModel("/models/framegen/model.json");
         this.isAvailable = true;
+        setInterval(async () => {
+            if (this.frameCounter) {
+                const fps = this.frameCounter2;
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                console.log("FPS:", this.frameCounter2 - fps);
+            }
+        }, 2000);
     };
 
     async copyCanvas(inCanvas, outCanvas) {
@@ -1324,7 +1331,90 @@ const Enchanter = class {
             this.device.queue.submit([commandEncoder.finish()]);
         }
     };
-    
+
+    async upscale(inCanvas, outCanvas) {
+        this.justUsedEnchanter = true;
+
+        // Yield CPU thread to prevent UI freezing
+        await tf.nextFrame();
+
+        const BLOCK_SIZE = 128;
+        const FACTOR = 2;
+        
+        // The inner valid area we keep from the 256x256 prediction
+        const VALID_OUT = 240; 
+        const PADDING_OUT = (BLOCK_SIZE * FACTOR - VALID_OUT) / 2; // 8px padding on the output
+
+        // What that area translates to on the input
+        const VALID_IN = VALID_OUT / FACTOR; // 120px
+        const PADDING_IN = PADDING_OUT / FACTOR; // 4px padding on the input
+
+        const outTensor = tf.tidy(() => {
+            let tensor = tf.browser.fromPixels(inCanvas).toFloat();
+
+            const originalH = tensor.shape[0];
+            const originalW = tensor.shape[1];
+
+            // Calculate grids needed for the valid areas
+            const numBlocksY = Math.ceil(originalH / VALID_IN);
+            const numBlocksX = Math.ceil(originalW / VALID_IN);
+
+            // Pad the input image so we can extract overlapping 128x128 blocks 
+            // starting with a 4px inset to center the valid 120x120 crop
+            const paddedH = numBlocksY * VALID_IN + 2 * PADDING_IN; // e.g. grids * 120 + 8
+            const paddedW = numBlocksX * VALID_IN + 2 * PADDING_IN;
+            
+            const padBottom = paddedH - PADDING_IN - originalH;
+            const padRight = paddedW - PADDING_IN - originalW;
+
+            tensor = tf.pad(tensor, [
+                [PADDING_IN, padBottom], 
+                [PADDING_IN, padRight], 
+                [0, 0]
+            ]);
+
+            // CPU-light extraction (tf.slice + tf.stack) since strides overlap
+            let blocksArray = [];
+            for (let y = 0; y < numBlocksY; y++) {
+                for (let x = 0; x < numBlocksX; x++) {
+                    blocksArray.push(tf.slice(
+                        tensor, 
+                        [y * VALID_IN, x * VALID_IN, 0], 
+                        [BLOCK_SIZE, BLOCK_SIZE, 3]
+                    ));
+                }
+            }
+            
+            let blocks = tf.stack(blocksArray);
+
+            // Batch Predict natively on WebGPU
+            let upscaledBlocks = this.upscalerModel.predict(blocks); 
+
+            // Trim the overlapping paddings (8px from all sides) -> leaves 240x240 chunks
+            upscaledBlocks = tf.slice(
+                upscaledBlocks, 
+                [0, PADDING_OUT, PADDING_OUT, 0], 
+                [-1, VALID_OUT, VALID_OUT, 3]
+            );
+
+            // GPU Accelerated Reconstruction via Matrix Transposing (Zero CPU Loops)
+            upscaledBlocks = tf.reshape(upscaledBlocks, [numBlocksY, numBlocksX, VALID_OUT, VALID_OUT, 3]);
+            upscaledBlocks = tf.transpose(upscaledBlocks, [0, 2, 1, 3, 4]);
+            let finalImage = tf.reshape(upscaledBlocks, [numBlocksY * VALID_OUT, numBlocksX * VALID_OUT, 3]);
+
+            // Slice back exactly to the upscaled original dimensions
+            finalImage = tf.slice(finalImage, [0, 0, 0], [originalH * FACTOR, originalW * FACTOR, 3]);
+
+            return finalImage.clipByValue(0, 255).cast("int32");
+        });
+
+        // Use the native WebGPU tf.browser.draw function to blast pixels straight to the output
+        await tf.browser.draw(outTensor, outCanvas);
+        
+        // Manual tensor cleanup
+        outTensor.dispose();
+    };
+    /*
     async upscale(inCanvas, outCanvas) {
         this.justUsedEnchanter = true;
 
@@ -1376,7 +1466,7 @@ const Enchanter = class {
         
         // Manual tensor cleanup
         outTensor.dispose();
-    };
+    };*/
 
     async framegen(inCanvas, outCanvas) {
         this.justUsedEnchanter = true;
@@ -1384,6 +1474,7 @@ const Enchanter = class {
         // Initialize frame counter if it doesn't exist
         if (this.frameCounter === undefined) {
             this.frameCounter = 0;
+            this.frameCounter2 = 0;
         }
         
         this.frameCounter++;
@@ -1391,7 +1482,7 @@ const Enchanter = class {
         // Yield CPU thread to prevent UI freezing
         await tf.nextFrame();
 
-        const BLOCK_SIZE = 64;
+        const BLOCK_SIZE = 128;
         const originalH = inCanvas.height;
         const originalW = inCanvas.width;
         
@@ -1408,7 +1499,7 @@ const Enchanter = class {
         });
 
         // If it's an even frame or we don't have a previous frame, we just save the current frame and output it
-        if (this.frameCounter % 2 === 0 || !this.prevFrameTensor) {
+        if (this.frameCounter % 2 === 1 || !this.prevFrameTensor) {
             // Cleanup old previous frame if it exists
             if (this.prevFrameTensor) {
                 this.prevFrameTensor.dispose();
@@ -1431,7 +1522,9 @@ const Enchanter = class {
             return;
         }
 
-        // It's an odd frame with a previous frame available -> Generate intermediate frame
+        this.frameCounter2++;
+
+        // It's an odd frame with a previous frame available -> Generate future frame
         const outTensor = tf.tidy(() => {
             const ph = currentPaddedTensor.shape[0];
             const pw = currentPaddedTensor.shape[1];
@@ -3670,9 +3763,6 @@ const RoomScreen = class extends EventTarget {
     }
     processFrame = async () => {
         if (!this.enchate1 && !this.enchate2) {
-            
-            
-
             if (this.videoCanvas.width > 0 && this.videoCanvas.height > 0) {
                 await enchanter.copyCanvas(this.videoCanvas2, this.videoCanvas);
             }
