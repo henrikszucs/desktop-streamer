@@ -303,7 +303,7 @@ const WebRTCTransport = class extends EventTarget {
                 }
                 let framerate = videoSettings["framerate"];
                 if (framerate === "0") {
-                    framerate = "25";
+                    framerate = "15";
                 } else if (framerate === "1") {
                     framerate = "30";
                 } else {
@@ -1157,14 +1157,52 @@ const Enchanter = class {
         this.model = await tf.loadGraphModel("/models/upscaler/model.json");
         this.upscalerModel = await tf.loadGraphModel("/models/upscaler/model.json");
         this.framegenModel = await tf.loadGraphModel("/models/framegen/model.json");
+        this.framegenModel2 = await tf.loadGraphModel("/models/framegen2/model.json");
         this.isAvailable = true;
+        this.frameCounter2 = 0;
+        this.frameCounter3 = 0;
         setInterval(async () => {
             if (this.frameCounter) {
-                const fps = this.frameCounter2;
+                const fps2 = this.frameCounter2;
+                const fps3 = this.frameCounter3;
                 await new Promise((resolve) => setTimeout(resolve, 1000));
-                console.log("FPS:", this.frameCounter2 - fps);
+                console.log("FPS real:", this.frameCounter2 - fps2);
+                console.log("FPS predict:", this.frameCounter3 - fps3);
             }
         }, 2000);
+    };
+
+    async drawTensorToCanvas(tensorToDraw, targetCanvas) {
+        try {
+            // 1. THE BARRIER: Force WebGPU to finish all math and flush the queue.
+            // The script physically stops here until the GPU is 100% done.
+            const rawData = await tensorToDraw.data(); 
+
+            // 2. Extract dimensions
+            const [height, width] = tensorToDraw.shape;
+            
+            // 3. Paint to the canvas
+            // Note: If you are strictly using canvas.getContext('webgpu'), 
+            // see the critical warning below this code block.
+            const ctx = targetCanvas.getContext('2d');
+            targetCanvas.width = width;
+            targetCanvas.height = height;
+            const imageData = new ImageData(width, height);
+            const pixelData = imageData.data;
+
+            for (let i = 0, j = 0; i < rawData.length; i += 3, j += 4) {
+                pixelData[j]     = rawData[i];       // R
+                pixelData[j + 1] = rawData[i + 1];   // G
+                pixelData[j + 2] = rawData[i + 2];   // B
+                pixelData[j + 3] = 255;              // A
+            }
+
+            // This operation is synchronous and paints the screen instantly
+            ctx.putImageData(imageData, 0, 0);
+
+        } catch (err) {
+            console.error("Strict Draw Failed:", err);
+        }
     };
 
     async copyCanvas(inCanvas, outCanvas) {
@@ -1177,6 +1215,7 @@ const Enchanter = class {
         });
 
         // Use the native WebGPU tf.browser.draw function to blast pixels straight to the output
+        //await this.drawTensorToCanvas(tensor, outCanvas);
         await tf.browser.draw(tensor, outCanvas);
         
         // Manual tensor cleanup
@@ -1404,171 +1443,154 @@ const Enchanter = class {
 
             // Slice back exactly to the upscaled original dimensions
             finalImage = tf.slice(finalImage, [0, 0, 0], [originalH * FACTOR, originalW * FACTOR, 3]);
-
-            return finalImage.clipByValue(0, 255).cast("int32");
+            finalImage = finalImage.clipByValue(0, 255).cast("int32");
+            //finalImage.max().print()
+            return finalImage;
         });
 
         // Use the native WebGPU tf.browser.draw function to blast pixels straight to the output
+        //await this.drawTensorToCanvas(outTensor, outCanvas);
         await tf.browser.draw(outTensor, outCanvas);
         
         // Manual tensor cleanup
         outTensor.dispose();
     };
-    /*
-    async upscale(inCanvas, outCanvas) {
+
+    async framegen(frame0, frame1, outCanvas) {
         this.justUsedEnchanter = true;
 
         // Yield CPU thread to prevent UI freezing
         await tf.nextFrame();
 
         const BLOCK_SIZE = 128;
-        const FACTOR = 2;
+        
         const outTensor = tf.tidy(() => {
-            let tensor = tf.browser.fromPixels(inCanvas).toFloat();
+            // NORMALIZE INPUTS: Scale from [0, 255] down to float [0, 1]
+            let t0 = frame0.clone().toFloat().div(255.0);
+            let t1 = frame1.clone().toFloat().div(255.0);
 
-            const originalH = tensor.shape[0];
-            const originalW = tensor.shape[1];
+            const originalH = t0.shape[0];
+            const originalW = t0.shape[1];
 
-            // Pad to multiples of BLOCK_SIZE
+            // Pad to multiples of BLOCK_SIZE to allow clean slicing
             const padH = (BLOCK_SIZE - (originalH % BLOCK_SIZE)) % BLOCK_SIZE;
             const padW = (BLOCK_SIZE - (originalW % BLOCK_SIZE)) % BLOCK_SIZE;
-            if (padH > 0 || padW > 0) {
-                tensor = tf.pad(tensor, [[0, padH], [0, padW], [0, 0]]);
-            }
-
-            const ph = tensor.shape[0];
-            const pw = tensor.shape[1];
-            const numBlocksY = ph / BLOCK_SIZE;
-            const numBlocksX = pw / BLOCK_SIZE;
-
-            // GPU Accelerated Slicing via Matrix Transposing (Zero CPU Loops)
-            let blocks = tf.reshape(tensor, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
-            blocks = tf.transpose(blocks, [0, 2, 1, 3, 4]); 
-            blocks = tf.reshape(blocks, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
-
-            // Batch Predict natively on WebGPU
-            let upscaledBlocks = this.upscalerModel.predict(blocks); 
-
-            // GPU Accelerated Reconstruction via Matrix Transposing (Zero CPU Loops)
-            upscaledBlocks = tf.reshape(upscaledBlocks, [numBlocksY, numBlocksX, BLOCK_SIZE * FACTOR, BLOCK_SIZE * FACTOR, 3]);
-            upscaledBlocks = tf.transpose(upscaledBlocks, [0, 2, 1, 3, 4]);
-            let finalImage = tf.reshape(upscaledBlocks, [numBlocksY * BLOCK_SIZE * FACTOR, numBlocksX * BLOCK_SIZE * FACTOR, 3]);
-
-            if (padH > 0 || padW > 0) {
-                finalImage = tf.slice(finalImage, [0, 0, 0], [originalH * FACTOR, originalW * FACTOR, 3]);
-            }
-
-            return finalImage.clipByValue(0, 255).cast("int32");
-        });
-
-        // Use the native WebGPU tf.browser.draw function to blast pixels straight to the output
-        await tf.browser.draw(outTensor, outCanvas);
-        
-        // Manual tensor cleanup
-        outTensor.dispose();
-    };*/
-
-    async framegen(inCanvas, outCanvas) {
-        this.justUsedEnchanter = true;
-
-        // Initialize frame counter if it doesn't exist
-        if (this.frameCounter === undefined) {
-            this.frameCounter = 0;
-            this.frameCounter2 = 0;
-        }
-        
-        this.frameCounter++;
-
-        // Yield CPU thread to prevent UI freezing
-        await tf.nextFrame();
-
-        const BLOCK_SIZE = 128;
-        const originalH = inCanvas.height;
-        const originalW = inCanvas.width;
-        
-        const currentPaddedTensor = tf.tidy(() => {
-            let tensor = tf.browser.fromPixels(inCanvas).toFloat();
-
-            // Pad to multiples of BLOCK_SIZE
-            const padH = (BLOCK_SIZE - (originalH % BLOCK_SIZE)) % BLOCK_SIZE;
-            const padW = (BLOCK_SIZE - (originalW % BLOCK_SIZE)) % BLOCK_SIZE;
-            if (padH > 0 || padW > 0) {
-                tensor = tf.pad(tensor, [[0, padH], [0, padW], [0, 0]]);
-            }
-            return tensor;
-        });
-
-        // If it's an even frame or we don't have a previous frame, we just save the current frame and output it
-        if (this.frameCounter % 2 === 1 || !this.prevFrameTensor) {
-            // Cleanup old previous frame if it exists
-            if (this.prevFrameTensor) {
-                this.prevFrameTensor.dispose();
-            }
-            // Save current frame as previous frame for the next prediction
-            this.prevFrameTensor = currentPaddedTensor.clone();
             
-            // Draw the real frame, but slice it back to original size first so the canvas doesn't resize!
-            const unpaddedTensor = tf.tidy(() => {
-                let tensor = currentPaddedTensor;
-                if (tensor.shape[0] > originalH || tensor.shape[1] > originalW) {
-                    tensor = tf.slice(tensor, [0, 0, 0], [originalH, originalW, 3]);
-                }
-                return tensor.cast("int32");
-            });
+            if (padH > 0 || padW > 0) {
+                t0 = tf.pad(t0, [[0, padH], [0, padW], [0, 0]]);
+                t1 = tf.pad(t1, [[0, padH], [0, padW], [0, 0]]);
+            }
 
-            await tf.browser.draw(unpaddedTensor, outCanvas);
-            unpaddedTensor.dispose();
-            currentPaddedTensor.dispose();
-            return;
-        }
-
-        this.frameCounter2++;
-
-        // It's an odd frame with a previous frame available -> Generate future frame
-        const outTensor = tf.tidy(() => {
-            const ph = currentPaddedTensor.shape[0];
-            const pw = currentPaddedTensor.shape[1];
+            const ph = t0.shape[0];
+            const pw = t0.shape[1];
             const numBlocksY = ph / BLOCK_SIZE;
             const numBlocksX = pw / BLOCK_SIZE;
 
-            // Prepare previous frame blocks
-            let prevBlocks = tf.reshape(this.prevFrameTensor, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
-            prevBlocks = tf.transpose(prevBlocks, [0, 2, 1, 3, 4]); 
-            prevBlocks = tf.reshape(prevBlocks, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+            // GPU Accelerated Slicing via Matrix Transposing
+            let blocks0 = tf.reshape(t0, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
+            blocks0 = tf.transpose(blocks0, [0, 2, 1, 3, 4]); 
+            blocks0 = tf.reshape(blocks0, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
 
-            // Prepare current frame blocks
-            let currBlocks = tf.reshape(currentPaddedTensor, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
-            currBlocks = tf.transpose(currBlocks, [0, 2, 1, 3, 4]); 
-            currBlocks = tf.reshape(currBlocks, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+            let blocks1 = tf.reshape(t1, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
+            blocks1 = tf.transpose(blocks1, [0, 2, 1, 3, 4]); 
+            blocks1 = tf.reshape(blocks1, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
 
             // Predict the generated frame
-            let generatedBlocks = this.framegenModel.predict([prevBlocks, currBlocks]);
+            let generatedBlocks = this.framegenModel.predict([blocks0, blocks1]);
 
-            // Reconstruct the image from blocks
+            
+            if (!generatedBlocks.shape) {
+                generatedBlocks = Object.values(generatedBlocks)[0];
+            }
+
+            // GPU Accelerated Reconstruction via Matrix Transposing
             generatedBlocks = tf.reshape(generatedBlocks, [numBlocksY, numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
             generatedBlocks = tf.transpose(generatedBlocks, [0, 2, 1, 3, 4]);
             let finalImage = tf.reshape(generatedBlocks, [numBlocksY * BLOCK_SIZE, numBlocksX * BLOCK_SIZE, 3]);
 
-            // Slice back if padding was used to restore original width/height
-            if (ph > originalH || pw > originalW) {
+            // Trim off the padding to restore original dimensions
+            if (padH > 0 || padW > 0) {
                 finalImage = tf.slice(finalImage, [0, 0, 0], [originalH, originalW, 3]);
             }
-
-            return finalImage.clipByValue(0, 255).cast("int32");
+            
+            // DENORMALIZE OUTPUT: Scale from [0, 1] back up to [0, 255] and cast to integers
+            return finalImage.mul(255.0).clipByValue(0, 255).cast("int32");
         });
 
         // Render the newly generated frame
-        await tf.browser.draw(outTensor, outCanvas);
+        outTensor.max().print();
+        this.frameCounter = true;
+        this.frameCounter3++;
+        return outTensor;
+    };
+
+    async framegen2(frame0, frame1, outCanvas) {
+        this.justUsedEnchanter = true;
+
+        // Yield CPU thread to prevent UI freezing
+        await tf.nextFrame();
+
+        const BLOCK_SIZE = 128;
         
-        // Update previous frame and cleanup
-        if (this.prevFrameTensor) {
-            this.prevFrameTensor.dispose();
-        }
-        this.prevFrameTensor = currentPaddedTensor.clone();
-        
-        outTensor.dispose();
-        currentPaddedTensor.dispose();
-    }
+        const outTensor = tf.tidy(() => {
+            // NORMALIZE INPUTS: Scale from [0, 255] down to float [0, 1]
+            let t0 = frame0.clone().toFloat().div(255.0);
+            let t1 = frame1.clone().toFloat().div(255.0);
+
+            const originalH = t0.shape[0];
+            const originalW = t0.shape[1];
+
+            // Pad to multiples of BLOCK_SIZE to allow clean slicing
+            const padH = (BLOCK_SIZE - (originalH % BLOCK_SIZE)) % BLOCK_SIZE;
+            const padW = (BLOCK_SIZE - (originalW % BLOCK_SIZE)) % BLOCK_SIZE;
+            
+            if (padH > 0 || padW > 0) {
+                t0 = tf.pad(t0, [[0, padH], [0, padW], [0, 0]]);
+                t1 = tf.pad(t1, [[0, padH], [0, padW], [0, 0]]);
+            }
+
+            const ph = t0.shape[0];
+            const pw = t0.shape[1];
+            const numBlocksY = ph / BLOCK_SIZE;
+            const numBlocksX = pw / BLOCK_SIZE;
+
+            // GPU Accelerated Slicing via Matrix Transposing
+            let blocks0 = tf.reshape(t0, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
+            blocks0 = tf.transpose(blocks0, [0, 2, 1, 3, 4]); 
+            blocks0 = tf.reshape(blocks0, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+
+            let blocks1 = tf.reshape(t1, [numBlocksY, BLOCK_SIZE, numBlocksX, BLOCK_SIZE, 3]);
+            blocks1 = tf.transpose(blocks1, [0, 2, 1, 3, 4]); 
+            blocks1 = tf.reshape(blocks1, [numBlocksY * numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+
+            // Predict the generated frame
+            let generatedBlocks = this.framegenModel2.predict([blocks0, blocks1]);
+
+            
+            if (!generatedBlocks.shape) {
+                generatedBlocks = Object.values(generatedBlocks)[0];
+            }
+
+            // GPU Accelerated Reconstruction via Matrix Transposing
+            generatedBlocks = tf.reshape(generatedBlocks, [numBlocksY, numBlocksX, BLOCK_SIZE, BLOCK_SIZE, 3]);
+            generatedBlocks = tf.transpose(generatedBlocks, [0, 2, 1, 3, 4]);
+            let finalImage = tf.reshape(generatedBlocks, [numBlocksY * BLOCK_SIZE, numBlocksX * BLOCK_SIZE, 3]);
+
+            // Trim off the padding to restore original dimensions
+            if (padH > 0 || padW > 0) {
+                finalImage = tf.slice(finalImage, [0, 0, 0], [originalH, originalW, 3]);
+            }
+            
+            // DENORMALIZE OUTPUT: Scale from [0, 1] back up to [0, 255] and cast to integers
+            return finalImage.mul(255.0).clipByValue(0, 255).cast("int32");
+        });
+
+        // Render the newly generated frame
+        outTensor.max().print();
+        this.frameCounter = true;
+        this.frameCounter3++;
+        return outTensor;
+    };
 };
 const enchanter = new Enchanter();
 globalThis.enchanter = enchanter;
@@ -3221,6 +3243,7 @@ const RoomScreen = class extends EventTarget {
         this.toolbarHost = document.getElementById("room-toolbar-host");
         
         this.videoCanvas = document.getElementById("room-video");
+        this.videoCanvas.getContext("webgpu");
         this.videoCanvasFocus = false;
         this.videoCanvas2 = document.getElementById("room-video-2");
         this.videoCanvas3 = document.getElementById("room-video-3");
@@ -3293,6 +3316,7 @@ const RoomScreen = class extends EventTarget {
         this.bitrate = "0";
         this.resolution = "0";
         this.framerate = "0";
+        this.framerateValue = 15;
         document.querySelectorAll(".room-bitrate").forEach((el) => {
             el.addEventListener("click", () => {
                 document.querySelector(".room-bitrate[data-value='" + this.bitrate + "'] > i").innerHTML = "";
@@ -3318,6 +3342,13 @@ const RoomScreen = class extends EventTarget {
                 document.querySelector(".room-framerate[data-value='" + this.framerate + "'] > i").innerHTML = "check";
                 console.log("Set framerate to", this.framerate);
                 this.startVideo();
+                if (this.framerate === "0") {
+                    this.framerateValue = 15;
+                } else if (this.framerate === "1") {
+                    this.framerateValue = 30;
+                } else if (this.framerate === "2") {
+                    this.framerateValue = 60;
+                }
             });
         });
 
@@ -3335,8 +3366,10 @@ const RoomScreen = class extends EventTarget {
 
         this.enchate1 = false;
         this.enchate2 = false;
+        this.enchate3 = false;
+        this.frames = [];
         document.querySelectorAll(".room-enchante").forEach((el) => {
-            el.addEventListener("click", () => {
+            el.addEventListener("click", async () => {
                 const value = el.getAttribute("data-value");
                 if (value === "0") {
                     if (this.enchate1 === true) {
@@ -3350,9 +3383,39 @@ const RoomScreen = class extends EventTarget {
                     if (this.enchate2 === true) {
                         this.enchate2 = false;
                         document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = "";
+                        
                     } else {
-                        this.enchate2 = true;
                         document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = "check";
+                        for (let frame of this.frames) {
+                            frame.dispose();
+                        }
+                        this.frames = [];
+                        this.frames.push(await tf.browser.fromPixels(this.videoCanvas2));
+                        this.frames.push(await tf.browser.fromPixels(this.videoCanvas2));
+                        this.genFrame = await tf.browser.fromPixels(this.videoCanvas2);
+                        this.then = 0;
+                        this.isProcessing = false;
+                        this.isRealFrameNext = true;
+                        this.enchate2 = true;
+                    }
+                } else if (value === "2") {
+                    if (this.enchate3 === true) {
+                        this.enchate3 = false;
+                        document.querySelector(".room-enchante[data-value='2'] > i").innerHTML = "";
+                    } else {
+                        
+                        document.querySelector(".room-enchante[data-value='2'] > i").innerHTML = "check";
+                        for (let frame of this.frames) {
+                            frame.dispose();
+                        }
+                        this.frames = [];
+                        this.frames.push(await tf.browser.fromPixels(this.videoCanvas2));
+                        this.frames.push(await tf.browser.fromPixels(this.videoCanvas2));
+                        this.genFrame = await tf.browser.fromPixels(this.videoCanvas2);
+                        this.then = 0;
+                        this.isProcessing = false;
+                        this.isRealFrameNext = true;
+                        this.enchate3 = true;
                     }
                 }
             });
@@ -3748,21 +3811,18 @@ const RoomScreen = class extends EventTarget {
         }
     };
 
-    setEnchante = (enchante1=this.enchate1, enchante2=this.enchate2) => {
-        this.enchate1 = enchante1;
-        this.enchate2 = enchante2;
-        document.querySelector(".room-enchante[data-value='0'] > i").innerHTML = enchante1 === "1" ? "check" : "";
-        document.querySelector(".room-enchante[data-value='1'] > i").innerHTML = enchante2 === "1" ? "check" : "";
-    };
     startVideo = () => {
         if (this.enchanteLoop) {
             cancelAnimationFrame(this.enchanteLoop);
         }
         this.enchanteLoop = requestAnimationFrame(this.processFrame);
         server.webRTC.setVideo(this.bitrate, this.framerate, this.resolution, this.videoCanvas2);
-    }
-    processFrame = async () => {
-        if (!this.enchate1 && !this.enchate2) {
+    };
+    processFrame = async (now) => {
+        // Continue the loop
+        this.enchanteLoop = requestAnimationFrame(this.processFrame);
+
+        if (!this.enchate1 && !this.enchate2 && !this.enchate3) {
             if (this.videoCanvas.width > 0 && this.videoCanvas.height > 0) {
                 await enchanter.copyCanvas(this.videoCanvas2, this.videoCanvas);
             }
@@ -3770,17 +3830,94 @@ const RoomScreen = class extends EventTarget {
             if (this.enchate1 && this.enchate2) {
                 await enchanter.framegen(this.videoCanvas2, this.videoCanvas3);
                 await enchanter.upscale(this.videoCanvas3, this.videoCanvas);
-            }else if (this.enchate1) {
+            } else if (this.enchate1) {
                 await enchanter.upscale(this.videoCanvas2, this.videoCanvas);
                 //console.log("Frame upscaled with Enchanter.");
             } else if (this.enchate2) {
-                await enchanter.framegen(this.videoCanvas2, this.videoCanvas);
-                //console.log("Frame processed with Enchanter frame generation (not implemented).");
+                //console.log("Frame processed with Enchanter.");
+                const fps = this.framerateValue * 2;
+
+                // Has enough time passed for a 30 FPS video?
+                if (now - this.lastRun < 1000 / fps) {
+                    return;
+                }
+
+                // Prevent overlapping executions
+                if (this.isProcessing) {
+                    return;
+                }
+                this.isProcessing = true;
+
+                // update last run time
+                this.lastRun = now - ((now - this.lastRun) % (1000 / fps));
+
+                // process frame (interpolation)
+                if (this.isRealFrameNext) {
+                    this.frames.shift().dispose();
+                    const newRealFrame = await tf.browser.fromPixelsAsync(this.videoCanvas2);
+                    this.frames.push(newRealFrame);
+
+                    // draw current real frame
+                    await tf.browser.draw(this.frames[0], this.videoCanvas);
+                    //await enchanter.drawTensorToCanvas(frame, this.videoCanvas);
+
+                    this.genFrame.dispose();
+                    this.genFrame = await enchanter.framegen(this.frames[0], this.frames[1], this.videoCanvas);
+
+                    this.isRealFrameNext = false;
+                } else {
+                    await tf.browser.draw(this.genFrame, this.videoCanvas);
+                    //await enchanter.drawTensorToCanvas(this.genFrame, this.videoCanvas);
+                    
+                    this.isRealFrameNext = true;
+                }
+
+                this.isProcessing = false;
+
+            } else if (this.enchate3) {
+                //console.log("Frame processed with Enchanter.");
+                const fps = this.framerateValue * 2;
+
+                // Has enough time passed for a 30 FPS video?
+                if (now - this.lastRun < 1000 / fps) {
+                    return;
+                }
+
+                // Prevent overlapping executions
+                if (this.isProcessing) {
+                    return;
+                }
+                this.isProcessing = true;
+
+                // update last run time
+                this.lastRun = now - ((now - this.lastRun) % (1000 / fps));
+
+                // process frame (extrapolation)
+                if (this.isRealFrameNext) {
+
+                    this.frames.shift().dispose();
+                    const newRealFrame = await tf.browser.fromPixelsAsync(this.videoCanvas2);
+                    this.frames.push(newRealFrame);
+
+                    // draw current real frame
+                    await tf.browser.draw(this.frames[this.frames.length - 1], this.videoCanvas);
+
+                    this.genFrame.dispose();
+                    this.genFrame = await enchanter.framegen2(this.frames[0], this.frames[1], this.videoCanvas);
+
+                    this.isRealFrameNext = false;
+                } else {
+                    await tf.browser.draw(this.genFrame, this.videoCanvas);
+                    this.genFrame.dispose();
+                    
+                    this.isRealFrameNext = true;
+                }
+
+                this.isProcessing = false;
             }
         }
                 
-        // Continue the loop
-        this.enchanteLoop = requestAnimationFrame(this.processFrame);
+        
     };
             
 };

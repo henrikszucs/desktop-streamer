@@ -520,9 +520,13 @@ const dict = {
             "en": "2x resolution",
             "hu": "2x felbontás"
         },
-        "framerate-2x": {
-            "en": "2x framerate",
-            "hu": "2x képkocka sebesség"
+        "framerate-2x-in": {
+            "en": "2x framerate (interpolation)",
+            "hu": "2x képkocka sebesség (interpoláció)"
+        },
+        "framerate-2x-ex": {
+            "en": "2x framerate (extrapolation)",
+            "hu": "2x képkocka sebesség (extrapoláció)"
         }
     }
 };
