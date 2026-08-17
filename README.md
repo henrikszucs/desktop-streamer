@@ -7,37 +7,26 @@ Remote Desktop application to reach computers.
 > [!CAUTION]
 > Always replace the default certificate and password. The default settings only for testing purposes.
 
-### Basic run
-```
+```bash
+# Install and run
 npm install
 npm run server
-```
 
-### Uninstall
-```
-npm run uninstall -- --bin
-```
-
-### Custom configuration
-```
-npm run server -- --configuration=./conf.json
-```
-
-### Force compile
-```
+# Force compile
 npm run server -- --compile
-```
 
-### Exit after start
-```
-npm run server -- --exit
-```
+# Uninstall
+npm run uninstall
 
-### Example to compile custom conf
-```
+# Uninstall with bin folder
+npm run uninstall -- --bin
+
+# Run with custom configuration path
+npm run server -- --configuration=./conf.json
+
+# Test conf and exit
 npm run server -- --configuration=./conf.json --compile --exit
 ```
-
 
 ## Server configuration
 server configuration file path: server/conf/conf.json
@@ -45,14 +34,14 @@ server configuration file path: server/conf/conf.json
 ```
 {
     "http": {
-        "domain": "localhost",          //access domain for non web clients
+        "domain": "localhost",          //access domain
         "port": 443,                    //port of the server
         "key": "server.key",            //private key path
         "cert": "server.crt",           //private cert path
         "redirect": 80,                 //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
         "cache": {                      //(optional) cache HTTP server data into memory (delete to load directly from disk)
             "size": 524288000,          //max cache size in bytes
-            "sizeLimit": 10485760       //max file size that can cached (ignore too big files)
+            "fileSizeLimit": 10485760   //max file size that can cached (ignore too big files)
         },
         "remote": {                     //(optional) remote websocket server, it will ignore local ws creation
             "host": "localhost",
@@ -60,7 +49,7 @@ server configuration file path: server/conf/conf.json
         }
     },
     "ws": {
-        "domain": "localhost",          //access domain for non web clients (only if http domain not presented)
+        "domain": "localhost",          //access domain
         "port": 444,
         "key": "server.key",            //private key path
         "cert": "server.crt",           //private cert path
@@ -72,49 +61,37 @@ server configuration file path: server/conf/conf.json
             "pass": "root",
             "db": "desktop_streamer"
         },
-        "emails": [                     //email sending connections with smtp
-            {
-                "host": "",
-                "port": 567,
-                "user": "",
-                "limit": 720,
-                "auth": {
-                    "type": "password",
-                    "password": "12345678"
-                },
-                "auth": {
-                    "type": "OAuth2",
-                    "clientId": "12345678",
-                    "clientSecret": "12345678",
-                    "refreshToken": "12345678"
-                }
-            }
-        ],
         "webrtc": {
             "iceServers": [
                 "stun:stun.l.google.com:19302"
             ]
         },
-        "features": {
-            "screenSharing": {                  // (optional) Screen sharing options (delete to remove screen share feature)
-                "guestAllowShare": true,
-                "guestAllowJoin": true
+        "email": {                      //email sending connections with smtp
+            "host": "",
+            "port": 567,
+            "user": "",
+            "auth": {
+                "type": "password",
+                "password": "12345678"
             },
-            "serviceSharing": {                 // (optional) Service sharing option (delete to remove service share feature)
-                "title": "Games",
-                "titleIcon": "sports_esports"
-            },
-            "auth": {                           // how can autenticate into the app
-                "local": {
-                    "allowPasswordLogin": true,
-                    "allowCodeLogin": true,
-                    "allowRegister": true
-                },
-                "google": {
-                    "clientId": "1234567890",
-                    "clientSecret": "12345678"
-                }
+            "auth": {
+                "type": "OAuth2",
+                "clientId": "12345678",
+                "clientSecret": "12345678",
+                "refreshToken": "12345678"
             }
+        },
+        "auth": {                       // Google auth keys
+            "google": {
+                "clientId": "1234567890",
+                "clientSecret": "12345678"
+            }
+        }
+        "permissions": {                // permission settings
+            "guestAllowShare": true,    // Allow guest user to share screen
+            "guestAllowJoin": true,     // Allow guest user to join to a screen
+            "guestAllowRelay": false,   // Guest user allow to use server for media data transfer
+            "userRegisterRelay": true   // Newly registered users get relay permission as allow or deny (this stores for later usage, for modification need DB table update)
         }
     } 
 }
@@ -123,11 +100,24 @@ server configuration file path: server/conf/conf.json
 ## Folders
 ```md
 .
+├── .claude/ Claude Code setting and configurations
+├── conf/ - configuration files
 ├── dev/ - developer documents and helper temporary or useful mini scripts
+├── model/ - The upscale model scripts
 ├── src/ - source of the program
-│   ├── client/electron - ElectronJS deps (large file and not saved)
-│   └── client/web - web UI files
-├── conf - configuration files
-├── bin - prebuild electron client binaries with ffmpeg
-└── tmp - temporary folder for generated files
+│   └── client/ - Client program's code
+│       ├── electron/ - ElectronJS specific codes
+│       ├── native/ - Platform native dependencies
+│       └── web/ - Common web dependencies
+│
+├── bin/ - prebuild electron client binaries with ffmpeg (used in runtime)
+└── tmp/ - temporary folder for generated files (used in runtime)
 ```
+
+
+## AI assisted development
+The project contain project specific skills and description for Claude Code.
+The following MCP and skills used:
+- https://github.com/mattpocock/skills
+- https://github.com/DeusData/codebase-memory-mcp
+- https://playwright.dev/docs/getting-started-mcp
