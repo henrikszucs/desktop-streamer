@@ -1,0 +1,20 @@
+{
+    "delete": {
+        "0": {
+            "en": "Your delete code is for account (",
+            "hu": "A törlőkódod: "
+        },
+        "1": {
+            "en": "). Please use the following code to confirm account deletion:",
+            "hu": "). Kérlek, használd a következő kódot a fiók törlésének megerősítéséhez:"
+        },
+        "2": {
+            "en": " If you did not request account deletion, please ignore this email.",
+            "hu": " Ha nem kérted a fiókod törlését, kérlek, hagyd figyelmen kívül ezt az e-mailt."
+        }
+    },
+    "room": {
+        "en": " room",
+        "hu": " szoba"
+    }
+}
