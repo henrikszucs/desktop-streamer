@@ -22,13 +22,11 @@ import Communicator from "easy-communicator";
 import localization from "./localization.js";
 import { argGet } from "./common.js";
 
-const VERSION = "0.1.0";
 
 //
 // Logic
 //
 const serverScriptPath = import.meta.dirname;
-console.log(import.meta);
 
 // proceed the conf file fields
 const processConf = async function(confPath) {
@@ -524,6 +522,21 @@ const processConf = async function(confPath) {
 // Main
 //
 const main = async function(args) {
+    // Help / version (checked before anything else, no other output)
+    const helpFlag = argGet(process.argv, "--help", false) || argGet(process.argv, "-h", false);
+    if (helpFlag) {
+        console.log("Usage: npm run server [-- --configuration=<path>] [-- --compile] [-- --exit] [-- --help] [-- --version]\n\n  -c, --configuration <path>  path to the JSON configuration file (default: ./conf/conf.json)\n  --compile                    force (re)compile the Electron client bundles from ./bin into ./tmp\n  --exit                       validate the configuration/compile and exit without starting listeners\n  -h, --help                   show this help message\n  -v, --version                show the project version");
+        return;
+    }
+
+    const versionFlag = argGet(process.argv, "--version", false) || argGet(process.argv, "-v", false);
+    if (versionFlag) {
+        const packageJsonPath = path.resolve(import.meta.dirname, "../../package.json");
+        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+        console.log(packageJson.version);
+        return;
+    }
+
     // Read CLI options
     process.stdout.write("Reading arguments...    ");
     const confPath = path.resolve(argGet(process.argv, "--configuration", true, true) || argGet(process.argv, "-c", true, false) || "./conf/conf.json");

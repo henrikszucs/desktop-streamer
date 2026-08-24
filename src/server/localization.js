@@ -62,8 +62,6 @@ const getSupportedLanguages = () => {
     let lastObj = dict;
     let lastKey = getFirstKey(lastObj);
     while (lastKey !== null) {
-        console.log(lastObj);
-        console.log(lastKey);
         prevObj = lastObj;
         lastObj = lastObj[lastKey];
         lastKey = getFirstKey(lastObj);
@@ -103,6 +101,8 @@ export default {
     "load": load,
     "get": get,
     "translateHTML": translateHTML,
-    "supportedLanguages": getSupportedLanguages(),
+    get supportedLanguages() {
+        return getSupportedLanguages();
+    },
     "putParameters": putParameters
 };
