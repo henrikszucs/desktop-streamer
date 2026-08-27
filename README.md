@@ -34,6 +34,10 @@ server configuration file path: server/conf/conf.json
 ```
 {
     "http": {
+        "name": {                       // (optional) cutomized name of the application
+            "en": "My Desktop streamer",
+            "hu": "Saját távoli megosztó"
+        },
         "domain": "localhost",          //access domain
         "port": 443,                    //port of the server
         "key": "server.key",            //private key path
@@ -67,9 +71,9 @@ server configuration file path: server/conf/conf.json
             ]
         },
         "email": {                      //email sending connections with smtp
-            "host": "",
+            "host": "mail.example.com",
             "port": 567,
-            "user": "",
+            "user": "user@example.com",
             "auth": {
                 "type": "password",
                 "password": "12345678"
@@ -86,7 +90,7 @@ server configuration file path: server/conf/conf.json
                 "clientId": "1234567890",
                 "clientSecret": "12345678"
             }
-        }
+        },
         "permissions": {                // permission settings
             "guestAllowShare": true,    // Allow guest user to share screen
             "guestAllowJoin": true,     // Allow guest user to join to a screen
@@ -103,13 +107,14 @@ server configuration file path: server/conf/conf.json
 ├── .claude/ Claude Code setting and configurations
 ├── conf/ - configuration files
 ├── dev/ - developer documents and helper temporary or useful mini scripts
-├── model/ - The upscale model scripts
+├── model/ - The CNN model development folder
 ├── src/ - source of the program
-│   └── client/ - Client program's code
-│       ├── electron/ - ElectronJS specific codes
-│       ├── native/ - Platform native dependencies
-│       └── web/ - Common web dependencies
-│
+│   ├── client/ - Client program's code
+│   │   ├── electron/ - ElectronJS specific codes
+│   │   ├── native/ - Platform native dependencies
+│   │   └── web/ - Common web dependencies
+│   └── server/ - Server program's code
+│   
 ├── bin/ - prebuild electron client binaries with ffmpeg (used in runtime)
 └── tmp/ - temporary folder for generated files (used in runtime)
 ```

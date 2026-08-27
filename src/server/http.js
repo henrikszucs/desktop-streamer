@@ -1,3 +1,20 @@
+"use strict";
+
+const ServerHTTP = class {
+    httpBasePath = "./src/client/web";
+    httpDownloadPath = "./tmp";
+    httpServer = null;
+    httpCache = new Map();
+    httpCacheSize = 0;
+    httpCacheSizeLimit = 0;
+    httpCacheUpdate = 1000;
+    httpCacheUpdateLength = 5;
+    httpCacheUpdateId = -1;
+    httpCacheReloadId = -1;
+    httpRedirect = null;
+    
+};
+
 // create HTTP/WS servers
 const Server = class {
     httpBasePath = "./src/client/web";
