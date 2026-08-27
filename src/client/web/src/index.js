@@ -1,13 +1,13 @@
 "use strict";
 
 // load dependencies
-import IDB from "./libs/idb/idb.js";
-import Communicator from "./libs/communicator/communicator.js";
-import {BrowserAudioEncoder} from "./libs/ffmpeg-chunkifier/encoder-browser.js";
-import {Decoder, Player} from "./libs/ffmpeg-chunkifier/decoder.js";
+import IDB from "../libs/idb/idb.js";
+import Communicator from "../libs/communicator/communicator.js";
+import {BrowserAudioEncoder} from "../libs/ffmpeg-chunkifier/encoder-browser.js";
+import {Decoder, Player} from "../libs/ffmpeg-chunkifier/decoder.js";
 
 //load configuration
-import conf from "./conf.js";
+import conf from "../conf.js";
 import localization from "./localization.js";
 
 

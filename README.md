@@ -1,6 +1,18 @@
 # Introduction
 Remote Desktop application to reach computers.
 
+## Supported platforms
+Currently the following client platforms are supported:
+
+| Platform      | Access | Control |
+| ------------- | :----: | :-----: |
+| Web (browser) |   ✅   |   ❌    |
+| Windows (x64) |   ✅   |   ✅    |
+| MacOS         |   ❌   |   ❌    |
+| Linux         |   ❌   |   ❌    |
+
+- **Access**: share and view a desktop (screen capture and streaming).
+- **Control**: remote keyboard and mouse input, needs the native client.
 
 ## Server usage
 

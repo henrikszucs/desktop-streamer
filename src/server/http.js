@@ -12,7 +12,18 @@ const ServerHTTP = class {
     httpCacheUpdateId = -1;
     httpCacheReloadId = -1;
     httpRedirect = null;
-    
+
+    constructor() {
+
+    };
+
+    async start(conf) {
+        
+    };
+
+    async stop() {
+
+    };
 };
 
 // create HTTP/WS servers

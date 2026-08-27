@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { argGet } from "./server/common.js";
 
-async function deletePath(targetPath, keepDir, skipPaths = []) {
+const deletePath = async function (targetPath, keepDir, skipPaths = []) {
     const resolvedTarget = path.resolve(targetPath);
 
     let stat;
@@ -29,7 +29,7 @@ async function deletePath(targetPath, keepDir, skipPaths = []) {
     }
 }
 
-async function deleteContents(rootPath, currentPath, skipPaths) {
+const deleteContents = async function (rootPath, currentPath, skipPaths) {
     const entries = await fs.readdir(currentPath);
 
     for (const entry of entries) {
@@ -53,7 +53,7 @@ async function deleteContents(rootPath, currentPath, skipPaths) {
             await fs.rm(entryPath, { recursive: true });
         }
     }
-}
+};
 
 const main = async function() {
     const helpFlag = argGet(process.argv, "--help", false) || argGet(process.argv, "-h", false);
