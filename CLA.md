@@ -136,7 +136,7 @@ respect.
 ## 8. Governing Law
 
 This Agreement is governed by the laws of Hungary, without regard to its conflict
-of law provisions. <!-- TODO: confirm the jurisdiction you want before publishing. -->
+of law provisions.
 
 ---
 

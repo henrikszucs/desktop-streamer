@@ -16,9 +16,9 @@ import { WebSocketServer } from "ws";
 import knex from "knex";
 import nodemailer from "nodemailer";
 
-// first-party dependencies
-import Mime from "easy-mime";
-import Communicator from "easy-communicator";
+// first-party dependencies (vendored, LGPL-3.0-or-later — see src/server/communicator.js, src/server/mime.js)
+import Mime from "./mime.js";
+import Communicator from "./communicator.js";
 import localization from "./localization.js";
 import { argGet } from "./common.js";
 import { checkConfig } from "./config.js"

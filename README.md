@@ -138,3 +138,36 @@ The following MCP and skills used:
 - https://github.com/mattpocock/skills
 - https://github.com/DeusData/codebase-memory-mcp
 - https://playwright.dev/docs/getting-started-mcp
+
+## License
+Desktop Streamer is free software: you can redistribute it and/or modify it
+under the terms of the **GNU Affero General Public License, version 3 or later
+(AGPL-3.0-or-later)**. See [`LICENSE`](LICENSE) for the full text. Because the
+server is delivered over a network, the AGPL section 13 obligation applies:
+operators of a modified server must offer its complete corresponding source to
+their users.
+
+### Bundled libraries
+The realtime protocol and MIME helpers are vendored directly into this
+repository instead of being pulled from npm:
+
+| Path | Upstream | License in this repo |
+| ---- | -------- | -------------------- |
+| `src/server/communicator.js` | [`easy-communicator`](https://github.com/henrikszucs/easy-communicator) | LGPL-3.0-or-later |
+| `src/server/mime.js` | [`easy-mime`](https://github.com/henrikszucs/easy-mime) | LGPL-3.0-or-later |
+| `src/client/web/libs/communicator/communicator.js` | [`easy-communicator`](https://github.com/henrikszucs/easy-communicator) | LGPL-3.0-or-later |
+
+These libraries are authored and copyright-held by Henrik Szűcs. Their upstream
+npm packages are (were) published under GPL-2.0; the copies bundled here are
+re-licensed by the copyright holder under the **GNU Lesser General Public
+License, version 3 or later**, which is compatible with the project's AGPL-3.0
+license, and are no longer listed as npm dependencies. Each vendored file carries
+an SPDX header, and both `src/server/` and `src/client/web/libs/communicator/`
+contain their own `COPYING` (GPL-3.0) and `COPYING.LESSER` (LGPL-3.0) texts. The
+MIME table in `mime.js` follows the schema of jshttp/mime-db (MIT).
+
+### Contributing
+Contributions require signing the [Contributor License Agreement](CLA.md) once,
+by a statement on your first pull request. The CLA lets the maintainer keep the
+project under AGPL-3.0, keep the bundled libraries under LGPL-3.0, and offer
+separate commercial licenses.

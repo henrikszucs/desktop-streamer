@@ -51,7 +51,7 @@ The single npm package contains three runtime pieces plus supporting folders:
 
 ### Realtime protocol
 
-`src/client/web/libs/communicator/communicator.js` is a browser-side copy of the `easy-communicator` protocol (the server depends on the published `easy-communicator` npm package for the same protocol). It implements a packetized, acknowledgment-based messaging layer over an abstract `sender` transport (send/invoke/receive, with time-sync and side-negotiation handshakes) that both the WebSocket signaling channel and, later, WebRTC data channels are expected to use.
+`easy-communicator` is vendored directly, not an npm dependency: `src/server/communicator.js` (server) and `src/client/web/libs/communicator/communicator.js` (browser) are copies of the same protocol, and `src/server/mime.js` is a vendored copy of `easy-mime`. All three are re-licensed by the copyright holder as LGPL-3.0-or-later inside this AGPL-3.0 repo (see `## License` in `README.md`). The protocol implements a packetized, acknowledgment-based messaging layer over an abstract `sender` transport (send/invoke/receive, with time-sync and side-negotiation handshakes) that both the WebSocket signaling channel and, later, WebRTC data channels are expected to use.
 
 ### Config
 
