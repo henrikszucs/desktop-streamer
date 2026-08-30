@@ -2,39 +2,137 @@
 
 import Ajv from "ajv"
 
-const schema = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "Desktop Streamer Server Configuration",
+const definitions = {
+    "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+    },
+    "text": {
+        "type": "string",
+        "minLength": 1
+    },
+    "bytes": {
+        "type": "integer",
+        "minimum": 0
+    }
+};
+
+const httpSchema = {
     "type": "object",
-    "required": ["domain", "port", "key", "cert", "webrtc"],
+    "required": ["domain", "port", "key", "cert"],
     "additionalProperties": false,
     "properties": {
+        // (optional) customized name of the application, keyed by language code
+        "name": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+                "pattern": "^[a-z]{2}(-[A-Za-z0-9]+)*$"
+            },
+            "additionalProperties": {
+                "$ref": "#/definitions/text"
+            }
+        },
+        // access domain
         "domain": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/definitions/text"
+        },
+        // port of the server
+        "port": {
+            "$ref": "#/definitions/port"
+        },
+        // private key path
+        "key": {
+            "$ref": "#/definitions/text"
+        },
+        // private cert path
+        "cert": {
+            "$ref": "#/definitions/text"
+        },
+        // (optional) HTTP port that redirects to HTTPS
+        "redirect": {
+            "$ref": "#/definitions/port"
+        },
+        // (optional) cache HTTP server data into memory
+        "cache": {
+            "type": "object",
+            "required": ["size", "fileSizeLimit"],
+            "additionalProperties": false,
+            "properties": {
+                // max cache size in bytes
+                "size": {
+                    "$ref": "#/definitions/bytes"
+                },
+                // max file size that can be cached
+                "fileSizeLimit": {
+                    "$ref": "#/definitions/bytes"
+                }
+            }
+        },
+        // (optional) remote websocket server, it ignores local ws creation
+        "remote": {
+            "type": "object",
+            "required": ["host", "port"],
+            "additionalProperties": false,
+            "properties": {
+                "host": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                }
+            }
+        }
+    }
+};
+
+const wsSchema = {
+    "type": "object",
+    "required": ["domain", "port", "key", "cert", "database", "webrtc", "email", "auth", "permissions"],
+    "additionalProperties": false,
+    "properties": {
+        // access domain
+        "domain": {
+            "$ref": "#/definitions/text"
         },
         "port": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
+            "$ref": "#/definitions/port"
         },
-        "redirect": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
-        },
+        // private key path
         "key": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/definitions/text"
         },
+        // private cert path
         "cert": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/definitions/text"
         },
-        "ws": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
+        // MySQL server connection
+        "database": {
+            "type": "object",
+            "required": ["type", "host", "port", "user", "pass", "db"],
+            "additionalProperties": false,
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["mysql"]
+                },
+                "host": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                },
+                "user": {
+                    "type": "string"
+                },
+                "pass": {
+                    "type": "string"
+                },
+                "db": {
+                    "$ref": "#/definitions/text"
+                }
+            }
         },
         "webrtc": {
             "type": "object",
@@ -43,22 +141,145 @@ const schema = {
             "properties": {
                 "iceServers": {
                     "type": "array",
+                    "minItems": 1,
                     "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "minItems": 1
+                        "$ref": "#/definitions/text"
+                    }
+                }
+            }
+        },
+        // email sending connection with smtp
+        "email": {
+            "type": "object",
+            "required": ["host", "port", "user", "auth"],
+            "additionalProperties": false,
+            "properties": {
+                "host": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                },
+                "user": {
+                    "$ref": "#/definitions/text"
+                },
+                // password or OAuth2 authentication
+                "auth": {
+                    "type": "object",
+                    "required": ["type"],
+                    "oneOf": [
+                        {
+                            "required": ["password"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": {
+                                    "const": "password"
+                                },
+                                "password": {
+                                    "$ref": "#/definitions/text"
+                                }
+                            }
+                        },
+                        {
+                            "required": ["clientId", "clientSecret", "refreshToken"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "type": {
+                                    "const": "OAuth2"
+                                },
+                                "clientId": {
+                                    "$ref": "#/definitions/text"
+                                },
+                                "clientSecret": {
+                                    "$ref": "#/definitions/text"
+                                },
+                                "refreshToken": {
+                                    "$ref": "#/definitions/text"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        // Google auth keys
+        "auth": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+                "google": {
+                    "type": "object",
+                    "required": ["clientId", "clientSecret"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "clientId": {
+                            "$ref": "#/definitions/text"
+                        },
+                        "clientSecret": {
+                            "$ref": "#/definitions/text"
+                        }
+                    }
+                }
+            }
+        },
+        // permission settings
+        "permissions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                // Allow guest user to share screen
+                "guestAllowShare": {
+                    "type": "boolean",
+                    "default": true
+                },
+                // Allow guest user to join to a screen
+                "guestAllowJoin": {
+                    "type": "boolean",
+                    "default": true
+                },
+                // Guest user allow to use server for media data transfer
+                "guestAllowRelay": {
+                    "type": "boolean",
+                    "default": false
+                },
+                // Newly registered users get relay permission as allow or deny
+                "userRegisterRelay": {
+                    "type": "boolean",
+                    "default": true
                 }
             }
         }
     }
 };
 
-const ajv = new Ajv();
+const schema = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Desktop Streamer Server Configuration",
+    "type": "object",
+    "additionalProperties": false,
+    // at least one of the servers must be configured
+    "anyOf": [
+        {
+            "required": ["http"]
+        },
+        {
+            "required": ["ws"]
+        }
+    ],
+    "properties": {
+        "http": httpSchema,
+        "ws": wsSchema
+    },
+    "definitions": definitions
+};
+
+const ajv = new Ajv({
+    "allErrors": true
+});
 const validate = ajv.compile(schema);
 
-// TODO: check config file with json schema
-const isValidConfig = (config) => {
+const checkConfig = (config) => {
     const valid = validate(config);
     if (!valid) {
         return {
@@ -71,3 +292,6 @@ const isValidConfig = (config) => {
         errors: []
     };
 };
+
+export { schema, checkConfig };
+export default checkConfig;

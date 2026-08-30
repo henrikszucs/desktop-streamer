@@ -1,3 +1,5 @@
+"use strict";
+
 // comlile the desktop clients
 const compileClients = async function(conf) {
 
