@@ -147,6 +147,35 @@ const ServerHTTP = class {
         });
     };
 
+    // bind a server to a port, a failed bind arrives as an "error" event and
+    // would take the process down instead of reaching the caller of start()
+    listen(server, port) {
+        return new Promise((resolve, reject) => {
+            const onError = function(error) {
+                reject(new Error("Cannot listen on port " + port + " - " + error.message));
+            };
+            server.once("error", onError);
+            server.listen(port, function() {
+                server.removeListener("error", onError);
+                resolve();
+            });
+        });
+    };
+
+    // the file a request asks for: no query, no hash, decoded, "/" separated
+    requestPath(url) {
+        let filePath = url.split("?")[0].split("#")[0];
+        try {
+            filePath = decodeURIComponent(filePath);
+        } catch (error) {
+            // not a valid percent encoding, serve it as it arrived
+        }
+        while (filePath.startsWith("/")) {
+            filePath = filePath.slice(1);
+        }
+        return filePath;
+    };
+
     // resolve the requested path inside a base path (undefined if it escapes it)
     resolveInBase(basePath, filePath) {
         const base = path.resolve(basePath);
@@ -175,10 +204,10 @@ const ServerHTTP = class {
                     continue; // skip directories
                 }
                 const date = new Date(stats.mtimeMs);
-                this.httpCache.set(file, {
+                this.httpCache.set(file.split(path.sep).join("/"), {
                     "path": src,
                     "lastModified": date.toUTCString(),
-                    "type": getMIMEType(path.extname(src)),
+                    "type": getMIMEType(path.extname(src)) || "text/plain",
                     "size": stats.size,
                     "etag": path.basename(src) + String(stats.size),
                     "accesses": new Array(this.httpCacheUpdateLength*2).fill(0),
@@ -235,7 +264,7 @@ const ServerHTTP = class {
 
     httpsRequestHandler = async (req, res) => {
         const basePaths = [this.httpBasePath, this.httpDownloadPath];
-        const filePath = req.url.slice(1);          // remove start slash
+        const filePath = this.requestPath(req.url);
 
         // get requested file
         let fileData;
@@ -270,7 +299,7 @@ const ServerHTTP = class {
     };
 
     httpsRequestHandlerWithCache = async (req, res) => {
-        const filePath = req.url.slice(1);          // remove start slash
+        const filePath = this.requestPath(req.url);
 
         // check existence of file
         let fileData = this.httpCache.get(filePath);
@@ -361,7 +390,7 @@ const ServerHTTP = class {
         } else {
             // build cache
             this.httpCacheSize = conf["http"]["cache"]["size"];
-            this.httpCacheSizeLimit = conf["http"]["cache"]["sizeLimit"];
+            this.httpCacheSizeLimit = conf["http"]["cache"]["fileSizeLimit"];
             await this.buildChache();
 
             // update access stats periodically
@@ -389,13 +418,13 @@ const ServerHTTP = class {
             "key": conf["http"]["key"],
             "cert": conf["http"]["cert"]
         }, requestHandle);
-        this.httpServer.listen(this.httpPort);
+        await this.listen(this.httpServer, this.httpPort);
         process.stdout.write("\n    Available: https://" + conf["http"]["domain"] + (conf["http"]["port"] !== 443 ? ":" + conf["http"]["port"] : "") + "\n");
 
         // create redirect server
         if (typeof conf["http"]["redirect"] !== "undefined") {
             this.httpRedirect = http.createServer(this.httpRedirectHandler);
-            this.httpRedirect.listen(conf["http"]["redirect"]);
+            await this.listen(this.httpRedirect, conf["http"]["redirect"]);
             process.stdout.write("    Redirect: http://" + conf["http"]["domain"] + (conf["http"]["redirect"] !== 80 ? ":" + conf["http"]["redirect"] : "") + "\n");
         }
         process.stdout.write("done\n");
@@ -445,5 +474,8 @@ const ServerHTTP = class {
     };
 };
 
-export { ServerHTTP };
-export default { ServerHTTP };
+// the server is a singleton, the module hands out the running instance
+const serverHTTP = new ServerHTTP();
+
+export { serverHTTP };
+export default serverHTTP;

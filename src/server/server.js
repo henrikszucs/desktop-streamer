@@ -11,6 +11,7 @@ import process from "node:process";
 import { argGet, getVersion } from "./common.js";
 import { loadConfig } from "./config.js";
 import { compileClients } from "./building.js";
+import serverHTTP from "./http.js";
 
 //
 // Main
@@ -70,6 +71,43 @@ const main = async function(args) {
         process.stdout.write("skipped\n");
     }
 
-    // TODO: start the HTTP/WS servers
+    // Start the HTTP server
+    try {
+        await serverHTTP.start(conf);
+    } catch (error) {
+        process.stdout.write("failed\n");
+        console.error(error.message);
+        await serverHTTP.stop();
+        process.exitCode = 1;
+        return;
+    }
+
+    // TODO: start the WS server
+
+    // Cleanup
+    let isClosing = false;
+    const close = async function() {
+        if (isClosing === true) {
+            return;     // a second signal while the servers are closing
+        }
+        isClosing = true;
+        process.stdout.write("Exiting...    ");
+        await serverHTTP.stop();
+        process.exit(0);
+    };
+    process.on("SIGTERM", async function() {
+        process.stdout.write("SIGTERM signal received\n");
+        await close();
+    });
+    process.on("SIGINT", async function() {
+        process.stdout.write("SIGINT signal received\n");
+        await close();
+    });
+    if (conf["flags"]["exit"] === true) {
+        process.stdout.write("--exit flag received\n");
+        await close();
+        return;
+    }
+    process.stdout.write("Press CTRL+C to stop servers\n");
 };
 main(process.argv);

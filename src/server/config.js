@@ -1,10 +1,14 @@
 "use strict";
 
 // internal dependencies
+import path from "node:path";
 import fs from "node:fs/promises";
 
 // third-party dependencies
 import Ajv from "ajv"
+
+// first-party dependencies
+import { setAbsolute } from "./common.js";
 
 const definitions = {
     "port": {
@@ -337,6 +341,26 @@ const checkConstraints = (config) => {
     return "";
 };
 
+// read the TLS material of every configured server, the paths are relative to
+// the configuration file and the servers need the contents, not the paths
+const loadCertificates = async (config, confDir) => {
+    for (const section of ["http", "ws"]) {
+        if (typeof config[section] !== "object") {
+            continue;
+        }
+        for (const field of ["key", "cert"]) {
+            const filePath = setAbsolute(config[section][field], confDir);
+            try {
+                config[section][field] = await fs.readFile(filePath, {
+                    "encoding": "utf8"
+                });
+            } catch (error) {
+                throw new Error("Cannot read " + section.toUpperCase() + " " + field + " file: " + filePath + " - " + error.message);
+            }
+        }
+    }
+};
+
 // load the conf file and check its contents, it returns the config or throws an error
 const loadConfig = async (confPath) => {
     // load conf file (required)
@@ -374,6 +398,9 @@ const loadConfig = async (confPath) => {
     if (constraintError !== "") {
         throw new Error("Invalid configuration file: " + confPath + "\n  " + constraintError);
     }
+
+    // read the certificates the servers listen with
+    await loadCertificates(config, path.dirname(confPath));
 
     return config;
 };
