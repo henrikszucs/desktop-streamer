@@ -216,3 +216,6 @@ const compileClients = async function(conf) {
     return true;
     
 };
+
+export { compileClients };
+export default { compileClients };

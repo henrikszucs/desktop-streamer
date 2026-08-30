@@ -8841,8 +8841,5 @@ const getExtTypes = function (str) {
     return DB[str]["extensions"];
 };
 
-export default {
-    getMIMETypes,
-    getMIMEType,
-    getExtTypes
-};
+export { getMIMETypes, getMIMEType, getExtTypes };
+export default { getMIMETypes, getMIMEType, getExtTypes };

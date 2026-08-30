@@ -94,6 +94,7 @@ const putParameters = (str, params=new Map(), charStart="{", charEnd="}", charSt
     return result;
 };
 
+export { getLang, setLang, dict, load, get, translateHTML, getSupportedLanguages, putParameters };
 export default {
     "getLang": getLang,
     "setLang": setLang,

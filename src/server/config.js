@@ -1,5 +1,9 @@
 "use strict";
 
+// internal dependencies
+import fs from "node:fs/promises";
+
+// third-party dependencies
 import Ajv from "ajv"
 
 const definitions = {
@@ -293,5 +297,81 @@ const checkConfig = (config) => {
     };
 };
 
-export { schema, checkConfig };
-export default checkConfig;
+// check the constraints that the schema cannot express
+const checkConstraints = (config) => {
+    const http = config["http"];
+    const ws = config["ws"];
+
+    // check port collisions
+    const ports = [];
+    if (typeof http === "object") {
+        ports.push(["HTTP port", http["port"]]);
+        if (typeof http["redirect"] === "number") {
+            ports.push(["HTTP redirect port", http["redirect"]]);
+        }
+    }
+    if (typeof ws === "object") {
+        ports.push(["WS port", ws["port"]]);
+    }
+    for (let i = 0, length = ports.length; i < length; i++) {
+        for (let j = i + 1; j < length; j++) {
+            if (ports[i][1] === ports[j][1]) {
+                return ports[j][0] + " cannot be the same as the " + ports[i][0] + ": " + ports[i][1];
+            }
+        }
+    }
+
+    // check HTTP and WS server constraints
+    if (typeof http === "object" && typeof http["remote"] !== "object" && typeof ws !== "object") {
+        return "HTTP remote configuration must be provided if no local WS server in configuration!";
+    }
+    if (typeof ws === "object" && typeof http === "object" && typeof http["remote"] === "object") {
+        return "WS server cannot be created if HTTP remote is configured!";
+    }
+
+    return "";
+};
+
+// load the conf file and check its contents, it returns the config or throws an error
+const loadConfig = async (confPath) => {
+    // load conf file (required)
+    let contents = "";
+    try {
+        contents = await fs.readFile(confPath, {
+            "encoding": "utf8"
+        });
+    } catch (error) {
+        throw new Error("Cannot read configuration file: " + confPath + " - " + error.message);
+    }
+
+    // parse conf file
+    let config = null;
+    try {
+        config = JSON.parse(contents);
+    } catch (error) {
+        throw new Error("Invalid configuration file: " + confPath + " - " + error.message);
+    }
+    if (typeof config !== "object" || config === null || Array.isArray(config) === true) {
+        throw new Error("Invalid configuration file: " + confPath + " - root element must be an object");
+    }
+
+    // check conf file against the schema
+    const result = checkConfig(config);
+    if (result["valid"] === false) {
+        const details = result["errors"].map((error) => {
+            return "  " + (error["instancePath"] || "/") + " " + error["message"];
+        }).join("\n");
+        throw new Error("Invalid configuration file: " + confPath + "\n" + details);
+    }
+
+    // check the constraints that the schema cannot express
+    const constraintError = checkConstraints(config);
+    if (constraintError !== "") {
+        throw new Error("Invalid configuration file: " + confPath + "\n  " + constraintError);
+    }
+
+    return config;
+};
+
+export { schema, checkConfig, loadConfig };
+export default { schema, checkConfig, loadConfig };

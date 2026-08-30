@@ -3,7 +3,7 @@
 
 // temporary class
 // create HTTP/WS servers
-const Server = class {
+const ServerWS = class {
     httpBasePath = "./src/client/web";
     httpDownloadPath = "./tmp";
     httpServer = null;
@@ -3068,3 +3068,6 @@ const Server = class {
 
     };
 };
+
+export { ServerWS };
+export default { ServerWS };

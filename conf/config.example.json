@@ -1,0 +1,57 @@
+{
+    "http": {
+        "name": {
+            "en": "Desktop Streamer (local)",
+            "hu": "Desktop Streamer (helyi)"
+        },
+        "domain": "localhost",
+        "port": 8443,
+        "key": "server.key",
+        "cert": "server.crt",
+        "redirect": 8080,
+        "cache": {
+            "size": 524288000,
+            "fileSizeLimit": 10485760
+        }
+    },
+    "ws": {
+        "domain": "localhost",
+        "port": 8444,
+        "key": "server.key",
+        "cert": "server.crt",
+        "database": {
+            "type": "mysql",
+            "host": "localhost",
+            "port": 3306,
+            "user": "root",
+            "pass": "12345678",
+            "db": "desktop_streamer"
+        },
+        "webrtc": {
+            "iceServers": [
+                "stun:stun.l.google.com:19302"
+            ]
+        },
+        "email": {
+            "host": "localhost",
+            "port": 587,
+            "user": "noreply@localhost",
+            "auth": {
+                "type": "password",
+                "password": "12345678"
+            }
+        },
+        "auth": {
+            "google": {
+                "clientId": "000000000000-localdevplaceholder.apps.googleusercontent.com",
+                "clientSecret": "local-dev-placeholder"
+            }
+        },
+        "permissions": {
+            "guestAllowShare": true,
+            "guestAllowJoin": true,
+            "guestAllowRelay": false,
+            "userRegisterRelay": true
+        }
+    }
+}

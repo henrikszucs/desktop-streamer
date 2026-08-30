@@ -1234,4 +1234,5 @@ const Message = class {
 };
 
 
+export { Communicator };
 export default Communicator;

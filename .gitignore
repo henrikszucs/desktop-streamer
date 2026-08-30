@@ -7,6 +7,7 @@ bin/*
 !bin/PUT_BIN_HERE
 conf/*
 !conf/PUT_CONFIG_HERE
+!conf/config.example.json
 
 package-lock.json
 dev/electron

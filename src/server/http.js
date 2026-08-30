@@ -446,4 +446,5 @@ const ServerHTTP = class {
     };
 };
 
+export { ServerHTTP };
 export default { ServerHTTP };
