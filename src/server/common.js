@@ -76,4 +76,5 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
+export { generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
 export default { generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
