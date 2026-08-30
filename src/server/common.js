@@ -146,12 +146,12 @@ const argGet = function(args, argName, isKeyValue=false, isInline=false) {
 const isDirEmpty = async function(dirPath) {
     try {
         const dirIter = await fs.opendir(dirPath);
-        const {value, done} = await dirIter[Symbol.asyncIterator]().next();
-        if (!done) {
+        const {done} = await dirIter[Symbol.asyncIterator]().next();
+        if (done === false) {
             await dirIter.close();
-            return true;
+            return false;   // a first entry means the folder holds something
         }
-        return false;
+        return true;        // the iterator closed itself on the last entry
     } catch (error) {
         return undefined;
     }

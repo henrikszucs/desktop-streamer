@@ -4,6 +4,7 @@
     "description": "Free and open source screen sharing application for presentation, work, movies and gaming.",
     "scripts": {
         "server": "node ./src/server/server.js",
+        "test": "node --test \"tests/**/*.test.js\"",
         "uninstall": "node ./src/uninstall.js"
     },
     "type": "module",
@@ -34,7 +35,7 @@
         "ws": "^8.19.0"
     },
     "engines": {
-        "node": ">=10.15.3"
+        "node": ">=20.11.0"
     },
     "os": [
         "darwin",

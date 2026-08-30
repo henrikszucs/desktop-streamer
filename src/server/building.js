@@ -479,5 +479,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { compileClients };
-export default { compileClients };
+export { compileClients, minifyScript, minifyStyle, minifyMarkup };
+export default { compileClients, minifyScript, minifyStyle, minifyMarkup };

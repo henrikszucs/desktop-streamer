@@ -10,7 +10,7 @@ Desktop Streamer — an open source remote desktop / screen sharing application 
 
 `npm run server` and `npm run uninstall` are the only scripts; both accept `--help`, which is the authoritative list of their flags (`npm run server -- --help`). Arguments after `--` are forwarded, and `--configuration` only parses as `--configuration=<path>` (the inline form) or as `-c <path>`.
 
-There is no test runner, linter, or bundler — `tests/` exists but is empty, and nothing type-checks. `dev/rollup/conf.mjs` is an ad hoc helper for vendoring third-party packages into a `libs/` folder, never part of a normal run.
+`npm test` runs `tests/*.test.js` through Node's built-in runner (`node --test`, no dev dependencies — keep it that way). The tests covering build output skip themselves unless `./tmp/web` holds a build, so run `npm run server -- --compile --exit` first to exercise them. There is no linter and nothing type-checks. `dev/rollup/conf.mjs` is an ad hoc helper for vendoring third-party packages into a `libs/` folder, never part of a normal run.
 
 The default config path is `./conf/config.json`; `conf/config.example.json` is a valid SQLite-backed starting point, and `conf/` is gitignored apart from it.
 
