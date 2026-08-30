@@ -34,10 +34,10 @@ npm run uninstall
 npm run uninstall -- --bin
 
 # Run with custom configuration path
-npm run server -- --configuration=./conf.json
+npm run server -- --configuration=./config.json
 
 # Test conf and exit
-npm run server -- --configuration=./conf.json --compile --exit
+npm run server -- --configuration=./config.json --compile --exit
 ```
 
 ## Server configuration

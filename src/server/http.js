@@ -10,16 +10,11 @@ import http from "node:http";
 import https from "node:https";
 
 // first-party dependencies 
-import Mime from "./mime.js";
-import { binarySearch } from "./common.js";
-
-// client version is the project version
-// TODO: move to a shared constants module (src/server/building.js needs it too)
-const packageJsonPath = path.resolve(import.meta.dirname, "../../package.json");
-const CLIENT_VERSION = JSON.parse(await fs.readFile(packageJsonPath, "utf8"))["version"];
+import { getMIMEType } from "./mime.js";
+import { binarySearch, getVersion } from "./common.js";
 
 const ServerHTTP = class {
-    httpBasePath = "./src/client/web";
+    httpBasePath = "./tmp/web";
     httpDownloadPath = "./tmp";
     httpServer = null;
     httpPort = 443;
@@ -44,7 +39,7 @@ const ServerHTTP = class {
             const date = new Date(stats.mtimeMs);
             return {
                 "lastModified": date.toUTCString(),
-                "type": Mime.getMIMEType(path.extname(src)) || "text/plain",
+                "type": getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
                 "etag": path.basename(src) + String(stats.size),
                 "buffer": data
@@ -82,7 +77,7 @@ const ServerHTTP = class {
 
             return {
                 "lastModified": date.toUTCString(),
-                "type": Mime.getMIMEType(path.extname(src)) || "text/plain",
+                "type": getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
                 "etag": path.basename(src) + String(stats.size),
                 "stream": stream
@@ -171,6 +166,9 @@ const ServerHTTP = class {
         for (const basePath of basePaths) {
             const files = await fs.readdir(basePath, {"recursive": true});
             for (const file of files) {
+                if (basePath === this.httpDownloadPath && path.extname(file).toLowerCase() !== ".zip") {
+                    continue; // only the client zips are downloadable
+                }
                 const src = path.join(basePath, file);
                 const stats = await fs.stat(src);
                 if (stats.isFile() === false) {
@@ -180,7 +178,7 @@ const ServerHTTP = class {
                 this.httpCache.set(file, {
                     "path": src,
                     "lastModified": date.toUTCString(),
-                    "type": Mime.getMIMEType(path.extname(src)),
+                    "type": getMIMEType(path.extname(src)),
                     "size": stats.size,
                     "etag": path.basename(src) + String(stats.size),
                     "accesses": new Array(this.httpCacheUpdateLength*2).fill(0),
@@ -338,8 +336,10 @@ const ServerHTTP = class {
         const files = await fs.readdir(this.httpDownloadPath);
         const confData = {
             "http": {
-                "clients": [...files],
-                "version": CLIENT_VERSION
+                "clients": files.filter(function(file) {
+                    return path.extname(file).toLowerCase() === ".zip";
+                }),
+                "version": await getVersion()
             },
             "ws": {}
         };
@@ -352,8 +352,9 @@ const ServerHTTP = class {
         }
         let confScript = "\"use strict\";";
         confScript += "\n" + "export default " + JSON.stringify(confData) + ";";
+        await fs.mkdir(this.httpBasePath, {"recursive": true});
         await fs.writeFile(path.join(this.httpBasePath, "conf.js"), confScript);
-        await fs.writeFile(path.join(this.httpBasePath, "version"), CLIENT_VERSION);
+        await fs.writeFile(path.join(this.httpBasePath, "version"), await getVersion());
 
         // create HTTP server request handler
         let requestHandle = null;

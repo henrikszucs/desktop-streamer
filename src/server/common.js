@@ -1,5 +1,28 @@
 "use strict";
 
+//
+// Import dependencies
+//
+// internal dependencies
+import path from "node:path";
+import fs from "node:fs/promises";
+
+//
+// Shared constants
+//
+// root of the server and client sources (./src)
+const serverScriptPath = path.resolve(import.meta.dirname, "..");
+
+// client version is the project version, read once on the first ask
+const packageJsonPath = path.resolve(import.meta.dirname, "../../package.json");
+let clientVersion = null;
+const getVersion = async function() {
+    if (clientVersion === null) {
+        clientVersion = JSON.parse(await fs.readFile(packageJsonPath, "utf8"))["version"];
+    }
+    return clientVersion;
+};
+
 // generate random ID
 const generateId = function(length=10, chars="1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
     let id = "";
@@ -76,5 +99,5 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
-export { generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
-export default { generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
+export { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
+export default { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
