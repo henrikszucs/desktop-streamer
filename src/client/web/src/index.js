@@ -1257,11 +1257,11 @@ const SettingsDialog = class {
                     const value = this.speakerSelect.value;
                     let url;
                     if (value === "0") {
-                        url = "/sounds/test1.mp3";
+                        url = "/media/test1.mp3";
                     } else if (value === "1") {
-                        url = "/sounds/test2.mp3";
+                        url = "/media/test2.mp3";
                     } else {
-                        url = "/sounds/test3.mp3";
+                        url = "/media/test3.mp3";
                     }
 
                     const context = new AudioContext();
@@ -2772,7 +2772,7 @@ const LoginScreen = class {
         this.menuLoggedOut.classList.add("hide");
     };
     setupAsLoggedOut() {
-        this.userBtn.src = "/icons/guest.svg";
+        this.userBtn.src = "/media/guest.svg";
         this.menuLoggedIn.classList.add("hide");
         this.menuLoggedOut.classList.remove("hide");
     };
@@ -2842,7 +2842,7 @@ const DeviceScreen = class {
                                 </button>
                             </div>
                             <a class="wave">
-                                <img class="responsive" src="/icons/wallpaper.png">
+                                <img class="responsive" src="/media/wallpaper.png">
                             </a>
                             <div class="small-padding">
                                 <nav>
@@ -3062,7 +3062,7 @@ const SharesScreen = class {
                                 </button>
                             </div>
                             <a class="wave">
-                                <img class="responsive" src="/icons/wallpaper.png">
+                                <img class="responsive" src="/media/wallpaper.png">
                             </a>
                             <div class="small-padding">
                                 <nav>

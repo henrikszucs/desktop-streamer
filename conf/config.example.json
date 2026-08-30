@@ -20,12 +20,8 @@
         "key": "server.key",
         "cert": "server.crt",
         "database": {
-            "type": "mysql",
-            "host": "localhost",
-            "port": 3306,
-            "user": "root",
-            "pass": "12345678",
-            "db": "desktop_streamer"
+            "type": "sqlite",
+            "file": "database.db"
         },
         "webrtc": {
             "iceServers": [

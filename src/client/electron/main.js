@@ -79,7 +79,7 @@ const main = async function() {
         const win = new BrowserWindow({
             "width": 800,
             "height": 600,
-            "icon": path.join(app.getAppPath(), "icons/icon-32.png"),
+            "icon": path.join(app.getAppPath(), "media/icon-32.png"),
             "webPreferences": {
                 "partition": partition,
                 "contextIsolation": false,
@@ -166,7 +166,7 @@ const main = async function() {
         } else if (handle === "set-tray") {
             const isOn = args[0];
             if (isOn && tray === null) {
-                tray = new Tray(path.join(app.getAppPath(), "icons/icon-32.png"));
+                tray = new Tray(path.join(app.getAppPath(), "media/icon-32.png"));
                 tray.on("click", function() {
                     if (winMain) {
                         winMain.show();

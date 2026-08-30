@@ -4,62 +4,67 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Desktop Streamer — an open source remote desktop / screen sharing application (web + Electron client, Node.js server). Very early stage; architecture is still being explored and may change significantly.
+Desktop Streamer — an open source remote desktop / screen sharing application (web + Electron client, Node.js server). Very early stage; the architecture is actively being restructured, so verify a module against its source before trusting an assumption about it.
 
 ## Commands
 
-```bash
-# Install deps
-npm install
+`npm run server` and `npm run uninstall` are the only scripts; both accept `--help`, which is the authoritative list of their flags (`npm run server -- --help`). Arguments after `--` are forwarded, and `--configuration` only parses as `--configuration=<path>` (the inline form) or as `-c <path>`.
 
-# Run the server (reads conf/conf.json by default)
-npm run server
+There is no test runner, linter, or bundler — `tests/` exists but is empty, and nothing type-checks. `dev/rollup/conf.mjs` is an ad hoc helper for vendoring third-party packages into a `libs/` folder, never part of a normal run.
 
-# Run with a custom config path
-npm run server -- --configuration=./conf.json
-
-# Force (re)compile the Electron client bundles from ./bin into ./tmp
-npm run server -- --compile
-
-# Validate a config and exit without starting listeners
-npm run server -- --configuration=./conf.json --compile --exit
-
-# Uninstall (removes package-lock.json, node_modules, tmp)
-npm run uninstall
-# ...also remove ./bin
-npm run uninstall -- --bin
-```
-
-There is no test runner, linter, or bundler wired into `npm` yet — none of these exist in the repo currently. Web client code runs directly as native ES modules (no build step); `dev/rollup/conf.mjs` is a standalone helper only used ad hoc to vendor third-party packages into `libs/` folders, not part of the normal workflow.
-
-The project is `"type": "module"` (ESM) throughout; Electron's `main.js` is the exception and stays CommonJS (`require`) since it's loaded directly by Electron.
+The default config path is `./conf/config.json`; `conf/config.example.json` is a valid SQLite-backed starting point, and `conf/` is gitignored apart from it.
 
 ## Architecture
 
-The single npm package contains three runtime pieces plus supporting folders:
+ESM (`"type": "module"`) throughout. The one exception is `src/client/electron/main.js`, which stays CommonJS because Electron loads it directly — `building.js` minifies that folder in script mode for exactly this reason.
 
-- `src/server/server.js` — the server. One large file that: validates/normalizes the JSON config (`processConf`), serves the web client over HTTPS (with an optional in-memory LRU-ish file cache keyed by access frequency), runs a WebSocket server for the realtime protocol, persists to MySQL via `knex` (schema for `users`, `users_google`, `sessions`, `delete`, `joins` is created on first boot if missing), sends account-deletion emails via `nodemailer`, and verifies Google OAuth2 sign-in by calling Google's tokeninfo endpoint directly (no client library). All live state (connected clients, sessions, pub/sub subscriptions per field, pairing codes, join records) is held in in-memory `Map`/`Set` structures on the `Server` instance — there is no external cache/session store.
-- `src/client/web/` — the browser client. Plain ES modules, no framework, no build step; `index.html` is a single-page shell containing every dialog/screen (home, downloads, login, services, devices, shares, active room) toggled via `hide` classes, styled with the bundled `beercss` (Material Design) library. `index.js` (~3800 lines) holds essentially all client logic. `conf.js` and `version` are generated/overwritten by the server at boot and at compile time, not hand-edited. `localization.js` drives `data-i18n` attributes for `en`/`hu`.
-- `src/client/electron/` — thin Electron shell. `main.js` registers a privileged `local://` custom protocol that serves the bundled web app from the app path (so the Electron client reuses `src/client/web/` verbatim), exposes a small IPC API (`path-exe`, `path-app`, `set-tray`, `set-lang`) to the renderer, and manages a system tray / single-instance lock.
-- `src/client/native/<os>-<arch>/` — prebuilt native dependencies bundled per platform target: ffmpeg binaries/DLLs and a native input-control addon (`easy-control`, built on ViGEmClient on Windows). Only `win32-x64` exists today.
-- `model/` — placeholder for a future AI video upscaling model; currently empty (just an unpopulated `pyproject.toml`).
-- `dev/` — developer-only assets: a MySQL+phpMyAdmin Docker setup for local DB testing, the rollup vendoring helper, notes on producing the prebuilt Electron `bin/` distributions, and misc one-off scripts. Not part of the app runtime.
+### Server (`src/server/`)
 
-### Client compilation flow
+`server.js` is a thin CLI entry: parse flags → `loadConfig` → `compileClients` → start HTTP → install SIGINT/SIGTERM handlers. Each stage prints a `doing...    done/failed/skipped` line to stdout; keep that reporting style when adding a stage. **The WS server is not wired in yet** — `server.js` carries a `// TODO: start the WS server` where it belongs, so `ws.js` is currently reachable only by importing it directly. `session.js` is an empty placeholder.
 
-`compileClients()` in `server.js` (triggered by `--compile` or an empty `./tmp`) takes prebuilt Electron distributions from `./bin/<os>-<arch>[.zip]`, strips the default Electron `default_app.asar`, and repackages each as a zip under `./tmp/` containing: the Electron shell (`src/client/electron`), the web client (`src/client/web`), the matching native libs for that OS/arch, and a generated `conf.js` describing the WS endpoint. These zips are what `npm run server` serves for the "Download client" screen in the web UI. `./bin` and `./tmp` are both gitignored — the source Electron distributions are not checked into the repo.
+- `config.js` — the Ajv (draft-07) JSON Schema is the source of truth for every accepted config field. Cross-field rules the schema cannot express live in `checkConstraints` (port collisions — WS may share the HTTPS port but nothing else may collide; `http.remote` and a local `ws` section are mutually exclusive). `loadConfig` resolves the SQLite path and **replaces `key`/`cert` paths with their file contents**, relative to the config file's own directory, so downstream code holds PEM text, not paths.
+- `http.js` — a singleton `ServerHTTP` instance (exported as the instance, not the class). Serves `./tmp/web` and `./tmp/desktop`, falling back to `index.html` for unknown paths (SPA routing). Two request handlers: a streaming one, and a cache one chosen when `http.cache` is configured. The cache is frequency-based, not LRU: a rolling access window re-scores every file by `accesses / size` every few seconds and swaps buffers in and out under the byte budget.
+- `ws.js` — `ServerWS`: the realtime/signaling server. All live state is in-memory `Map`s on the instance (`clients`, `sessions`, `subscriptions` per user field, `pairs` for pairing codes, `joins` + `joinsUser` index) with no external cache or session store, so it is single-process by construction. Persistence goes through `knex` to MySQL or SQLite (`better-sqlite3`), with the schema created on first boot. `handleAPI` is a ~1300-line switch that is the whole client-facing protocol surface. Google sign-in is verified by calling Google's tokeninfo endpoint over plain HTTPS (`httpsGetText` in `common.js`) — no client library.
+- `building.js` — the client build (see below).
+- `common.js` — shared helpers (`argGet`, `getVersion`, `setAbsolute`, `binarySearch`, `httpsGetText`/`httpsGetImage`). `serverScriptPath` points at `./src`, and every client path is derived from it.
+- `communicator.js`, `mime.js` — vendored, see Licensing.
 
-### Realtime protocol
+### Client build flow
 
-`easy-communicator` is vendored directly, not an npm dependency: `src/server/communicator.js` (server) and `src/client/web/libs/communicator/communicator.js` (browser) are copies of the same protocol, and `src/server/mime.js` is a vendored copy of `easy-mime`. All three are re-licensed by the copyright holder as LGPL-3.0-or-later inside this AGPL-3.0 repo (see `## License` in `README.md`). The protocol implements a packetized, acknowledgment-based messaging layer over an abstract `sender` transport (send/invoke/receive, with time-sync and side-negotiation handshakes) that both the WebSocket signaling channel and, later, WebRTC data channels are expected to use.
+**Nothing serves `src/client/web` directly.** `compileClients()` builds into `./tmp`, and the HTTP server only ever serves that output, so a change to the web client is invisible until you rebuild it — run `npm run server -- --compile` (a boot with an existing `tmp/web/index.html` and no `--compile` skips the build entirely).
 
-### Config
+The build minifies with `UglifyJS` for JS and **hand-written character scanners in `building.js`** for CSS/HTML — there is no minifier dependency for those. A file that fails to minify is copied verbatim with a warning rather than failing the build. Output:
 
-The server config format (see `README.md` for the annotated example) is JSON with top-level `http` and `ws` sections; `processConf` in `server.js` is the authoritative source of truth for every accepted field, required vs. optional, and cross-field constraints (e.g. WS port can't collide with the HTTP redirect port, at least one of `http`/`ws` must be set). The default `conf/conf.json` certs/passwords in the README are for testing only and must be replaced for real deployments.
+- `tmp/web/` — the minified web client, plus a generated `config.json` and `version`. Both are listed in `GENERATED_FILES` and skipped when copying sources; `http.js` writes them again at boot with the download list of available client zips.
+- `tmp/desktop/<os>-<arch>.zip` — an Electron dist from `./bin/<os>-<arch>[.zip]` with its `default_app.asar` stripped, repacked with the web client, the Electron shell, the matching `src/client/native/<os>-<arch>` libs, and `config.json` under `resources/app` (`Electron.app/Contents/Resources/app` on darwin). A target is only built when both a `bin/` dist and a matching native lib folder exist.
+
+`./bin` and `./tmp` are gitignored (placeholder files aside) — the Electron dists are not in the repo.
+
+### Client (`src/client/web/`, `src/client/electron/`)
+
+Plain ES modules, no framework, no dev build step. `index.html` is a single-page shell holding every dialog/screen, toggled by `hide` classes and styled with the bundled `beercss`. `src/index.js` (~3800 lines) is essentially all client logic; `src/localization.js` holds the `en`/`hu` dictionary that drives `data-i18n` attributes. `config.json` is fetched at runtime and is server-generated — never hand-edit it.
+
+Layout: `index.html` and `index.css` at the web root, ES modules under `src/`, every image and sound under `media/`, vendored browser libs under `libs/`. Assets are referenced by root-absolute path (`/media/icon.svg`, `/src/index.js`) — the build preserves the source layout, so a path that resolves in the sources resolves in `tmp/web`. The Electron shell serves the same tree over `local://`, so its own asset paths (`media/icon-32.png` for the tray) must track any move too.
+
+The Electron shell registers a privileged `local://` protocol that serves the bundled web app from the app path (so the desktop client reuses the web client verbatim), exposes a small IPC API to the renderer, and manages the tray plus a single-instance lock. Note the two known holes in `main.js`: the `local://` handler does not guard against paths escaping the bundle, and `ignore-certificate-errors` is switched on for debugging.
+
+`src/client/native/<os>-<arch>/` holds prebuilt ffmpeg binaries and the `easy-control` input addon (ViGEmClient on Windows). Only `win32-x64` exists today, which is why it is the only buildable desktop target.
+
+### `model/`
+
+A `uv`-managed Python project (pinned to 3.14, Torch from a CUDA 13.2 index) for the video upscaling and frame-generation work: `upscale/`, `frame_gen_intra/`, `frame_gen_extra/`. Separate from the Node app; nothing in `src/` calls it yet.
+
+## Code conventions
+
+Follow the surrounding file: `"use strict"` at the top, imports grouped and commented as internal / third-party / first-party, `const name = function() {}` over declarations, bracket access with string keys for config and message objects (`conf["ws"]["port"]`), double quotes, 4-space indent, and a module footer exporting both named and default (`export { a, b }; export default { a, b };`).
+
+## Licensing
+
+AGPL-3.0-or-later. `src/server/communicator.js`, `src/server/mime.js`, and `src/client/web/libs/communicator/communicator.js` are vendored copies of the maintainer's own `easy-communicator` / `easy-mime`, re-licensed by the copyright holder as LGPL-3.0-or-later inside this repo — they are deliberately not npm dependencies, so edit the copies here and keep their SPDX headers. The server and browser `communicator.js` implement the same packetized, acknowledgment-based protocol over an abstract `sender` transport and must stay in sync; it backs the WebSocket signaling channel today and is intended for WebRTC data channels too.
 
 ## AI-assisted development
 
-This repo uses project-specific Claude Code skills/MCP servers referenced in `README.md`:
+This repo references (see `README.md`):
 - https://github.com/mattpocock/skills
 - https://github.com/DeusData/codebase-memory-mcp
 - https://playwright.dev/docs/getting-started-mcp

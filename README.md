@@ -41,7 +41,7 @@ npm run server -- --configuration=./config.json --compile --exit
 ```
 
 ## Server configuration
-server configuration file path: server/conf/conf.json
+server configuration file path: conf/config.json
 
 ```
 {

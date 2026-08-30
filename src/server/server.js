@@ -20,7 +20,7 @@ const main = async function(args) {
     // Help
     const helpFlag = argGet(args, "--help", false) || argGet(args, "-h", false);
     if (helpFlag) {
-        console.log("Usage: npm run server [-- --configuration=<path>] [-- --compile] [-- --exit] [-- --help] [-- --version]\n\n  -c, --configuration <path>  path to the JSON configuration file (default: ./conf/conf.json)\n  --compile                    force (re)compile the Electron client bundles from ./bin into ./tmp\n  --exit                       validate the configuration/compile and exit without starting listeners\n  -h, --help                   show this help message\n  -v, --version                show the project version");
+        console.log("Usage: npm run server [-- --configuration=<path>] [-- --compile] [-- --exit] [-- --help] [-- --version]\n\n  -c, --configuration <path>  path to the JSON configuration file (default: ./conf/config.json)\n  --compile                    force (re)compile the Electron client bundles from ./bin into ./tmp\n  --exit                       validate the configuration/compile and exit without starting listeners\n  -h, --help                   show this help message\n  -v, --version                show the project version");
         return;
     }
 
