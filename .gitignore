@@ -1,7 +1,13 @@
 node_modules
-tmp
-bin
-conf
+
+# runtime folders: keep the folder in the repo, ignore its contents
+tmp/*
+!tmp/TEMPORARY_FOLDER
+bin/*
+!bin/PUT_BIN_HERE
+conf/*
+!conf/PUT_CONFIG_HERE
+
 package-lock.json
 dev/electron
 
