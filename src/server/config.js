@@ -93,8 +93,13 @@ const httpSchema = {
 
 const wsSchema = {
     "type": "object",
-    "required": ["domain", "port", "key", "cert", "database", "webrtc", "email", "auth", "permissions"],
+    "required": ["domain", "port", "key", "cert", "database", "webrtc", "permissions"],
     "additionalProperties": false,
+    // sign-in sends emails, so the two are only valid together
+    "dependencies": {
+        "email": ["auth"],
+        "auth": ["email"]
+    },
     "properties": {
         // access domain
         "domain": {
@@ -152,7 +157,7 @@ const wsSchema = {
                 }
             }
         },
-        // email sending connection with smtp
+        // (optional) email sending connection with smtp, required by "auth"
         "email": {
             "type": "object",
             "required": ["host", "port", "user", "auth"],
@@ -206,7 +211,7 @@ const wsSchema = {
                 }
             }
         },
-        // Google auth keys
+        // (optional) Google auth keys, requires "email"
         "auth": {
             "type": "object",
             "minProperties": 1,

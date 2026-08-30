@@ -21,6 +21,9 @@ import { serverScriptPath, getVersion } from "./common.js";
 // the built web client is served from this subfolder of the compile path
 const WEB_DIR = "web";
 
+// the desktop client zips are downloaded from this subfolder of the compile path
+const DESKTOP_DIR = "desktop";
+
 // squeeze the zips as hard as deflate allows, they are downloaded over the wire
 const ZIP_OPTIONS = {
     "type": "uint8array",
@@ -28,8 +31,11 @@ const ZIP_OPTIONS = {
     "compressionOptions": {"level": 9}
 };
 
+// the client configuration the server generates for the built clients
+const CONF_FILE = "config.json";
+
 // written by the server at boot, never copied from the sources
-const GENERATED_FILES = new Set(["conf.js", "config.json", "version"]);
+const GENERATED_FILES = new Set([CONF_FILE, "version"]);
 
 const WHITESPACE = " \t\r\n\f";
 
@@ -267,8 +273,8 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
     return built;
 };
 
-// the client configuration script the built clients import
-const buildConfScript = async function(conf) {
+// the client configuration file the built clients read
+const buildConfFile = async function(conf) {
     const confData = {
         "ws": {}
     };
@@ -290,18 +296,18 @@ const buildConfScript = async function(conf) {
         }
         confData["ws"]["port"] = conf["ws"]["port"];
     }
-    return "\"use strict\";\nexport default " + JSON.stringify(confData) + ";";
+    return JSON.stringify(confData);
 };
 
 // write the built web client to <compilePath>/web
-const writeWeb = async function(webDestPath, webFiles, confScript) {
+const writeWeb = async function(webDestPath, webFiles, confFile) {
     await fs.mkdir(webDestPath, {"recursive": true});
     for (const file of webFiles) {
         const destPath = path.join(webDestPath, file["path"]);
         await fs.mkdir(path.dirname(destPath), {"recursive": true});
         await fs.writeFile(destPath, file["data"]);
     }
-    await fs.writeFile(path.join(webDestPath, "conf.js"), confScript);
+    await fs.writeFile(path.join(webDestPath, CONF_FILE), confFile);
 };
 
 // read the Electron dist into the destination zip, without its default app
@@ -340,14 +346,16 @@ const packDist = async function(zip, dist) {
     }
 };
 
-// compile the desktop clients into <compilePath>/<os>-<arch>.zip and the web
-// client into <compilePath>/web, minified and deflated to keep the transfer small
+// compile the desktop clients into <compilePath>/desktop/<os>-<arch>.zip and the
+// web client into <compilePath>/web, minified and deflated to keep the transfer small
 const compileClients = async function(conf) {
 
     // secure in/out folders
     const sourcePath = path.join("./bin");
     const compilePath = path.join("./tmp");
-    for (const dirPath of [sourcePath, compilePath]) {
+    const webDestPath = path.join(compilePath, WEB_DIR);
+    const desktopDestPath = path.join(compilePath, DESKTOP_DIR);
+    for (const dirPath of [sourcePath, compilePath, desktopDestPath]) {
         try {
             await fs.access(dirPath, fs.constants.R_OK | fs.constants.W_OK);
         } catch (error) {
@@ -359,7 +367,6 @@ const compileClients = async function(conf) {
             }
         }
     }
-    const webDestPath = path.join(compilePath, WEB_DIR);
 
     // exit if compile is not requested and the web client is already built
     let isBuilt = true;
@@ -374,13 +381,14 @@ const compileClients = async function(conf) {
 
     // remove the previously compiled clients (the folder also holds the placeholder)
     for (const file of await fs.readdir(compilePath)) {
-        if (file === WEB_DIR || path.extname(file).toLowerCase() === ".zip") {
+        if (file === WEB_DIR || file === DESKTOP_DIR || path.extname(file).toLowerCase() === ".zip") {
             await fs.rm(path.join(compilePath, file), {"recursive": true, "force": true});
         }
     }
+    await fs.mkdir(desktopDestPath, {"recursive": true});
 
-    // generate conf script
-    const confScript = await buildConfScript(conf);
+    // generate conf file
+    const confFile = await buildConfFile(conf);
 
     // minify the shared client parts once, they go into every dist
     process.stdout.write("\n    Building web client...    ");
@@ -388,7 +396,7 @@ const compileClients = async function(conf) {
     const electronPath = path.join(serverScriptPath, "client", "electron");
     const webFiles = await buildFolder(webPath, true, GENERATED_FILES);
     const electronFiles = await buildFolder(electronPath, false);
-    await writeWeb(webDestPath, webFiles, confScript);
+    await writeWeb(webDestPath, webFiles, confFile);
     process.stdout.write("done");
 
     // read available native libs
@@ -455,12 +463,12 @@ const compileClients = async function(conf) {
         }
 
         // add conf file
-        zip.file(zipPath(commonDest, "conf.js"), confScript);
+        zip.file(zipPath(commonDest, CONF_FILE), confFile);
 
         // save the zip file
         const buff = await zip.generateAsync(ZIP_OPTIONS);
         try {
-            await fs.writeFile(path.join(compilePath, target + ".zip"), buff);
+            await fs.writeFile(path.join(desktopDestPath, target + ".zip"), buff);
         } catch (error) {
             process.stdout.write("error");
             continue;

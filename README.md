@@ -82,7 +82,7 @@ server configuration file path: server/conf/conf.json
                 "stun:stun.l.google.com:19302"
             ]
         },
-        "email": {                      //email sending connections with smtp
+        "email": {                      //(optional) email sending connections with smtp, must be set together with "auth"
             "host": "mail.example.com",
             "port": 567,
             "user": "user@example.com",
@@ -97,7 +97,7 @@ server configuration file path: server/conf/conf.json
                 "refreshToken": "12345678"
             }
         },
-        "auth": {                       // Google auth keys
+        "auth": {                       //(optional) Google auth keys, must be set together with "email" (sign-in sends emails)
             "google": {
                 "clientId": "1234567890",
                 "clientSecret": "12345678"

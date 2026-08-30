@@ -15,7 +15,7 @@ import { binarySearch, getVersion } from "./common.js";
 
 const ServerHTTP = class {
     httpBasePath = "./tmp/web";
-    httpDownloadPath = "./tmp";
+    httpDownloadPath = "./tmp/desktop";
     httpServer = null;
     httpPort = 443;
     httpCache = new Map();
@@ -350,10 +350,8 @@ const ServerHTTP = class {
             confData["ws"]["domain"] = conf["http"]["domain"];
             confData["ws"]["port"] = conf["ws"]["port"];
         }
-        let confScript = "\"use strict\";";
-        confScript += "\n" + "export default " + JSON.stringify(confData) + ";";
         await fs.mkdir(this.httpBasePath, {"recursive": true});
-        await fs.writeFile(path.join(this.httpBasePath, "conf.js"), confScript);
+        await fs.writeFile(path.join(this.httpBasePath, "config.json"), JSON.stringify(confData));
         await fs.writeFile(path.join(this.httpBasePath, "version"), await getVersion());
 
         // create HTTP server request handler

@@ -6,11 +6,11 @@
 // internal dependencies
 import path from "node:path";
 import process from "node:process";
-import fs from "node:fs/promises";
 
 // first-party dependencies
-import { argGet } from "./common.js";
+import { argGet, getVersion } from "./common.js";
 import { loadConfig } from "./config.js";
+import { compileClients } from "./building.js";
 
 //
 // Main
@@ -26,9 +26,7 @@ const main = async function(args) {
     // Verison
     const versionFlag = argGet(args, "--version", false) || argGet(args, "-v", false);
     if (versionFlag) {
-        const packageJsonPath = path.resolve(import.meta.dirname, "../../package.json");
-        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
-        console.log(packageJson.version);
+        console.log(await getVersion());
         return;
     }
 
@@ -55,6 +53,23 @@ const main = async function(args) {
     conf["flags"]["exit"] = exitFlag;
     process.stdout.write("done\n");
 
-    // TODO: compile the clients (compileClients) and start the HTTP/WS servers
+    // Build the web client and the desktop distributables
+    process.stdout.write("Compiling clients...    ");
+    let isCompiled = false;
+    try {
+        isCompiled = await compileClients(conf);
+    } catch (error) {
+        process.stdout.write("failed\n");
+        console.error(error.message);
+        process.exitCode = 1;
+        return;
+    }
+    if (isCompiled === true) {
+        process.stdout.write("done\n");
+    } else {
+        process.stdout.write("skipped\n");
+    }
+
+    // TODO: start the HTTP/WS servers
 };
 main(process.argv);
