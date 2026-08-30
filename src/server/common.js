@@ -6,6 +6,7 @@
 // internal dependencies
 import path from "node:path";
 import fs from "node:fs/promises";
+import https from "node:https";
 
 //
 // Shared constants
@@ -51,6 +52,71 @@ const binarySearch = function(arr, x, getVal=function(el) {return el}) {
         }
     }
     return [false, start];
+};
+
+//
+// REST helpers
+//
+// read a text (JSON) resource of an HTTPS endpoint
+const httpsGetText = async function(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            const statusCode = res.statusCode;
+
+            if (statusCode !== 200) {
+                const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
+                //console.error(error.message);
+                // Consume response data to free up memory
+                res.resume();
+                reject(error);
+                return;
+            }
+
+            let rawData = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+                rawData += chunk;
+            });
+            res.on("end", () => {
+                resolve(rawData);
+            });
+        }).on("error", (error) => {
+            console.error(`Got error: ${error.message}`);
+            reject(error);
+        });
+    });
+};
+
+// read an image of an HTTPS endpoint into a data URI
+const httpsGetImage = async function(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            const statusCode = res.statusCode;
+            const contentType = res.headers["content-type"];
+
+            if (statusCode !== 200) {
+                const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
+                //console.error(error.message);
+                // Consume response data to free up memory
+                res.resume();
+                reject(error);
+                return;
+            }
+
+            let rawData = "";
+            res.setEncoding("base64");
+            res.on("data", (chunk) => {
+                rawData += chunk;
+            });
+            res.on("end", () => {
+                const data = "data:" + contentType + ";base64," + rawData;
+                resolve(data);
+            });
+        }).on("error", (error) => {
+            console.error(`Got error: ${error.message}`);
+            reject(error);
+        });
+    });
 };
 
 // search in parameters
@@ -99,5 +165,5 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
-export { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
-export default { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute };
+export { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
+export default { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };

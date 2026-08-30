@@ -87,66 +87,6 @@ const ServerHTTP = class {
         }
     };
 
-    // HTTP GET requests
-    async httpsGetText(url) {
-        return new Promise((resolve, reject) => {
-            https.get(url, (res) => {
-                const statusCode = res.statusCode;
-
-                if (statusCode !== 200) {
-                    const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
-                    //console.error(error.message);
-                    // Consume response data to free up memory
-                    res.resume();
-                    reject(error);
-                    return;
-                }
-
-                let rawData = "";
-                res.setEncoding("utf8");
-                res.on("data", (chunk) => {
-                    rawData += chunk;
-                });
-                res.on("end", () => {
-                    resolve(rawData);
-                });
-            }).on("error", (error) => {
-                console.error(`Got error: ${error.message}`);
-                reject(error);
-            });
-        });
-    };
-    async httpsGetImage(url) {
-        return new Promise((resolve, reject) => {
-            https.get(url, (res) => {
-                const statusCode = res.statusCode;
-                const contentType = res.headers["content-type"];
-
-                if (statusCode !== 200) {
-                    const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
-                    //console.error(error.message);
-                    // Consume response data to free up memory
-                    res.resume();
-                    reject(error);
-                    return;
-                }
-
-                let rawData = "";
-                res.setEncoding("base64");
-                res.on("data", (chunk) => {
-                    rawData += chunk;
-                });
-                res.on("end", () => {
-                    const data = "data:" + contentType + ";base64," + rawData;
-                    resolve(data);
-                });
-            }).on("error", (error) => {
-                console.error(`Got error: ${error.message}`);
-                reject(error);
-            });
-        });
-    };
-
     // bind a server to a port, a failed bind arrives as an "error" event and
     // would take the process down instead of reaching the caller of start()
     listen(server, port) {

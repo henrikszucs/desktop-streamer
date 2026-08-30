@@ -77,6 +77,10 @@ server configuration file path: server/conf/conf.json
             "pass": "root",
             "db": "desktop_streamer"
         },
+        "database": {                   //or a local SQLite file instead of a server
+            "type": "sqlite",
+            "file": "database.sqlite"   //path relative to this configuration file, it is created on the first boot
+        },
         "webrtc": {
             "iceServers": [
                 "stun:stun.l.google.com:19302"

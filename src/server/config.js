@@ -120,32 +120,49 @@ const wsSchema = {
         "cert": {
             "$ref": "#/definitions/text"
         },
-        // MySQL server connection
+        // database connection, a MySQL server or a local SQLite file
         "database": {
             "type": "object",
-            "required": ["type", "host", "port", "user", "pass", "db"],
-            "additionalProperties": false,
-            "properties": {
-                "type": {
-                    "type": "string",
-                    "enum": ["mysql"]
+            "required": ["type"],
+            "oneOf": [
+                {
+                    "required": ["host", "port", "user", "pass", "db"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "type": {
+                            "const": "mysql"
+                        },
+                        "host": {
+                            "$ref": "#/definitions/text"
+                        },
+                        "port": {
+                            "$ref": "#/definitions/port"
+                        },
+                        "user": {
+                            "type": "string"
+                        },
+                        "pass": {
+                            "type": "string"
+                        },
+                        "db": {
+                            "$ref": "#/definitions/text"
+                        }
+                    }
                 },
-                "host": {
-                    "$ref": "#/definitions/text"
-                },
-                "port": {
-                    "$ref": "#/definitions/port"
-                },
-                "user": {
-                    "type": "string"
-                },
-                "pass": {
-                    "type": "string"
-                },
-                "db": {
-                    "$ref": "#/definitions/text"
+                {
+                    "required": ["file"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "type": {
+                            "const": "sqlite"
+                        },
+                        // database file path, relative to the configuration file
+                        "file": {
+                            "$ref": "#/definitions/text"
+                        }
+                    }
                 }
-            }
+            ]
         },
         "webrtc": {
             "type": "object",
@@ -311,7 +328,8 @@ const checkConstraints = (config) => {
     const http = config["http"];
     const ws = config["ws"];
 
-    // check port collisions
+    // check port collisions, the WS server may share the HTTPS port with the
+    // HTTP server (it only adds the upgrade to it), every other pair must differ
     const ports = [];
     if (typeof http === "object") {
         ports.push(["HTTP port", http["port"]]);
@@ -319,7 +337,7 @@ const checkConstraints = (config) => {
             ports.push(["HTTP redirect port", http["redirect"]]);
         }
     }
-    if (typeof ws === "object") {
+    if (typeof ws === "object" && ws["port"] !== http?.["port"]) {
         ports.push(["WS port", ws["port"]]);
     }
     for (let i = 0, length = ports.length; i < length; i++) {
@@ -343,6 +361,12 @@ const checkConstraints = (config) => {
 
 // read the TLS material of every configured server, the paths are relative to
 // the configuration file and the servers need the contents, not the paths
+const loadPaths = (config, confDir) => {
+    if (typeof config["ws"] === "object" && config["ws"]["database"]["type"] === "sqlite") {
+        config["ws"]["database"]["file"] = setAbsolute(config["ws"]["database"]["file"], confDir);
+    }
+};
+
 const loadCertificates = async (config, confDir) => {
     for (const section of ["http", "ws"]) {
         if (typeof config[section] !== "object") {
@@ -399,8 +423,12 @@ const loadConfig = async (confPath) => {
         throw new Error("Invalid configuration file: " + confPath + "\n  " + constraintError);
     }
 
+    // resolve the paths the servers open, they are relative to this file
+    const confDir = path.dirname(confPath);
+    loadPaths(config, confDir);
+
     // read the certificates the servers listen with
-    await loadCertificates(config, path.dirname(confPath));
+    await loadCertificates(config, confDir);
 
     return config;
 };
