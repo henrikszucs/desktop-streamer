@@ -32,21 +32,6 @@
                 "stun:stun.l.google.com:19302"
             ]
         },
-        "email": {
-            "host": "localhost",
-            "port": 587,
-            "user": "noreply@localhost",
-            "auth": {
-                "type": "password",
-                "password": "12345678"
-            }
-        },
-        "auth": {
-            "google": {
-                "clientId": "000000000000-localdevplaceholder.apps.googleusercontent.com",
-                "clientSecret": "local-dev-placeholder"
-            }
-        },
         "permissions": {
             "guestAllowShare": true,
             "guestAllowJoin": true,
