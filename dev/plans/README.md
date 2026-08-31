@@ -3,6 +3,8 @@
 Work that is designed but not implemented yet. One file per unit of work, each
 one written so it can be picked up on its own.
 
+## WS server
+
 Most of what is here was cut out of `src/server/ws.js` when the WS server was
 wired into `src/server/server.js`. That file was reduced to the parts that make
 a connection usable at all - the socket lifecycle, the session id of a
@@ -10,7 +12,7 @@ connection, the connection test and the version check - so the server can boot
 end to end. Everything else was removed rather than left half-wired.
 
 **The removed code is not lost.** It lives in git at commit `6c0d18a`, and every
-plan below names the line range it came from:
+WS plan below names the line range it came from:
 
 ```
 git show 6c0d18a:src/server/ws.js
@@ -20,7 +22,7 @@ Treat that code as a reference, not as something to paste back. It was written
 against an older configuration shape and never ran against the current schema
 (see `ws-client-config.md`), so parts of it are known broken.
 
-## What `ws.js` answers today
+### What `ws.js` answers today
 
 | type | request | answer |
 | --- | --- | --- |
@@ -30,7 +32,7 @@ against an older configuration shape and never ran against the current schema
 
 Anything else is logged and aborted.
 
-## Plans
+### WS plans
 
 | plan | what it restores | depends on |
 | --- | --- | --- |
@@ -42,3 +44,13 @@ Anything else is logged and aborted.
 Suggested order: client config, database, accounts, pairing/joins. The
 configuration shape has to be settled first because every later plan reads from
 it, and nothing else can be tested while the server refuses to start.
+
+## Client
+
+| plan | what it changes | depends on |
+| --- | --- | --- |
+| [client-ui-modules.md](client-ui-modules.md) | splits the 3805-line `src/client/web/src/index.js` into modules that load when the UI needs them | - |
+
+Independent of the WS plans, and staged in four phases so it can be done a piece
+at a time. Phase 3 wants the SPA fallback in `src/server/http.js` narrowed first,
+which is described in that plan.
