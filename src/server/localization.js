@@ -32,10 +32,10 @@ const get = (key, lang=curLang) => {
 };
 
 const translateHTML = (lang=curLang) => {
-    const elements = document.querySelectorAll("[data-i18n]");
+    const elements = document.querySelectorAll("[data-localization]");
     for (let i = 0; i < elements.length; i++) {
         const el = elements[i];
-        const key = el.getAttribute("data-i18n");
+        const key = el.getAttribute("data-localization");
         const text = get(key, lang);
         if (text) {
             if (el.placeholder !== undefined) {

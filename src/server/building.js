@@ -6,14 +6,15 @@
 // internal dependencies
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import process from "node:process";
 
 // third-party dependencies
-import JSZip from "jszip";
 import UglifyJS from "uglify-js";
 
 // first-party dependencies
 import { serverScriptPath, getVersion } from "./common.js";
+import { readZip, writeZip } from "./zip.js";
 
 //
 // Constants
@@ -25,11 +26,7 @@ const WEB_DIR = "web";
 const DESKTOP_DIR = "desktop";
 
 // squeeze the zips as hard as deflate allows, they are downloaded over the wire
-const ZIP_OPTIONS = {
-    "type": "uint8array",
-    "compression": "DEFLATE",
-    "compressionOptions": {"level": 9}
-};
+const ZIP_LEVEL = 9;
 
 // the client configuration the server generates for the built clients
 const CONF_FILE = "config.json";
@@ -310,25 +307,26 @@ const writeWeb = async function(webDestPath, webFiles, confFile) {
     await fs.writeFile(path.join(webDestPath, CONF_FILE), confFile);
 };
 
-// read the Electron dist into the destination zip, without its default app
-const packDist = async function(zip, dist) {
+// the Electron dist as zip entries, without its default app
+//
+// A dist that is already a zip is taken over entry by entry with its bytes still
+// deflated: it is the bulk of the output, and deflating it again would cost more
+// than everything else the build does put together.
+const packDist = async function(dist) {
     let asarFile = path.join("resources", "default_app.asar");
     if (dist["os"] === "darwin") {
         asarFile = path.join("Electron.app", "Contents", "Resources", "default_app.asar");
     }
 
+    const entries = [];
     if (dist["isZip"] === true) {
-        const distZip = await JSZip.loadAsync(await fs.readFile(dist["path"]));
-        distZip.remove(zipPath(asarFile));
-        for (const file of Object.keys(distZip.files)) {
-            const entry = distZip.files[file];
-            if (entry.dir === true) {
-                zip.folder(file);
-            } else {
-                zip.file(file, await entry.async("uint8array"));
+        for (const entry of readZip(await fs.readFile(dist["path"]))) {
+            if (entry["name"] === zipPath(asarFile)) {
+                continue;
             }
+            entries.push(entry);
         }
-        return;
+        return entries;
     }
 
     const files = await fs.readdir(dist["path"], {"recursive": true});
@@ -338,11 +336,26 @@ const packDist = async function(zip, dist) {
     }
     for (const file of files) {
         const filePath = path.join(dist["path"], file);
-        if ((await fs.stat(filePath)).isDirectory()) {
-            zip.folder(zipPath(file));
+        const stat = await fs.stat(filePath);
+        if (stat.isDirectory()) {
+            entries.push({"name": zipPath(file) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
         } else {
-            zip.file(zipPath(file), await fs.readFile(filePath));
+            entries.push({"name": zipPath(file), "path": filePath, "mode": stat.mode, "date": stat.mtime});
         }
+    }
+    return entries;
+};
+
+// stream one dist zip to disk, the whole thing never stands in memory at once
+const writeDistZip = async function(destPath, entries) {
+    const stream = createWriteStream(destPath);
+    try {
+        await writeZip(stream, entries, ZIP_LEVEL);
+    } finally {
+        await new Promise(function(resolve, reject) {
+            stream.once("error", reject);
+            stream.end(resolve);
+        });
     }
 };
 
@@ -435,9 +448,8 @@ const compileClients = async function(conf) {
         const target = dist["os"] + "-" + dist["arch"];
         process.stdout.write("\n    Compiling " + target + "...    ");
 
-        // create destination zip from the electron dist
-        const zip = new JSZip();
-        await packDist(zip, dist);
+        // the electron dist is the base of the destination zip
+        const entries = await packDist(dist);
 
         // go select destination to common parts
         let commonDest = path.join("resources", "app");
@@ -447,30 +459,30 @@ const compileClients = async function(conf) {
 
         // copy the built web and electron files
         for (const file of [...webFiles, ...electronFiles]) {
-            zip.file(zipPath(commonDest, file["path"]), file["data"]);
+            entries.push({"name": zipPath(commonDest, file["path"]), "data": file["data"]});
         }
 
-        // copy native lib files
+        // copy native lib files, read one by one while they are deflated
         const nativeLibPath = path.join(nativePath, target);
         const nativeLibFiles = await fs.readdir(nativeLibPath, {"recursive": true});
         for (const file of nativeLibFiles) {
             const filePath = path.join(nativeLibPath, file);
-            if ((await fs.stat(filePath)).isDirectory()) {
-                zip.folder(zipPath(commonDest, file));
+            const stat = await fs.stat(filePath);
+            if (stat.isDirectory()) {
+                entries.push({"name": zipPath(commonDest, file) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
             } else {
-                zip.file(zipPath(commonDest, file), await fs.readFile(filePath));
+                entries.push({"name": zipPath(commonDest, file), "path": filePath, "mode": stat.mode, "date": stat.mtime});
             }
         }
 
         // add conf file
-        zip.file(zipPath(commonDest, CONF_FILE), confFile);
+        entries.push({"name": zipPath(commonDest, CONF_FILE), "data": Buffer.from(confFile, "utf8")});
 
         // save the zip file
-        const buff = await zip.generateAsync(ZIP_OPTIONS);
         try {
-            await fs.writeFile(path.join(desktopDestPath, target + ".zip"), buff);
+            await writeDistZip(path.join(desktopDestPath, target + ".zip"), entries);
         } catch (error) {
-            process.stdout.write("error");
+            process.stdout.write("error (" + error.message + ")");
             continue;
         }
         process.stdout.write("done");

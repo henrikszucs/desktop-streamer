@@ -1,0 +1,26 @@
+/* the room screen */
+
+/* Room dialog */
+.room-layout {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    max-height: 100vh;
+}
+
+.room-layout > :nth-child(1) {
+    text-align: center;
+    flex-grow: 1;
+    display: flex;
+    min-height: 0;
+    min-width: 0;
+}
+
+.room-layout > :nth-child(1) > video {
+    width: 100%;
+    aspect-ratio: 16/9;
+}
+
+.room-layout > :nth-child(2) {
+    flex-shrink: 0;
+}

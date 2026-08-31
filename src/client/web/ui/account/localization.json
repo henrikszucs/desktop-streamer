@@ -1,0 +1,26 @@
+{
+    "account": {
+        "title": {
+            "en": "Account settings",
+            "hu": "Fiók beállítások"
+        },
+        "information": {
+            "btn": {
+                "en": "Information",
+                "hu": "Információk"
+            }
+        },
+        "sessions": {
+            "btn": {
+                "en": "Sessions",
+                "hu": "Munkamenetek"
+            }
+        },
+        "delete": {
+            "btn": {
+                "en": "Delete",
+                "hu": "Törlés"
+            }
+        }
+    }
+}

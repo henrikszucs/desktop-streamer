@@ -1,0 +1,30 @@
+<div id="account-delete" class="hide">
+    <h5 class="small-margin" data-localization="account.delete.title">Delete account</h5>
+    <div class="small-margin">
+        <p data-localization="account.delete.warning">Deleting your account will remove all your data from our servers. This action is irreversible.</p>
+        <div class="delete-send">
+            <button class="tertiary" id="btn-account-delete-send">
+                <i>send</i>
+                <span data-localization="account.delete.send-key">Send delete key</span>
+            </button>
+            <span class="tertiary-text delete-send-result hide" data-localization="account.delete.send-success" id="account-delete-send-success">You will receive a delete key in your email.</span>
+            <span class="error-text delete-send-result hide" data-localization="account.delete.send-error" id="account-delete-send-error">Error sending delete key. Please try again later.</span>
+        </div>
+        <div class="delete-confirm-field">
+            <div>
+                <div class="field label border round">
+                    <input type="text" id="account-delete-key"/>
+                    <label data-localization="account.delete.delete-key">Delete key</label>
+                </div>
+                <div>
+                    <button class="error" id="btn-account-delete-confirm">
+                        <i>delete</i>
+                        <span data-localization="account.delete.confirm">Delete my account</span>
+                    </button>
+                </div>
+            </div>
+            <span class="error-text" data-localization="account.delete.confirm-error" id="account-delete-confirm-error">Error confirming delete key. Please try with other code.</span>
+        </div>
+        
+    </div>
+</div>

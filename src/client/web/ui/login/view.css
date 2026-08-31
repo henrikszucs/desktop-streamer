@@ -1,0 +1,7 @@
+/* the login screen */
+
+/* Login */
+#google-login {
+    display: flex;
+    justify-content: center;
+}

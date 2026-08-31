@@ -1,0 +1,48 @@
+/* the control settings */
+
+/* Control style */
+
+.mouse-share {
+    display: flex;
+    justify-content: space-between;
+    flex-direction: column;
+}
+
+.shortcut-box {
+    display: flex;
+    justify-content: space-between;
+}
+
+@media only screen and (max-width: 500px) {
+    .shortcut-box {
+        flex-wrap: wrap;
+    }
+}
+
+.shortcut-box-sub {
+    display: flex;
+}
+
+.shortcut-delay {
+    width: 50%;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+@media only screen and (max-width: 500px) {
+    .shortcut-delay {
+        width: 100%;
+        width: -moz-available;
+        width: -webkit-fill-available;
+    }
+}
+
+.shortcut-key {
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.shortcut-delete {
+    min-width: fit-content;
+    align-self: center;
+}

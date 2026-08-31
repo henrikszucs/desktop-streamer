@@ -1,0 +1,70 @@
+{
+    "settings": {
+        "audio": {
+            "title": {
+                "en": "Audio settings",
+                "hu": "Hang beállítások"
+            },
+            "decoder": {
+                "title": {
+                    "en": "Audio play",
+                    "hu": "Hang lejátszás"
+                },
+                "supported": {
+                    "en": "Low latency play supported",
+                    "hu": "Alacsony késleltetésű lejátszás támogatott"
+                },
+                "unsupported": {
+                    "en": "Low latency play not supported",
+                    "hu": "Alacsony késleltetésű lejátszás nem támogatott"
+                }
+            },
+            "system": {
+                "title": {
+                    "en": "System audio share",
+                    "hu": "Rendszer hang megosztás"
+                },
+                "supported": {
+                    "en": "Fully supported",
+                    "hu": "Teljesen támogatott"
+                },
+                "partial": {
+                    "en": "Only manual share supported",
+                    "hu": "Csak manuális megosztás támogatott"
+                },
+                "unsupported": {
+                    "en": "System audio share not supported",
+                    "hu": "A rendszer hang megosztás nem támogatott"
+                }
+            },
+            "speaker": {
+                "title": {
+                    "en": "Speakers",
+                    "hu": "Hangszórók"
+                },
+                "test1": {
+                    "en": "Test sound 1",
+                    "hu": "Teszt hang 1"
+                },
+                "test2": {
+                    "en": "Test sound 2",
+                    "hu": "Teszt hang 2"
+                },
+                "test3": {
+                    "en": "Test sound 3",
+                    "hu": "Teszt hang 3"
+                }
+            },
+            "mic": {
+                "title": {
+                    "en": "Microphones",
+                    "hu": "Mikrofon"
+                },
+                "notfound": {
+                    "en": "No Microphone",
+                    "hu": "Nincs mikrofon"
+                }
+            }
+        }
+    }
+}

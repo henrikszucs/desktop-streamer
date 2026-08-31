@@ -1,0 +1,26 @@
+<dialog class="multicolumn-dialog" id="dialog-account-settings">
+    <nav>
+        <h5 data-localization="account.title">Account settings</h5>
+        <div class="max"></div>
+        <button class="circle transparent" id="btn-account-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <div class="no-border">
+        <div>
+            <button class="primary small-margin" id="btn-account-information" data-window="information">
+                <i>info</i>
+                <span class="l m" data-localization="account.information.btn">Information</span>
+            </button>
+            <button class="fill small-margin" id="btn-account-sessions" data-window="sessions">
+                <i>devices</i>
+                <span class="l m" data-localization="account.sessions.btn">Sessions</span>
+            </button>
+            <button class="fill small-margin" id="btn-account-delete" data-window="delete">
+                <i>delete</i>
+                <span class="l m" data-localization="account.delete.btn">Delete</span>
+            </button>
+        </div>
+        <div id="account-windows"></div>
+    </div>
+</dialog>

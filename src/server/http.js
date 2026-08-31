@@ -13,6 +13,9 @@ import https from "node:https";
 import { getMIMEType } from "./mime.js";
 import { binarySearch, getVersion } from "./common.js";
 
+// the folders holding the client assets, everything else is an SPA route
+const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
+
 const ServerHTTP = class {
     httpBasePath = "./tmp/web";
     httpDownloadPath = "./tmp/desktop";
@@ -41,7 +44,7 @@ const ServerHTTP = class {
                 "lastModified": date.toUTCString(),
                 "type": getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
-                "etag": path.basename(src) + String(stats.size),
+                "etag": "\"" + path.basename(src) + String(stats.size) + "\"",
                 "buffer": data
             };
         } catch (error) {
@@ -60,26 +63,23 @@ const ServerHTTP = class {
             const date = new Date(stats.mtimeMs);
             const stream = data.createReadStream();
 
-            //close if end or inactive
+            //close when finished, destroyed or inactive
             let timeOut = -1;
+            const closeHandle = function() {
+                clearTimeout(timeOut);
+                data?.close?.()?.catch?.(function() {});
+            };
             stream.on("data", function() {
-                //console.log("read");
                 clearTimeout(timeOut);
-                timeOut = setTimeout(function() {
-                    data?.close?.();
-                }, 10000);
+                timeOut = setTimeout(closeHandle, 10000);
             });
-            stream.on("end", function() {
-                //console.log("end");
-                clearTimeout(timeOut);
-                data?.close?.();
-            });
+            stream.once("close", closeHandle);
 
             return {
                 "lastModified": date.toUTCString(),
                 "type": getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
-                "etag": path.basename(src) + String(stats.size),
+                "etag": "\"" + path.basename(src) + String(stats.size) + "\"",
                 "stream": stream
             };
         } catch (error) {
@@ -126,6 +126,49 @@ const ServerHTTP = class {
         return full;
     };
 
+    // the SPA fallback is for routes only: a missing asset has to stay a 404, or
+    // a mistyped import() specifier arrives as index.html with a text/html type
+    // and fails with an opaque MIME error instead of a plain missing file
+    isRoutePath(filePath) {
+        if (filePath === "") {
+            return true;
+        }
+        if (path.extname(filePath) !== "") {
+            return false;
+        }
+        return ASSET_FOLDERS.has(filePath.split("/")[0]) === false;
+    };
+
+    // the client already holds this exact version of the file
+    isNotModified(req, fileData) {
+        const noneMatch = req.headers["if-none-match"];
+        if (typeof noneMatch === "string") {
+            for (const tag of noneMatch.split(",")) {
+                if (tag.trim() === fileData["etag"] || tag.trim() === "*") {
+                    return true;
+                }
+            }
+            return false;   // an explicit ETag that does not match wins over the date
+        }
+        const since = Date.parse(req.headers["if-modified-since"]);
+        if (Number.isNaN(since) === false) {
+            return Date.parse(fileData["lastModified"]) <= since;
+        }
+        return false;
+    };
+
+    // the headers every answer carries, so both handlers cache the same way
+    fileHeaders(fileData) {
+        return {
+            //"Content-Security-Policy": "default-src 'self'",
+            "Cache-Control": "no-cache",
+            "Last-Modified": fileData["lastModified"],
+            "Content-Length": fileData["size"],
+            "Content-Type": fileData["type"],
+            "ETag": fileData["etag"]
+        };
+    };
+
     
 
     async buildChache() {
@@ -149,7 +192,7 @@ const ServerHTTP = class {
                     "lastModified": date.toUTCString(),
                     "type": getMIMEType(path.extname(src)) || "text/plain",
                     "size": stats.size,
-                    "etag": path.basename(src) + String(stats.size),
+                    "etag": "\"" + path.basename(src) + String(stats.size) + "\"",
                     "accesses": new Array(this.httpCacheUpdateLength*2).fill(0),
                     "accessed": 0,
                 });
@@ -218,8 +261,8 @@ const ServerHTTP = class {
                 break; // found
             }
         }
-        // get default file if not found
-        if (typeof fileData === "undefined") {
+        // a route falls back to the shell, a missing asset stays missing
+        if (typeof fileData === "undefined" && this.isRoutePath(filePath) === true) {
             fileData = await this.getFileDataStream(path.join(basePaths[0], "index.html"));
         }
         if (typeof fileData === "undefined") {
@@ -227,23 +270,22 @@ const ServerHTTP = class {
             res.end();
             return;
         }
-        res.writeHead(200, {
-            //"Content-Security-Policy": "connect-src https://accounts.google.com/gsi/",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Last-Modified": fileData["lastModified"],
-            "Content-Length": fileData["size"],
-            "Content-Type": fileData["type"],
-            "ETag": fileData["etag"]
-        });
+        if (this.isNotModified(req, fileData) === true) {
+            fileData["stream"].destroy();
+            res.writeHead(304, this.fileHeaders(fileData));
+            res.end();
+            return;
+        }
+        res.writeHead(200, this.fileHeaders(fileData));
         fileData["stream"].pipe(res);
     };
 
     httpsRequestHandlerWithCache = async (req, res) => {
         const filePath = this.requestPath(req.url);
 
-        // check existence of file
+        // check existence of file, a route falls back to the shell
         let fileData = this.httpCache.get(filePath);
-        if (typeof fileData === "undefined") {
+        if (typeof fileData === "undefined" && this.isRoutePath(filePath) === true) {
             fileData = this.httpCache.get("index.html");
         }
         if (typeof fileData === "undefined") {
@@ -256,6 +298,12 @@ const ServerHTTP = class {
         fileData["accesses"][0] += 1;
         fileData["accessed"] += 1;
 
+        if (this.isNotModified(req, fileData) === true) {
+            res.writeHead(304, this.fileHeaders(fileData));
+            res.end();
+            return;
+        }
+
         // check if file is in memory cache
         if (typeof fileData["buffer"] === "undefined") {
             // read from disk if not in memory
@@ -265,20 +313,10 @@ const ServerHTTP = class {
                 res.end();
                 return;
             }
-            res.writeHead(200, {
-                //"Content-Security-Policy": "default-src 'self'",
-                "Last-Modified": fileData["lastModified"],
-                "Content-Length": fileData["size"],
-                "Content-Type": fileData["type"]
-            });
+            res.writeHead(200, this.fileHeaders(fileData));
             file["stream"].pipe(res);
         } else {
-            res.writeHead(200, {
-                //"Content-Security-Policy": "default-src 'self'",
-                "Last-Modified": fileData["lastModified"],
-                "Content-Length": fileData["size"],
-                "Content-Type": fileData["type"]
-            });
+            res.writeHead(200, this.fileHeaders(fileData));
             res.write(fileData["buffer"]);
             res.end();
         }

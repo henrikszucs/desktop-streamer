@@ -1,0 +1,78 @@
+<main class="room-layout hide" id="screen-room">
+    <div>
+        <video id="video" playsinline></video>
+    </div>
+    <nav class="center-align tiny-space">
+        <button class="extra round circle error">
+                <i>close</i>
+            </button>
+        <nav class="toolbar">
+            <a>
+                <i>videocam_off</i>
+                <menu class="top">
+                    <li>
+                        Resoulution
+                        <menu>
+                            <li>360p</li>
+                            <li>480p</li>
+                            <li>720p</li>
+                            <li>1080p</li>
+                        </menu>
+                    </li>
+                    <li>
+                        Framerate
+                        <menu>
+                            <li>25</li>
+                            <li>30</li>
+                            <li>60</li>
+                        </menu>
+                    </li>
+                    <li>
+                        Enchanting
+                        <menu>
+                            <li>No enchante</li>
+                            <li>AI upscale</li>
+                        </menu>
+                    </li>
+                </menu>
+            </a>
+            <a>
+                <i>volume_off</i>
+            </a>
+            <a>
+                <i>hand_gesture_off</i>
+            </a>
+            <a>
+                <i>fullscreen</i>
+            </a>
+        </nav>
+    </nav>
+</main>
+
+<dialog class="" id="dialog-room-exit">
+    <nav>
+        <h5>Exit from room</h5>
+        <div class="max"></div>
+        <button class="circle transparent" id="btn-room-exit-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <div class="no-border">
+        <p>Do you want to close from this room?</p>
+        <div class="space"></div>
+        <div class="dialog-room-exit-buttons">
+            <button class="tertiary round" id="btn-room-exit-cancel">
+                <i>close</i>
+                <span>Cancel</span>
+            </button>
+            <button class="tertiary round" id="btn-room-exit-exit">
+                <i>close</i>
+                <span>Exit</span>
+            </button>
+            <button class="primary round" id="btn-room-exit-terminate">
+                <i>check</i>
+                <span>Exit and close</span>
+            </button>
+        </div>
+    </div>
+</dialog>

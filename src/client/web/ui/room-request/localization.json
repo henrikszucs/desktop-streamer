@@ -1,0 +1,22 @@
+{
+    "new": {
+        "share": {
+            "request-title": {
+                "en": "Join request",
+                "hu": "Csatlakozási kérelem"
+            },
+            "request-long": {
+                "en": "Share for long term",
+                "hu": "Hosszú távú megosztás"
+            },
+            "accept": {
+                "en": "Accept",
+                "hu": "Elfogadás"
+            },
+            "reject": {
+                "en": "Reject",
+                "hu": "Elutasítás"
+            }
+        }
+    }
+}

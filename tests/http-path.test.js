@@ -21,9 +21,9 @@ const base = path.resolve(basePath);
 // requestPath
 //
 test("requestPath drops the query and the hash", () => {
-    assert.equal(serverHTTP.requestPath("/src/index.js?v=2"), "src/index.js");
-    assert.equal(serverHTTP.requestPath("/src/index.js#top"), "src/index.js");
-    assert.equal(serverHTTP.requestPath("/src/index.js?v=2#top"), "src/index.js");
+    assert.equal(serverHTTP.requestPath("/src/router.js?v=2"), "src/router.js");
+    assert.equal(serverHTTP.requestPath("/src/router.js#top"), "src/router.js");
+    assert.equal(serverHTTP.requestPath("/src/router.js?v=2#top"), "src/router.js");
 });
 
 test("requestPath strips every leading slash", () => {
@@ -85,8 +85,66 @@ test("a request cannot reach outside the served folder", () => {
     }
 });
 
+//
+// isRoutePath
+//
+// the SPA fallback answers a route with index.html, a missing asset has to stay
+// a 404 or a mistyped import() specifier arrives as HTML and fails with a MIME
+// error instead of a plain missing file
+test("isRoutePath accepts the paths the client routes on", () => {
+    for (const url of ["", "new", "downloads", "devices", "room/abc123", "login"]) {
+        assert.equal(serverHTTP.isRoutePath(url), true, "should be a route: " + url);
+    }
+});
+
+test("isRoutePath refuses anything with a file extension", () => {
+    for (const url of ["index.html", "favicon.ico", "some/where/thing.js", "media/icon.svg"]) {
+        assert.equal(serverHTTP.isRoutePath(url), false, "should not be a route: " + url);
+    }
+});
+
+test("isRoutePath refuses the folders holding the client assets", () => {
+    for (const url of ["ui/devices", "src/nothing", "libs/beercss", "media/nothing"]) {
+        assert.equal(serverHTTP.isRoutePath(url), false, "should not be a route: " + url);
+    }
+});
+
+//
+// isNotModified
+//
+const fileData = {"etag": "\"index.html1234\"", "lastModified": "Wed, 21 Oct 2015 07:28:00 GMT"};
+
+test("isNotModified answers a matching ETag", () => {
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-none-match": fileData["etag"]}}, fileData), true);
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-none-match": "\"other5\", " + fileData["etag"]}}, fileData), true);
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-none-match": "*"}}, fileData), true);
+});
+
+test("isNotModified refuses an ETag that does not match", () => {
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-none-match": "\"index.html9\""}}, fileData), false);
+
+    // an explicit ETag wins over the date, the file changed back to the same size
+    assert.equal(serverHTTP.isNotModified({
+        "headers": {"if-none-match": "\"index.html9\"", "if-modified-since": fileData["lastModified"]}
+    }, fileData), false);
+});
+
+test("isNotModified falls back to the date when there is no ETag", () => {
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-modified-since": fileData["lastModified"]}}, fileData), true);
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-modified-since": "Thu, 22 Oct 2015 07:28:00 GMT"}}, fileData), true);
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-modified-since": "Tue, 20 Oct 2015 07:28:00 GMT"}}, fileData), false);
+});
+
+test("isNotModified sends the file when the request asks for nothing", () => {
+    assert.equal(serverHTTP.isNotModified({"headers": {}}, fileData), false);
+    assert.equal(serverHTTP.isNotModified({"headers": {"if-modified-since": "not a date"}}, fileData), false);
+});
+
+//
+// the two together, the way the request handler runs them
+//
 test("an ordinary request still resolves", () => {
-    const attempts = ["/", "/index.html", "/src/index.js?v=1", "/media/icon.svg", "///media/icon.svg"];
+    const attempts = ["/", "/index.html", "/src/router.js?v=1", "/media/icon.svg", "///media/icon.svg"];
     for (const url of attempts) {
         const resolved = serverHTTP.resolveInBase(basePath, serverHTTP.requestPath(url));
         assert.notEqual(resolved, undefined, "should have resolved: " + url);

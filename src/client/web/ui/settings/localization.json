@@ -1,0 +1,38 @@
+{
+    "settings": {
+        "title": {
+            "en": "Settings",
+            "hu": "Beállítások"
+        },
+        "appearance": {
+            "btn": {
+                "en": "Appearance",
+                "hu": "Megjelenés"
+            }
+        },
+        "audio": {
+            "btn": {
+                "en": "Audio",
+                "hu": "Hang"
+            }
+        },
+        "video": {
+            "btn": {
+                "en": "Video",
+                "hu": "Videó"
+            }
+        },
+        "control": {
+            "btn": {
+                "en": "Control",
+                "hu": "Irányítás"
+            }
+        },
+        "about": {
+            "btn": {
+                "en": "About",
+                "hu": "Névjegy"
+            }
+        }
+    }
+}

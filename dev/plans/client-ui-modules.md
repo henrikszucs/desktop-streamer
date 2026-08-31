@@ -92,35 +92,40 @@ must stop doing is letting `main()` reach into their fields.
 
 ## Target layout
 
+This is what landed, with the folder names it landed under: the core sits
+directly in `src/` rather than in a `core/` inside it, `ui/` is a sibling of
+`src/` at the web root, and the strings of a module are a `localization.json`
+the registry fetches rather than a script the module imports.
+
 ```
 src/client/web/
     index.html                  the shell: nav, overlay, loading dialog, mount points
     index.css                   shell styles and the shared bits
+    index.js                    boot, then hand off to the router
+    config.json                 server-generated, fetched at runtime
     src/
-        index.js                boot, then hand off to the router
-        core/
-            env.js              browser and OS detection
-            conf.js             config.json fetch + the IndexedDB local config
-            desktop.js          the Electron require() block, loaded only under Electron
-            server.js           the Server class
-            i18n.js             localization core (get, translate, putParameters)
-            registry.js         the lazy loader and the module cache
-            router.js           path to module, history, popstate
-            view.js             the View base class
-        ui/
-            new/                index.js, view.html, view.css, i18n.js
-            downloads/
-            login/
-            services/
-            devices/
-            shares/
-            room/
-            settings/           its five sub-windows are modules of their own
-            account/
-            menu/
-            room-create/
-            room-request/
-            room-joining/
+        env.js                  browser and OS detection
+        conf.js                 config.json fetch + the IndexedDB local config
+        desktop.js              the Electron require() block, loaded only under Electron
+        server.js               the Server class
+        localization.js         localization core (get, translate, putParameters)
+        registry.js             the lazy loader and the module cache
+        router.js               path to module, history, popstate
+        view.js                 the View base class
+    ui/
+        new/                index.js, view.html, view.css, localization.json
+        downloads/
+        login/
+        services/
+        devices/
+        shares/
+        room/
+        settings/           its five sub-windows are modules of their own
+        account/
+        menu/
+        room-create/
+        room-request/
+        room-joining/
 ```
 
 The split follows what is already there - the seventeen classes, and the

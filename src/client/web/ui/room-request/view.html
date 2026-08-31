@@ -1,0 +1,22 @@
+<dialog class="" id="dialog-room-request">
+    <h5 data-localization="new.share.request-title">Join request</h5>
+    <div class="space"></div>
+    <p id="dialog-room-request-info"></p>
+    <div class="space"></div>
+    <label class="checkbox" id="btn-request-remember-label">
+        <input type="checkbox" id="btn-request-remember">
+        <span data-localization="new.share.request-long">Share for long term.</span>
+    </label>
+    <div class="space"></div>
+    <div class="dialog-room-request-buttons">
+        <button class="tertiary round" id="btn-request-reject">
+            <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
+            <i>close</i>
+            <span data-localization="new.share.reject">Decline</span>
+        </button>
+        <button class="primary round" id="btn-request-accept">
+            <i>check</i>
+            <span data-localization="new.share.accept">Accept</span>
+        </button>
+    </div>
+</dialog>

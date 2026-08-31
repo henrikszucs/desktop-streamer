@@ -1,0 +1,48 @@
+{
+    "new": {
+        "share": {
+            "title": {
+                "en": "Share device",
+                "hu": "Eszköz megosztása"
+            },
+            "btn": {
+                "en": "Share this device",
+                "hu": "Eszköz megosztása"
+            }
+        },
+        "join": {
+            "title": {
+                "en": "Join a room",
+                "hu": "Csatlakozás egy szobához"
+            },
+            "join-code": {
+                "en": "Join code",
+                "hu": "Csatlakozási kód"
+            },
+            "btn": {
+                "en": "Join",
+                "hu": "Csatlakozás"
+            },
+            "code-invalid": {
+                "en": "Invalid room code.",
+                "hu": "Érvénytelen kód."
+            },
+            "code-rejected": {
+                "en": "Connenction rejected.",
+                "hu": "A csatlakozási elutasítva."
+            },
+            "full-name": {
+                "en": "{firstName} {lastName}",
+                "hu": "{lastName} {firstName}"
+            },
+            "guest": {
+                "en": "Guest",
+                "hu": "Vendég"
+            },
+            "dialog-info": {
+                "en": "Establishing connection to host device as <span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address. Please wait...",
+                "hu": "Kapcsolódás a kiszolgáló eszközhöz <span class=\"bold\">{fullName}</span> néven, <span class=\"bold\">{ipAddress}</span> IP címről. Kérlek várj..."
+            }
+        }
+    }
+}

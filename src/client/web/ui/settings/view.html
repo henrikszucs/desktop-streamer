@@ -1,0 +1,34 @@
+<dialog class="multicolumn-dialog" id="dialog-settings">
+    <nav>
+        <h5 data-localization="settings.title">Settings</h5>
+        <div class="max"></div>
+        <button class="circle transparent" id="btn-settings-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <div class="no-round">
+        <div>
+            <button class="primary small-margin" id="btn-settings-appearance" data-window="appearance">
+                <i>palette</i>
+                <span class="l m" data-localization="settings.appearance.btn">Appearance</span>
+            </button>
+            <button class="fill small-margin" id="btn-settings-audio" data-window="audio">
+                <i>speaker</i>
+                <span class="l m" data-localization="settings.audio.btn">Audio</span>
+            </button>
+            <button class="fill small-margin" id="btn-settings-video" data-window="video">
+                <i>videocam</i>
+                <span class="l m" data-localization="settings.video.btn">Video</span>
+            </button>
+            <button class="fill small-margin" id="btn-settings-control" data-window="control">
+                <i>joystick</i>
+                <span class="l m" data-localization="settings.control.btn">Control</span>
+            </button>
+            <button class="fill small-margin" id="btn-settings-about" data-window="about">
+                <i>info</i>
+                <span class="l m" data-localization="settings.about.btn">About</span>
+            </button>
+        </div>
+        <div id="settings-windows"></div>
+    </div>
+</dialog>

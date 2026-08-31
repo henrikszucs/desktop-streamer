@@ -1,0 +1,46 @@
+/* the shares screen */
+
+/* Shares screen */
+#screen-shares {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.shares-article {
+    height: -webkit-fill-available;
+    height: -moz-available;
+    height: 100%;
+}
+
+.shares-article > :nth-child(1) {
+    display: flex;
+    justify-content: space-between;
+}
+
+.shares-article > :nth-child(1) > :nth-child(1) {
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+}
+
+.shares-article > :nth-child(1) > :nth-child(2) {
+    margin-right: 0px;
+}
+
+.shares-article > :nth-child(2) > :nth-child(1) {
+    aspect-ratio: 4/3;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) {
+    flex-wrap: wrap;
+    flex-direction: row;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) > :nth-child(1) {
+    flex-shrink: 1;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) > :nth-child(1) > button {
+    margin: 8px;
+}

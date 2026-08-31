@@ -1,0 +1,74 @@
+{
+    "settings": {
+        "control": {
+            "title": {
+                "en": "Control settings",
+                "hu": "Irányítás beállítások"
+            },
+            "control-share": {
+                "title": {
+                    "en": "Control share",
+                    "hu": "Irányítás megosztás"
+                },
+                "supported": {
+                    "en": "Fully supported",
+                    "hu": "Teljesen támogatott"
+                },
+                "unsupported": {
+                    "en": "Control share not supported",
+                    "hu": "Irányítás megosztása nem támogatott"
+                }
+            },
+            "exit-shortcut": {
+                "title": {
+                    "en": "Fullscreen exit",
+                    "hu": "Teljes képernyős kilépés"
+                },
+                "key": {
+                    "en": "Key",
+                    "hu": "Billentyű"
+                },
+                "delay": {
+                    "en": "Holding time",
+                    "hu": "Nyomvatartási idő"
+                },
+                "add": {
+                    "en": "Add shortcut",
+                    "hu": "Gyorsbillentyű hozzáadása"
+                },
+                "none": {
+                    "en": "-- None --",
+                    "hu": "-- Nincs --"
+                },
+                "delay-unit1": {
+                    "en": "No delay",
+                    "hu": "Azonnal"
+                },
+                "delay-unit2": {
+                    "en": "1 second",
+                    "hu": "1 másodperc"
+                },
+                "delay-unit3": {
+                    "en": "2 seconds",
+                    "hu": "2 másodperc"
+                },
+                "delay-unit4": {
+                    "en": "3 seconds",
+                    "hu": "3 másodperc"
+                },
+                "delay-unit5": {
+                    "en": "5 seconds",
+                    "hu": "5 másodperc"
+                },
+                "delay-unit6": {
+                    "en": "8 seconds",
+                    "hu": "8 másodperc"
+                },
+                "delay-unit7": {
+                    "en": "10 seconds",
+                    "hu": "10 másodperc"
+                }
+            }
+        }
+    }
+}

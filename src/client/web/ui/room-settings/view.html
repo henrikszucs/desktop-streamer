@@ -1,0 +1,132 @@
+<dialog class="multicolumn-dialog" id="dialog-room-settings">
+    <nav>
+        <h5>Room settings - <span>Room's name</span></h5>
+        <div class="max"></div>
+        <button class="circle transparent" id="btn-room-settings-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <div class="no-border">
+        <div>
+            <button class="primary small-margin">
+                <i>info</i>
+                <span class="l m">Information</span>
+            </button>
+            <button class="fill small-margin">
+                <i>token</i>
+                <span class="l m">Resources</span>
+            </button>
+        </div>
+        <div>
+            <!-- Room Information -->
+            <div id="room-settings-information">
+                <h5 class="small-margin">Information</h5>
+                <div class="small-margin">
+                    <fieldset>
+                        <legend>Room properties</legend>
+                        <nav class="wrap">
+                            <div class="field label border round information-box">
+                                <input type="text" id="room-settings-name"/>
+                                <label>Room name</label>
+                            </div>
+                        </nav>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Room availability</legend>
+                        <nav class="wrap">
+                            <label class="checkbox">
+                                <input type="checkbox">
+                                <span>Keep room for long time</span>
+                            </label>
+                        </nav>
+                    </fieldset>
+                </div>
+            </div>
+            <!-- Room Resources -->
+            <div id="room-settings-resources" class="hide">
+                <h5 class="small-margin">Resources</h5>
+                <div class="small-margin">
+                    <fieldset>
+                        <legend>Control</legend>
+                        <div class="field suffix border round room-settings-fieldset-box">
+                            <nav class="room-settings-resource-list">
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Mouse + Keyboard control</span>
+                                </label>
+                            </nav>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Screens</legend>
+                        <div class="field suffix border round room-settings-fieldset-box">
+                            <nav class="room-settings-resource-list">
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Screen 1</span>
+                                </label>
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Screen 2</span>
+                                </label>
+                                <div class="room-settings-fieldset-add">
+                                    <button>
+                                        <i>add</i>
+                                        <span>Add screen manually</span>
+                                    </button>
+                                </div>
+                            </nav>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>System audio</legend>
+                        <div class="field suffix border round room-settings-fieldset-box">
+                            <nav class="room-settings-resource-list">
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>System audio</span>
+                                </label>
+                            </nav>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Microphones</legend>
+                        <div class="field suffix border round room-settings-fieldset-box">
+                            <nav class="room-settings-resource-list">
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Microphone 1</span>
+                                </label>
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Microphone 2</span>
+                                </label>
+                            </nav>
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Webcams</legend>
+                        <div class="field suffix border round room-settings-fieldset-box">
+                            <nav class="room-settings-resource-list">
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Webcam 1</span>
+                                </label>
+                                <label class="checkbox">
+                                    <input type="checkbox">
+                                    <span>Webcam 2</span>
+                                </label>
+                            </nav>
+                        </div>
+                    </fieldset>
+                    <div class="room-settings-fieldset-add">
+                        <button class="room-settings-fieldset-refresh">
+                            <i>refresh</i>
+                            <span>Refresh resources</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</dialog>

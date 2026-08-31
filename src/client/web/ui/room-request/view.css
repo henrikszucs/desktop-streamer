@@ -1,0 +1,6 @@
+/* the join request dialog */
+
+.dialog-room-request-buttons {
+    display: flex;
+    justify-content: center;
+}

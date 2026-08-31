@@ -1,0 +1,10 @@
+{
+    "new": {
+        "join": {
+            "dialog-title": {
+                "en": "Joining room...",
+                "hu": "Szobához csatlakozás..."
+            }
+        }
+    }
+}

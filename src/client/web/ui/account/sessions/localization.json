@@ -1,0 +1,22 @@
+{
+    "account": {
+        "sessions": {
+            "title": {
+                "en": "Active sessions",
+                "hu": "Aktív munkamenetek"
+            },
+            "last-active": {
+                "en": "Last active",
+                "hu": "Utojára aktív"
+            },
+            "ip-address": {
+                "en": "IP address",
+                "hu": "IP cím"
+            },
+            "this-device": {
+                "en": "This device",
+                "hu": "Ez az eszköz"
+            }
+        }
+    }
+}

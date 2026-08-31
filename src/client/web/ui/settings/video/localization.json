@@ -1,0 +1,56 @@
+{
+    "settings": {
+        "video": {
+            "title": {
+                "en": "Video settings",
+                "hu": "Videó beállítások"
+            },
+            "decoder": {
+                "title": {
+                    "en": "Video play",
+                    "hu": "Videó lejátszás"
+                },
+                "supported": {
+                    "en": "Low latency play supported",
+                    "hu": "Alacsony késleltetésű lejátszás támogatott"
+                },
+                "unsupported": {
+                    "en": "Low latency play not supported",
+                    "hu": "Alacsony késleltetésű lejátszás nem támogatott"
+                }
+            },
+            "cam": {
+                "title": {
+                    "en": "Webcams",
+                    "hu": "Webkamera"
+                },
+                "name": {
+                    "en": "Webcam",
+                    "hu": "Webkamera"
+                },
+                "notfound": {
+                    "en": "No webcam detected",
+                    "hu": "Webkamera nem található"
+                }
+            },
+            "display": {
+                "title": {
+                    "en": "Screen share",
+                    "hu": "Képernyő megosztás"
+                },
+                "name": {
+                    "en": "Screen",
+                    "hu": "Képernyő"
+                },
+                "notsupported": {
+                    "en": "Only manual share supported",
+                    "hu": "Csak manuális megosztás támogatott"
+                },
+                "notfound": {
+                    "en": "Not found any device",
+                    "hu": "Nem található eszköz"
+                }
+            }
+        }
+    }
+}

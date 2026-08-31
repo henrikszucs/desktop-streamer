@@ -1,0 +1,34 @@
+{
+    "new": {
+        "share": {
+            "dialog-title": {
+                "en": "Waiting for join...",
+                "hu": "Csatlakozásra várás..."
+            },
+            "dialog-info": {
+                "en": "Share this join code with someone you want to invite:",
+                "hu": "Oszd meg ezt a csatlakozási kódot azzal, akit meghívni szeretnél:"
+            },
+            "join-code": {
+                "en": "Join code",
+                "hu": "Csatlakozási kód"
+            },
+            "dialog-info-2": {
+                "en": "A popup will appear when someone wants to join your device.",
+                "hu": "Egy felugró ablak jelenik meg, amikor valaki csatlakozni szeretne az eszközödhöz."
+            },
+            "full-name": {
+                "en": "{firstName} {lastName}",
+                "hu": "{lastName} {firstName}"
+            },
+            "guest": {
+                "en": "Guest",
+                "hu": "Vendég"
+            },
+            "request-info": {
+                "en": "<span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address wants to join your device.",
+                "hu": "<span class=\"bold\">{fullName}</span> a(z) <span class=\"bold\">{ipAddress}</span> IP címről csatlakozni szeretne az eszközödhöz."
+            }
+        }
+    }
+}

@@ -1,0 +1,7 @@
+/* the about window */
+
+/* About */
+.about-box {
+    display: flex;
+    flex-direction: column;
+}

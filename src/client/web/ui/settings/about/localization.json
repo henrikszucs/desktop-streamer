@@ -1,0 +1,54 @@
+{
+    "settings": {
+        "about": {
+            "title": {
+                "en": "About application",
+                "hu": "Az alkalmazásról"
+            },
+            "version": {
+                "en": "Version:",
+                "hu": "Verzió:"
+            },
+            "description": {
+                "en": "Desktop Streamer is an open source project that allows you to access your computer remotly through a simple web interface. It is built with Electron and Node.js.",
+                "hu": "A Desktop Streamer egy nyílt forráskódú projekt, amely lehetővé teszi, hogy egyszerű webes felületen keresztül távolról hozzáférj a számítógépedhez. Az alkalmazás Electron és Node.js alapokon nyugszik."
+            },
+            "missing-features": {
+                "en": "Missing features",
+                "hu": "Hiányzó funkciók"
+            },
+            "supported": {
+                "en": "Nothing missing, all features are supported.",
+                "hu": "Nincs hiányzó funkció, minden támogatott."
+            },
+            "auto-launch": {
+                "en": "Auto launch: not supported",
+                "hu": "Automatikus indítás: nem támogatott"
+            },
+            "tray": {
+                "en": "System tray: not supported",
+                "hu": "Rendszer tálca: nem támogatott"
+            },
+            "system-audio": {
+                "en": "System audio share: only manual share",
+                "hu": "Rendszer hang megosztás: csak manuális megosztás"
+            },
+            "system-audio-unsupported": {
+                "en": "System audio share: not supported",
+                "hu": "Rendszer hang megosztás: nem támogatott"
+            },
+            "screen-share": {
+                "en": "Screen share: only manual share",
+                "hu": "Képernyő megosztás: csak manuális megosztás"
+            },
+            "play": {
+                "en": "Low latency play: not supported",
+                "hu": "Alacsony késleltetésű lejátszás: nem támogatott"
+            },
+            "control-share": {
+                "en": "Control share: not supported",
+                "hu": "Irányítás megosztás: nem támogatott"
+            }
+        }
+    }
+}
