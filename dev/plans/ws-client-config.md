@@ -1,0 +1,69 @@
+# WS client configuration (`conf-get`)
+
+Restore the message that hands the browser client the public half of the server
+configuration, and settle the configuration shape the WS server reads.
+
+Source of the removed code: `git show 6c0d18a:src/server/ws.js`, lines 180-326
+(`start`) and 1304-1309 (the `conf-get` branch).
+
+## Why this comes first
+
+The removed `start()` read fields that the current schema does not accept. The
+Ajv schema in `src/server/config.js` sets `"additionalProperties": false` on the
+`ws` section, so a config with the fields the old code wanted is rejected, and a
+config the schema accepts makes the old code throw on an undefined property.
+
+| the old `ws.js` read | `config.js` defines today |
+| --- | --- |
+| `ws.emails` - an array of SMTP servers, iterated | `ws.email` - a single SMTP object, optional |
+| `ws.features.auth.google` | `ws.auth.google` |
+| `ws.features.screenSharing.isHomePage` | not present |
+| `ws.features.screenSharing.allowGuestShare` | `ws.permissions.guestAllowShare` |
+| `ws.features.screenSharing.allowGuestJoin` | `ws.permissions.guestAllowJoin` |
+| `ws.features.serviceSharing.isHomePage` | not present |
+| - | `ws.permissions.guestAllowRelay` (unused) |
+| - | `ws.permissions.userRegisterRelay` (unused) |
+
+So the WS server has never started against a valid configuration file. Decide
+one shape, then make the schema, `conf/config.example.json` and `ws.js` agree.
+
+## Decisions to make
+
+1. **One SMTP server or a list.** The schema says one (`email`), the code wanted
+   a list and used `this.mailers[0]` as the sender anyway. One is enough unless
+   failover is wanted.
+2. **`isHomePage` / `serviceSharing`.** These drove which screen the client opens
+   on. They have no schema equivalent - either add them under `permissions` (or a
+   new `features` section) or drop the client behaviour with them.
+3. **Relay permissions.** `guestAllowRelay` and `userRegisterRelay` are in the
+   schema but nothing reads them. They belong to a relay feature that does not
+   exist yet; keep them only if that feature is planned.
+
+## Work
+
+1. Settle the shape above; update `wsSchema` in `src/server/config.js`,
+   `conf/config.example.json` and `tests/config.test.js` together.
+2. Build the public config object in `ServerWS.start`. Only fields the browser
+   may see: ICE servers, which auth providers are enabled and their public client
+   ids, and the guest permissions. Never key material, SMTP credentials, OAuth
+   client secrets or database settings.
+3. Add the `conf-get` branch to `handleAPI`, answering that object.
+
+```
+{"type": "conf-get"}   ->   {"webrtc": {"iceServers": [...]},
+                             "screenSharing": {...},
+                             "auth": {"google": {"clientId": "..."}}}
+```
+
+## Client side
+
+`src/client/web/src/index.js` invokes `conf-get` as the first message after the
+communicator syncs, and closes the socket when it fails or answers `undefined`,
+so the client cannot get past connecting until this exists. The answer is stored
+as `conf["ws"]["remote"]` and read all over the UI.
+
+Worth doing at the same time: the client learns the server version from
+`config.json` over HTTP (`http.version`, written by `ServerHTTP.start`), but the
+WS server now answers `version-check` too. Have the client check its version over
+the socket after connecting, and show the download list from `config.json` when
+the versions differ.

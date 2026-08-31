@@ -12,6 +12,7 @@ import { argGet, getVersion } from "./common.js";
 import { loadConfig } from "./config.js";
 import { compileClients } from "./building.js";
 import serverHTTP from "./http.js";
+import serverWS from "./ws.js";
 
 //
 // Main
@@ -82,7 +83,17 @@ const main = async function(args) {
         return;
     }
 
-    // TODO: start the WS server
+    // Start the WS server
+    try {
+        await serverWS.start(conf);
+    } catch (error) {
+        process.stdout.write("failed\n");
+        console.error(error.message);
+        await serverWS.stop();
+        await serverHTTP.stop();
+        process.exitCode = 1;
+        return;
+    }
 
     // Cleanup
     let isClosing = false;
@@ -92,6 +103,7 @@ const main = async function(args) {
         }
         isClosing = true;
         process.stdout.write("Exiting...    ");
+        await serverWS.stop();
         await serverHTTP.stop();
         process.exit(0);
     };
