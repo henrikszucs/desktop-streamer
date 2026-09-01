@@ -103,43 +103,11 @@ const main = async function() {
     globalThis.desktop = desktop;
     globalThis.router = router;
 
-    //
-    // the user menu of the top bar, on screen whatever the route is
-    //
-    const userBtn = document.getElementById("btn-user");
-    const menuLoggedOut = document.getElementById("btn-user-menu-logged-out");
-    const menuLoggedIn = document.getElementById("btn-user-menu-logged-in");
-    server.addEventListener("user-data", function(event) {
-        if (event.detail.type === "picture") {
-            userBtn.src = event.detail.value;
-        }
-    });
-    server.addEventListener("login", async function() {
-        userBtn.src = await server.getUserData("picture");
-        menuLoggedIn.classList.remove("hide");
-        menuLoggedOut.classList.add("hide");
-        router.loadPath();
-    });
-    server.addEventListener("logout", function() {
-        userBtn.src = "/media/guest.svg";
-        menuLoggedIn.classList.add("hide");
-        menuLoggedOut.classList.remove("hide");
-        router.loadPath();
-    });
-    document.getElementById("btn-logout").addEventListener("click", async function() {
-        await server.logout();
-    });
-
-    //
-    // the shares badge of the left bar
-    //
-    const badgeShares = document.getElementById("badge-shares");
-    server.addEventListener("share-start", function() {
-        badgeShares.classList.remove("hide");
-    });
-    server.addEventListener("share-end", function() {
-        badgeShares.classList.add("hide");
-    });
+    // The user menu of the top bar and the shares badge of the left bar follow
+    // the sign-in state and the joins, and the server answers neither today
+    // (see dev/plans/). The markup they start from - the logged out menu, the
+    // hidden badge - is what a client without them shows, so nothing is wired
+    // here until the transport carries them again.
 
     //
     // the left bar, wide or narrow

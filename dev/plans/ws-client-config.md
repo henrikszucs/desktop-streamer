@@ -6,6 +6,18 @@ configuration, and settle the configuration shape the WS server reads.
 Source of the removed code: `git show 6c0d18a:src/server/ws.js`, lines 180-326
 (`start`) and 1304-1309 (the `conf-get` branch).
 
+## Status: partly done
+
+**Work item 3 is done.** `ServerWS.buildPublicConf` and the `conf-get` branch
+exist, built only from fields the current schema already accepts, so the client
+connects and goes online without any config change. See
+[../docs/websocket.md](../docs/websocket.md) for the answer it sends.
+
+**Work items 1 and 2 are open** - the shape questions below were not settled,
+they were side-stepped. `serviceSharing` is still absent from the answer, so the
+services route stays hidden, and `guestAllowRelay` / `userRegisterRelay` are
+still read by nothing.
+
 ## Why this comes first
 
 The removed `start()` read fields that the current schema does not accept. The
@@ -49,15 +61,19 @@ one shape, then make the schema, `conf/config.example.json` and `ws.js` agree.
    client secrets or database settings.
 3. Add the `conf-get` branch to `handleAPI`, answering that object.
 
+What was built mirrors the names in the schema rather than the old `screenSharing`
+grouping, and leaves out what the schema has no field for:
+
 ```
 {"type": "conf-get"}   ->   {"webrtc": {"iceServers": [...]},
-                             "screenSharing": {...},
+                             "permissions": {"guestAllowShare": bool,
+                                             "guestAllowJoin": bool},
                              "auth": {"google": {"clientId": "..."}}}
 ```
 
 ## Client side
 
-`src/client/web/src/index.js` invokes `conf-get` as the first message after the
+`src/client/web/src/server.js` invokes `conf-get` as the first message after the
 communicator syncs, and closes the socket when it fails or answers `undefined`,
 so the client cannot get past connecting until this exists. The answer is stored
 as `conf["ws"]["remote"]` and read all over the UI.

@@ -6,80 +6,109 @@
 // first-party dependencies
 import { Screen } from "../../src/view.js";
 
+// The build names its targets after the folders in ./bin, which follow node's
+// own platform and architecture names, while the markup and the detection below
+// were written with the names a user reads. Every spelling of the same thing is
+// listed here, mapped onto the one name the screen holds it under, so a zip is
+// never dropped for the name it carries.
+const OS_NAMES = new Map([
+    ["win32", "win32"],
+    ["darwin", "darwin"],
+    ["macos", "darwin"],
+    ["linux", "linux"]
+]);
+const ARCH_NAMES = new Map([
+    ["x64", "x64"],
+    ["x86", "x86"],
+    ["ia32", "x86"],
+    ["arm64", "arm64"],
+    ["arm32", "arm32"],
+    ["arm", "arm32"],
+    ["armv7l", "arm32"]
+]);
+
+// the button behind each of those names
+const OS_BUTTONS = new Map([
+    ["win32", "download-win32"],
+    ["darwin", "download-macos"],
+    ["linux", "download-linux"]
+]);
+const ARCH_BUTTONS = new Map([
+    ["x64", "download-x64"],
+    ["x86", "download-x86"],
+    ["arm64", "download-arm64"],
+    ["arm32", "download-arm32"]
+]);
+
 const DownloadScreen = class extends Screen {
     static id = "downloads";
     static rootId = "screen-downloads";
 
+    // os -> arch -> the file name of the zip, so the download never has to put
+    // the name back together out of the two halves it was split by
+    clients = new Map();
+    selectedOs = "";
+    selectedArch = "";
+
     async mount(ctx) {
         // convert client list to map
-        this.clients = new Map();
-        for (let client of ctx["conf"]["http"]["clients"]) {
-            client = client.slice(0, client.lastIndexOf("."));
-            client = client.split("-");
-            let clientSet = this.clients.get(client[0]);
-            if (clientSet === undefined) {
-                const newClientSet = new Set();
-                this.clients.set(client[0], newClientSet);
-                clientSet = newClientSet;
+        const clients = ctx["conf"]["http"]?.["clients"] || [];
+        for (const client of clients) {
+            const name = client.slice(0, client.lastIndexOf("."));
+            const parts = name.split("-");
+            if (parts.length !== 2) {
+                continue;
             }
-            clientSet.add(client[1]);
+            const os = OS_NAMES.get(parts[0]);
+            const arch = ARCH_NAMES.get(parts[1]);
+            if (os === undefined || arch === undefined) {
+                continue;   // nothing on this screen could select it
+            }
+            let archs = this.clients.get(os);
+            if (archs === undefined) {
+                archs = new Map();
+                this.clients.set(os, archs);
+            }
+            archs.set(arch, client);
         }
 
         // get important elements
-        this.downloadWindows = document.getElementById("download-win32");
-        this.downloadMacos = document.getElementById("download-macos");
-        this.downloadLinux = document.getElementById("download-linux");
-        this.downloadx64 = document.getElementById("download-x64");
-        this.downloadx86 = document.getElementById("download-x86");
-        this.downloadArm64 = document.getElementById("download-arm64");
-        this.downloadArm32 = document.getElementById("download-arm32");
         this.downloadFinish = document.getElementById("download-finish");
+        this.osButtons = new Map();
+        for (const [os, id] of OS_BUTTONS) {
+            this.osButtons.set(os, document.getElementById(id));
+        }
+        this.archButtons = new Map();
+        for (const [arch, id] of ARCH_BUTTONS) {
+            this.archButtons.set(arch, document.getElementById(id));
+        }
 
-        // selection and initialization
-        if (this.clients.has("win32") === false) {
-            this.downloadWindows.classList.add("hide");
+        // hide the operating systems this server has no client for
+        for (const [os, button] of this.osButtons) {
+            if (this.clients.has(os) === true) {
+                button.classList.remove("hide");
+            } else {
+                button.classList.add("hide");
+            }
         }
-        if (this.clients.has("macos") === false) {
-            this.downloadMacos.classList.add("hide");
-        }
-        if (this.clients.has("linux") === false) {
-            this.downloadLinux.classList.add("hide");
-        }
-        this.lastOsChoice = this.downloadWindows;
-        this.lastArchChoice = this.downloadx64;
-        this.selectedOs = "win32";
-        this.selectedArch = "x64";
-        this.displayChoice(this.getOS(), this.getArch());
 
         // set event listeners
-        this.downloadWindows.addEventListener("click", () => {
-            this.displayChoice("win32");
-        });
-        this.downloadMacos.addEventListener("click", () => {
-            this.displayChoice("macos");
-        });
-        this.downloadLinux.addEventListener("click", () => {
-            this.displayChoice("linux");
-        });
-
-        this.downloadx86.addEventListener("click", () => {
-            this.displayChoice(undefined, "x86");
-        });
-        this.downloadx64.addEventListener("click", () => {
-            this.displayChoice(undefined, "x64");
-        });
-        this.downloadArm64.addEventListener("click", () => {
-            this.displayChoice(undefined, "arm64");
-        });
-        this.downloadArm32.addEventListener("click", () => {
-            this.displayChoice(undefined, "arm32");
-        });
-
+        for (const [os, button] of this.osButtons) {
+            button.addEventListener("click", () => {
+                this.displayChoice(os, undefined);
+            });
+        }
+        for (const [arch, button] of this.archButtons) {
+            button.addEventListener("click", () => {
+                this.displayChoice(undefined, arch);
+            });
+        }
         this.downloadFinish.addEventListener("click", () => {
-            const file = this.selectedOs + "-" + this.selectedArch + ".zip";
-            console.log("Download client:", file);
-            window.open(location.href + file, "_blank");
+            this.download();
         });
+
+        // selection and initialization
+        this.displayChoice(this.getOS(), this.getArch());
     };
 
     open(params) {
@@ -91,80 +120,84 @@ const DownloadScreen = class extends Screen {
         super.close();
     };
 
+    // the choice, kept on something this server actually built: an unknown or
+    // unbuilt os or architecture falls back to the first one there is
     displayChoice(os, arch) {
+        // a server with no desktop client at all has nothing to choose from
+        if (this.clients.size === 0) {
+            this.downloadFinish.disabled = true;
+            return;
+        }
+        this.downloadFinish.disabled = false;
+
         // select OS
-        if (os === undefined) {
+        os = OS_NAMES.get(os);
+        arch = ARCH_NAMES.get(arch);
+        if (os === undefined || this.clients.has(os) === false) {
             os = this.selectedOs;
         }
-        let osSet = this.clients.get(os);
-
-        if (osSet === undefined) {
-            const iterator = this.clients.entries();
-            const value = iterator.next();
-            os = value.value[0];
-            osSet = value.value[1];
+        if (this.clients.has(os) === false) {
+            os = this.clients.keys().next().value;
         }
-        let newOsChoice = null;
-        if (os === "win32") {
-            newOsChoice = this.downloadWindows;
-        } else if (os === "macos") {
-            newOsChoice = this.downloadMacos;
-        } else if (os === "linux") {
-            newOsChoice = this.downloadLinux;
-        }
-        this.lastOsChoice.classList.add("border");
-        newOsChoice.classList.remove("border");
-        this.lastOsChoice = newOsChoice;
+        const archs = this.clients.get(os);
         this.selectedOs = os;
-
-        if (osSet.has("x64") === false) {
-            this.downloadx64.classList.add("hide");
-        } else {
-            this.downloadx64.classList.remove("hide");
-        }
-        if (osSet.has("x86") === false) {
-            this.downloadx86.classList.add("hide");
-        } else {
-            this.downloadx86.classList.remove("hide");
-        }
-        if (osSet.has("arm64") === false) {
-            this.downloadArm64.classList.add("hide");
-        } else {
-            this.downloadArm64.classList.remove("hide");
-        }
-        if (osSet.has("arm32") === false) {
-            this.downloadArm32.classList.add("hide");
-        } else {
-            this.downloadArm32.classList.remove("hide");
+        for (const [name, button] of this.osButtons) {
+            if (name === os) {
+                button.classList.remove("border");
+            } else {
+                button.classList.add("border");
+            }
         }
 
-
-        // select architecture
-        if (arch === undefined) {
+        // select architecture, out of the ones this os was built for
+        if (arch === undefined || archs.has(arch) === false) {
             arch = this.selectedArch;
         }
-        if (osSet.has(arch) === false) {
-            const iterator = osSet.values();
-            arch = iterator.next().value;
+        if (archs.has(arch) === false) {
+            arch = archs.keys().next().value;
         }
-        let newArchChoice = null;
-        if (arch === "x64") {
-            newArchChoice = this.downloadx64;
-        } else if (arch === "x86") {
-            newArchChoice = this.downloadx86;
-        } else if (arch === "arm64") {
-            newArchChoice = this.downloadArm64;
-        } else if (arch === "arm32") {
-            newArchChoice = this.downloadArm32;
+        this.selectedArch = arch;
+        for (const [name, button] of this.archButtons) {
+            if (archs.has(name) === false) {
+                button.classList.add("hide");
+                button.classList.add("border");
+                continue;
+            }
+            button.classList.remove("hide");
+            if (name === arch) {
+                button.classList.remove("border");
+            } else {
+                button.classList.add("border");
+            }
         }
-        if (newArchChoice !== this.lastArchChoice) {
-            this.lastArchChoice.classList.add("border");
-            newArchChoice.classList.remove("border");
-            this.lastArchChoice = newArchChoice;
-            this.selectedArch = arch;
+    };
+
+    // the zips sit at the root of the HTTP server, next to the web client
+    //
+    // The browser is served by that server, so a root absolute URL reaches them
+    // - the route the screen sits on is not part of the path. The desktop shell
+    // is served by its own local:// protocol instead, so it has to be told where
+    // the server is, and hands the link to the system browser.
+    download() {
+        const archs = this.clients.get(this.selectedOs);
+        if (archs === undefined) {
+            return;
+        }
+        const file = archs.get(this.selectedArch);
+        if (file === undefined) {
+            return;
         }
 
+        const desktop = this.ctx["desktop"];
+        if (desktop.isAvailable === false) {
+            window.open(new URL("/" + file, location.href).href, "_blank");
+            return;
+        }
+        const http = this.ctx["conf"]["http"];
+        const port = (http["port"] === 443) ? "" : (":" + http["port"]);
+        desktop.ipcRenderer.invoke("api", "open-external", "https://" + http["domain"] + port + "/" + file);
     };
+
     indexOf(array, value) {
         for (let i = 0; i < array.length; i++) {
             if (value.indexOf(array[i]) !== -1) {

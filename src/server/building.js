@@ -271,7 +271,11 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
 };
 
 // the client configuration file the built clients read
-const buildConfFile = async function(conf) {
+//
+// clients is the list of desktop zips this compile produces, the same field
+// ServerHTTP.start writes for the web client: the download screen of a desktop
+// client has no folder to read it out of, so it has to be shipped with it.
+const buildConfFile = async function(conf, clients=[]) {
     const confData = {
         "ws": {}
     };
@@ -279,6 +283,7 @@ const buildConfFile = async function(conf) {
         confData["http"] = {
             "domain": conf["http"]["domain"],
             "port": conf["http"]["port"],
+            "clients": clients,
             "version": await getVersion()
         };
     }
@@ -400,18 +405,6 @@ const compileClients = async function(conf) {
     }
     await fs.mkdir(desktopDestPath, {"recursive": true});
 
-    // generate conf file
-    const confFile = await buildConfFile(conf);
-
-    // minify the shared client parts once, they go into every dist
-    process.stdout.write("\n    Building web client...    ");
-    const webPath = path.join(serverScriptPath, "client", "web");
-    const electronPath = path.join(serverScriptPath, "client", "electron");
-    const webFiles = await buildFolder(webPath, true, GENERATED_FILES);
-    const electronFiles = await buildFolder(electronPath, false);
-    await writeWeb(webDestPath, webFiles, confFile);
-    process.stdout.write("done");
-
     // read available native libs
     const nativePath = path.join(serverScriptPath, "client", "native");
     const nativeLibs = await fs.readdir(nativePath);
@@ -437,6 +430,21 @@ const compileClients = async function(conf) {
             "isZip": isZip
         });
     }
+
+    // generate conf file, the dists are known so it can carry the download list
+    const confFile = await buildConfFile(conf, dists.map(function(dist) {
+        return dist["os"] + "-" + dist["arch"] + ".zip";
+    }));
+
+    // minify the shared client parts once, they go into every dist
+    process.stdout.write("\n    Building web client...    ");
+    const webPath = path.join(serverScriptPath, "client", "web");
+    const electronPath = path.join(serverScriptPath, "client", "electron");
+    const webFiles = await buildFolder(webPath, true, GENERATED_FILES);
+    const electronFiles = await buildFolder(electronPath, false);
+    await writeWeb(webDestPath, webFiles, confFile);
+    process.stdout.write("done");
+
     if (dists.length === 0) {
         process.stdout.write("\n");
         console.error("No electron dist found in: " + sourcePath);

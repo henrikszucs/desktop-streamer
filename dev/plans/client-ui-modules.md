@@ -282,7 +282,8 @@ that exists. It is the one class of error the browser reports badly.
 2. **How far the settings dialog splits.** Its five sub-windows already have
    `open` and `close` and a `changeWindow` that is a small router of its own.
    They are the clearest case for nested lazy modules, and also the most work.
-3. **Whether `Server` splits too.** It is 700 lines and its `handleIncoming` is a
-   200-line switch over server events. It is transport, not UI, so it is out of
-   scope here - but it is the next file that will want this treatment, and it
-   will be easier once `ctx` exists.
+3. **Whether `Server` splits too.** It was 700 lines, most of it a switch over
+   server events; it is down to the socket lifecycle and `conf-get` now that the
+   server answers nothing else. It is transport, not UI, so it is out of scope
+   here - but the question comes back the moment the WS plans put the account
+   and pairing calls into it again.

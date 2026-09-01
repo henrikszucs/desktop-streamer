@@ -26,11 +26,15 @@ against an older configuration shape and never ran against the current schema
 
 | type | request | answer |
 | --- | --- | --- |
+| `conf-get` | - | the public half of the configuration |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
 | `version-check` | `{"version": string}` | `{"success": boolean, "version": string}` |
 
-Anything else is logged and aborted.
+Anything else is logged and answered `{"success": false, "error": "unknown-type"}`.
+It is *answered* rather than aborted on purpose - see
+[../docs/websocket.md](../docs/websocket.md), which describes the whole client/server
+protocol from the socket up to these types.
 
 ### WS plans
 

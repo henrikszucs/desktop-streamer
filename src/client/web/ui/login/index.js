@@ -36,7 +36,9 @@ const LoginScreen = class extends Screen {
             this.google = new GoogleLogin(clientId);
             this.google.createButton(this.googleBox);
             this.google.addEventListener("login", function(event) {
-                ctx["server"].loginGoogle(event.detail.credential);
+                // the credential has nowhere to go until the server signs in
+                // again (dev/plans/ws-accounts.md)
+                console.warn("Sign-in is not wired to the server yet");
             });
         }
         this.googleBox.classList.remove("hide");

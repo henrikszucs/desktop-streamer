@@ -4,6 +4,11 @@
 // shows it, and waits. When someone claims the code the request dialog comes up
 // over this one, so this dialog steps aside instead of closing - the pair code
 // has to stay alive until the flow ends.
+//
+// The pair code and the request that claims it went with the pairing server
+// (dev/plans/ws-pairing-joins.md), so the dialog opens on an empty field and
+// nobody arrives on it. What is left here is its own half: the field, the copy
+// button and the close button.
 
 // first-party dependencies
 import { Dialog } from "../../src/view.js";
@@ -31,89 +36,16 @@ const RoomCreateDialog = class extends Dialog {
         });
     };
 
-    async createJoin() {
-        const code = await this.ctx["server"].createPairCode();
-        this.codeInput.value = code;
-    };
-
     open(params) {
         super.open(params);
-        this.ctx["server"].addEventListener("pair-request", this.onPairRequest);
-        this.createJoin();
+        this.codeInput.value = "";
     };
     close() {
-        const server = this.ctx["server"];
-        server.removeEventListener("pair-request", this.onPairRequest);
-        this.forgetRequest();
         this.ctx["ui"].closeDialog("room-request");
 
         super.close();
 
         this.codeInput.value = "";
-        server.deletePairCode();
-    };
-
-    //
-    // someone claimed the code
-    //
-    onPairRequest = async (event) => {
-        const ctx = this.ctx;
-        const localization = ctx["localization"];
-        const detail = event.detail;
-        console.log("Paired to room:", detail);
-
-        let fullName = "";
-        if (detail["details"]["isUser"]) {
-            const loc = localization.get("new.share.full-name");
-            fullName = localization.putParameters(loc, new Map([
-                ["firstName", detail["details"]["firstName"]],
-                ["lastName", detail["details"]["lastName"]]
-            ]));
-        } else {
-            fullName = localization.get("new.share.guest");
-        }
-        let infoText = localization.get("new.share.request-info");
-        infoText = localization.putParameters(infoText, new Map([
-            ["fullName", fullName],
-            ["ipAddress", detail["details"]["ipAddress"]]
-        ]));
-
-        // step aside, the request dialog takes the overlay over
-        this.hide();
-        const server = ctx["server"];
-        server.addEventListener("pair-reject", this.onPairReject);
-        server.addEventListener("pair-accept", this.onPairAccept);
-        server.addEventListener("offline", this.onOffline);
-
-        await ctx["ui"].openDialog("room-request", {
-            "info": infoText,
-            "showRemember": detail["showRemember"],
-            "timeout": detail["timeout"]
-        }, true);
-    };
-
-    forgetRequest() {
-        const server = this.ctx["server"];
-        server.removeEventListener("pair-reject", this.onPairReject);
-        server.removeEventListener("pair-accept", this.onPairAccept);
-        server.removeEventListener("offline", this.onOffline);
-    };
-
-    onPairReject = () => {
-        console.log("Pair reject");
-        this.forgetRequest();
-        this.ctx["ui"].closeDialog("room-request");
-        this.show();
-    };
-    onPairAccept = (event) => {
-        console.log("Pair accept");
-        console.log(event.detail);
-        this.forgetRequest();
-        this.ctx["ui"].closeDialogs();
-        // todo: open room screen
-    };
-    onOffline = () => {
-        this.forgetRequest();
     };
 };
 

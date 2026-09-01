@@ -2,6 +2,9 @@
 
 // somebody wants in: who they are, and how long there is to answer. Closing it
 // rejects, which is why it does not close on a click outside.
+//
+// Both answers went with the pairing server (dev/plans/ws-pairing-joins.md), so
+// nothing opens this dialog today and neither button answers anybody.
 
 // first-party dependencies
 import { Dialog } from "../../src/view.js";
@@ -27,7 +30,7 @@ const RoomRequestDialog = class extends Dialog {
             this.requestClose();
         });
         document.getElementById("btn-request-accept").addEventListener("click", () => {
-            ctx["server"].pairAccept(this.rememberBtn.checked);
+            console.warn("Pairing is not wired to the server yet");
         });
     };
 
@@ -54,9 +57,6 @@ const RoomRequestDialog = class extends Dialog {
         }, this.timeout);
     };
     close() {
-        if (this.ctx["server"].isOnline === true) {
-            this.ctx["server"].pairReject();
-        }
         clearInterval(this.updateIntervalId);
         clearTimeout(this.timeoutId);
         this.updateIntervalId = -1;

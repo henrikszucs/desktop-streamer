@@ -18,27 +18,16 @@ const DeleteWindow = class extends Panel {
         this.deleteConfirm = document.getElementById("btn-account-delete-confirm");
         this.deleteConfirmError = document.getElementById("account-delete-confirm-error");
 
-        this.deleteSend.addEventListener("click", async () => {
-            this.deleteSend.disabled = true;
-            const res = await ctx["server"].deleteEmail(ctx["localization"].getLang());
-            if (res === true) {
-                this.deleteSendSuccess.classList.remove("hide");
-                this.deleteSendError.classList.add("hide");
-            } else {
-                this.deleteSendSuccess.classList.add("hide");
-                this.deleteSendError.classList.remove("hide");
-            }
-            this.deleteSend.disabled = false;
+        // there is no account server to mail the key out or to delete against
+        // (dev/plans/ws-accounts.md), so both steps can only report that they
+        // failed
+        this.deleteSend.addEventListener("click", () => {
+            this.deleteSendSuccess.classList.add("hide");
+            this.deleteSendError.classList.remove("hide");
         });
 
-        this.deleteConfirm.addEventListener("click", async () => {
-            const deleteKey = this.deleteKey.value.trim();
-            const res = await ctx["server"].deleteAccount(deleteKey);
-            if (res === true) {
-                this.deleteConfirmError.classList.add("hide");
-            } else {
-                this.deleteConfirmError.classList.remove("hide");
-            }
+        this.deleteConfirm.addEventListener("click", () => {
+            this.deleteConfirmError.classList.remove("hide");
         });
     };
 

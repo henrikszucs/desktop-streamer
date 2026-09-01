@@ -20,6 +20,9 @@ const ServerWS = class {
     wsHttpServer = null;
     version = "";
 
+    // the half of the configuration a client may see, answered to "conf-get"
+    confPublic = {};
+
     // clients store memory variables
     clients = new Map();            // key-sessionId, value-state object of the client
 
@@ -41,6 +44,10 @@ const ServerWS = class {
 
         // the version every client is checked against
         this.version = await getVersion();
+
+        // what a client is allowed to learn about this server, never key
+        // material, SMTP credentials, OAuth secrets or database settings
+        this.confPublic = this.buildPublicConf(conf);
 
         // the WS server is reachable on the HTTP domain when they share a host
         let domain = conf["ws"]["domain"];
@@ -81,6 +88,35 @@ const ServerWS = class {
         });
         process.stdout.write("\n    Available: wss://" + domain + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
         process.stdout.write("done\n");
+    };
+
+    // the public half of the configuration, the answer of "conf-get". The
+    // permission defaults repeat the ones in the schema, which are documentation
+    // only - Ajv runs without "useDefaults", so a missing key arrives undefined.
+    buildPublicConf(conf) {
+        const permissions = conf["ws"]["permissions"] ?? {};
+        const confPublic = {
+            "webrtc": {
+                "iceServers": conf["ws"]["webrtc"]["iceServers"]
+            },
+            "permissions": {
+                "guestAllowShare": permissions["guestAllowShare"] ?? true,
+                "guestAllowJoin": permissions["guestAllowJoin"] ?? true
+            }
+        };
+
+        // the sign-in providers, the public client id of each and nothing else
+        if (typeof conf["ws"]["auth"] === "object") {
+            const auth = {};
+            if (typeof conf["ws"]["auth"]["google"] === "object") {
+                auth["google"] = {
+                    "clientId": conf["ws"]["auth"]["google"]["clientId"]
+                };
+            }
+            confPublic["auth"] = auth;
+        }
+
+        return confPublic;
     };
 
     // a session id that no live connection holds
@@ -186,7 +222,21 @@ const ServerWS = class {
         const message = messageObj.data;
         if (typeof message !== "object" || typeof message["type"] !== "string") {
             console.log("Invalid message format", message);
-            messageObj.abort();
+            this.reject(messageObj, "invalid-format");
+            return;
+        }
+
+        // the public half of the server configuration, the first message a
+        // client sends - it stays offline until this one answers
+        if (message["type"] === "conf-get") {
+            /*{
+            }*/
+            /*{
+                "webrtc": {"iceServers": string[]},
+                "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean},
+                "auth": {"google": {"clientId": string}}   (only when configured)
+            }*/
+            messageObj.send(this.confPublic);
             return;
         }
 
@@ -237,6 +287,24 @@ const ServerWS = class {
         }
 
         console.log("Unknown message type", message["type"]);
+        this.reject(messageObj, "unknown-type");
+    };
+
+    // the answer of a call this server does not serve. An aborted incoming
+    // message sends nothing back, so the caller would sit out its whole
+    // interaction timeout instead of failing on the spot - answer every invoke.
+    reject(messageObj, error) {
+        /*{
+            "success": false,
+            "error": string
+        }*/
+        if (messageObj.isInvoke === true) {
+            messageObj.send({
+                "success": false,
+                "error": error
+            });
+            return;
+        }
         messageObj.abort();
     };
 

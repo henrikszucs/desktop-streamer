@@ -192,9 +192,6 @@ const Router = class extends EventTarget {
         }
 
         // a route that is not there for this client falls back to the default
-        if (path[0] === "login" && this.ctx["server"].loginState["isLoggedIn"] === true) {
-            path = [""];
-        }
         if (path[0] === "services" && typeof this.ctx["conf"]["ws"]["remote"]?.["serviceSharing"] === "undefined") {
             path = [""];
         }

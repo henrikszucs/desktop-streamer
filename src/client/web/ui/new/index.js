@@ -5,6 +5,11 @@
 // it owns both flows, so the dialogs of a flow are opened from here and the
 // result comes back to the field that started it. The share flow hands over to
 // room-create, which carries it from there.
+//
+// Neither flow can go through today: the pair code the join asks about and the
+// answer it waits for both went with the pairing server
+// (dev/plans/ws-pairing-joins.md). The field and the two buttons are here, and
+// the join stops at the point where the code would be sent.
 
 // first-party dependencies
 import { Screen } from "../../src/view.js";
@@ -54,69 +59,8 @@ const NewScreen = class extends Screen {
     // ask the host behind a join code to let this device in, then wait for the
     // answer in the joining dialog
     async join(code) {
-        const ctx = this.ctx;
-        const server = ctx["server"];
-        const localization = ctx["localization"];
-
         this.displayJoinError("");
-        const res = await server.pairRequest(code);
-        if (res["success"] !== true) {
-            this.displayJoinError(localization.get("new.join.code-invalid"));
-            return;
-        }
-
-        let fullName = "";
-        if (res["details"]["isUser"]) {
-            const loc = localization.get("new.join.full-name");
-            fullName = localization.putParameters(loc, new Map([
-                ["firstName", res["details"]["firstName"]],
-                ["lastName", res["details"]["lastName"]]
-            ]));
-        } else {
-            fullName = localization.get("new.join.guest");
-        }
-        let infoText = localization.get("new.join.dialog-info");
-        infoText = localization.putParameters(infoText, new Map([
-            ["fullName", fullName],
-            ["ipAddress", res["details"]["ipAddress"]]
-        ]));
-
-        const dialog = await ctx["ui"].openDialog("room-joining", {
-            "info": infoText,
-            "timeout": res["timeout"]
-        });
-
-        // giving up is not a rejection, the host never answered
-        let wasCancelled = false;
-        const cancelHandler = function() {
-            wasCancelled = true;
-        };
-        const forget = function() {
-            dialog.removeEventListener("cancel", cancelHandler);
-            server.removeEventListener("pair-accept", pairAcceptHandler);
-            server.removeEventListener("pair-reject", pairRejectHandler);
-            server.removeEventListener("offline", offlineHandler);
-        };
-        const pairAcceptHandler = (event) => {
-            console.log(event.detail);
-            forget();
-            ctx["ui"].closeDialogs();
-            // todo: open room screen
-        };
-        const pairRejectHandler = () => {
-            forget();
-            if (wasCancelled === false) {
-                this.displayJoinError(localization.get("new.join.code-rejected"));
-            }
-            ctx["ui"].closeDialogs();
-        };
-        const offlineHandler = () => {
-            forget();
-        };
-        dialog.addEventListener("cancel", cancelHandler);
-        server.addEventListener("pair-accept", pairAcceptHandler);
-        server.addEventListener("pair-reject", pairRejectHandler);
-        server.addEventListener("offline", offlineHandler);
+        console.warn("Joining is not wired to the server yet");
     };
 };
 

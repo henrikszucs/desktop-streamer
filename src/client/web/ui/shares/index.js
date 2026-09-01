@@ -2,10 +2,13 @@
 
 // what this client shares out: the guest shares kept in the local database, and
 // the ones the account carries
+//
+// Both lists were built from the joins the server keeps. Nothing carries joins
+// today (dev/plans/ws-pairing-joins.md), so the screen opens on two empty areas
+// and ./share-box.js waits there for them.
 
 // first-party dependencies
 import { Screen } from "../../src/view.js";
-import ShareBox from "./share-box.js";
 
 const SharesScreen = class extends Screen {
     static id = "shares";
@@ -19,66 +22,15 @@ const SharesScreen = class extends Screen {
     };
 
     open(params) {
-        const server = this.ctx["server"];
         this.area.innerHTML = "";
         this.area2.innerHTML = "";
 
         super.open(params);
 
-        // get local shares
-        if (server.joinsGuest.size === 0) {
-            if (server.loginState["isLoggedIn"] === true) {
-                this.areaGuest.classList.add("hide");
-            }
-        } else {
-            this.areaGuest.classList.remove("hide");
-            for (const join of server.joinsGuest) {
-                // get data from server
-                const joinId = join[0];
-                const hostCode = join[1]["hostCode"];
-                if (hostCode === undefined) {
-                    continue;
-                }
-                const deviceEl = new ShareBox(joinId, hostCode);
-                const name = join[1]["name"];
-                const isOnline = join[1]["isOnline"];
-                const isRemember = join[1]["isRemember"];
-                deviceEl.setName(name);
-                deviceEl.setTag("local", true);
-                deviceEl.setTag("temporary", isRemember === false);
-                deviceEl.setTag("online", isOnline);
-                this.area2.appendChild(deviceEl.el);
-            }
-        }
-
-        // get user shares
-        if (server.loginState["isLoggedIn"] === false) {
-            this.areaUser.classList.add("hide");
-        } else {
-            this.areaUser.classList.remove("hide");
-            for (const join of server.joinsUser) {
-                const joinId = join[0];
-                if (join[1]["isHost"] !== true) {
-                    continue;
-                }
-                const hostCode = join[1]["hostCode"];
-                const name = join[1]["name"];
-                const isOnline = join[1]["isOnline"];
-                const isRemember = join[1]["isRemember"];
-
-                const deviceEl = new ShareBox(joinId, hostCode);
-                deviceEl.setName(name);
-                deviceEl.setTag("online", isOnline);
-                deviceEl.setTag("offline", isOnline === false);
-                deviceEl.setTag("temporary", isRemember === false);
-                if (hostCode !== undefined) {
-                    deviceEl.setTag("local", true);
-                } else {
-                    deviceEl.setTag("local", false);
-                }
-                this.area.appendChild(deviceEl.el);
-            }
-        }
+        // there is no account either, so the area that lists its shares stays
+        // out of the way
+        this.areaUser.classList.add("hide");
+        this.areaGuest.classList.remove("hide");
     };
     close() {
         this.area.innerHTML = "";
