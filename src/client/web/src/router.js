@@ -94,26 +94,6 @@ const Router = class extends EventTarget {
         }
     };
 
-    // pull the modules in while nothing is waiting for them, so the first click
-    // on a screen is not the first time the browser hears about it
-    prefetch(ids) {
-        const idle = globalThis.requestIdleCallback || function(fn) {
-            return setTimeout(fn, 1000);
-        };
-        idle(async () => {
-            for (const id of ids) {
-                if (registry.isLoaded(id) === true) {
-                    continue;
-                }
-                try {
-                    await registry.load(id, this.ctx);
-                } catch (error) {
-                    console.error("Cannot prefetch UI module " + id + ":", error);
-                }
-            }
-        });
-    };
-
     //
     // segments
     //
@@ -280,15 +260,18 @@ const Router = class extends EventTarget {
         return path;
     };
 
+    // both hand back the promise of the screen being open, so a caller that has
+    // to know the route is on screen - the boot, lifting the loading layer off
+    // it - can wait for it
     loadPath() {
         const path = this.routeOf(window.location.pathname);
         window.history.replaceState({}, "", "/" + path.join("/"));
-        this.openScreen(path[0], {"path": path.slice(1)});
+        return this.openScreen(path[0], {"path": path.slice(1)});
     };
 
     navigate(path) {
         window.history.pushState({}, "", "/" + path);
-        this.loadPath();
+        return this.loadPath();
     };
 
     //

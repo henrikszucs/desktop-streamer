@@ -16,16 +16,40 @@ import localization from "./src/localization.js";
 import registry from "./src/registry.js";
 import Router from "./src/router.js";
 
-// the chrome of the management segment: markup rather than screens, so it is
-// mounted before the first navigation - the router puts a segment on screen by
-// hiding the [data-segment] chrome of the other one, and it can only hide what
-// is already in the document
-const SHELL = ["nav-top", "nav-left"];
+// every UI module, built and mounted before the router runs
+//
+// The client is a small enough tree of modules that loading them one at a time
+// buys nothing and costs a wait on the first click of each, so the whole UI is
+// in the document before anything asks for a piece of it. It is also what the
+// router needs: it puts a segment on screen by hiding the [data-segment] chrome
+// of the other one, and it can only hide what is already there.
+//
+// A module that mounts into the markup of another one has to follow it, and the
+// registry id says which: "settings" carries the markup "settings.appearance"
+// mounts into, so the ids are built one dot-depth at a time.
+//
+// A module that cannot be built is logged and skipped rather than left to take
+// the boot down with it - the rest of the UI is still worth having.
+const buildUI = async function(router) {
+    const ids = registry.ids();
+    const depthOf = function(id) {
+        return id.split(".").length;
+    };
+    const depths = [...new Set(ids.map(depthOf))].sort();
 
-// the modules pulled in while nothing is waiting for them, so the first click
-// on one of them is not the first time the browser hears about it
-const PREFETCH = ["downloads", "settings", "devices", "shares", "menu", "login",
-    "room-create", "room-request", "room-joining", "account"];
+    for (const depth of depths) {
+        const level = ids.filter(function(id) {
+            return depthOf(id) === depth;
+        });
+        await Promise.all(level.map(async function(id) {
+            try {
+                await router.load(id);
+            } catch (error) {
+                console.error("Cannot build UI module " + id + ":", error);
+            }
+        }));
+    }
+};
 
 const main = async function() {
     // the Electron modules, if this is running under the desktop shell
@@ -162,23 +186,19 @@ const main = async function() {
     globalThis.router = router;
 
     //
-    // the shell, then the connection
+    // the UI, then the connection
     //
-    // The bars are in the document before the router runs, so the first
-    // navigation finds the chrome it has to show or hide - a deep link into the
-    // room segment would otherwise leave them on screen over it.
-    await Promise.all(SHELL.map(function(id) {
-        return router.load(id);
-    }));
+    await buildUI(router);
 
     router.start();
     server.connect("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
 
-    const switchOnline = function() {
-        loading.close();
+    // the route is opened under the loading layer and the layer lifts off it
+    // once it is there, so the first thing on screen is the screen itself
+    const switchOnline = async function() {
         router.closeDialogs();
-        router.loadPath();
-        router.prefetch(PREFETCH);
+        await router.loadPath();
+        loading.close();
     };
     if (server.isOnline) {
         switchOnline();
