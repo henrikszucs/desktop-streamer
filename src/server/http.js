@@ -34,6 +34,15 @@ const ServerHTTP = class {
 
     };
 
+    // the tag that stands for this exact content
+    //
+    // The size alone cannot: an edit that keeps the byte count - a version
+    // bumped from 0.0.4 to 0.0.7 - would keep its tag, and every client holding
+    // the old copy would be answered 304 with it forever.
+    fileETag(src, stats) {
+        return "\"" + path.basename(src) + String(stats.size) + "-" + String(Math.floor(stats.mtimeMs)) + "\"";
+    };
+
     // file getters
     async getFileData(src) {
         try {
@@ -44,7 +53,7 @@ const ServerHTTP = class {
                 "lastModified": date.toUTCString(),
                 "type": getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
-                "etag": "\"" + path.basename(src) + String(stats.size) + "\"",
+                "etag": this.fileETag(src, stats),
                 "buffer": data
             };
         } catch (error) {
@@ -79,7 +88,7 @@ const ServerHTTP = class {
                 "lastModified": date.toUTCString(),
                 "type": getMIMEType(path.extname(src)) || "text/plain",
                 "size": stats.size,
-                "etag": "\"" + path.basename(src) + String(stats.size) + "\"",
+                "etag": this.fileETag(src, stats),
                 "stream": stream
             };
         } catch (error) {
@@ -192,7 +201,8 @@ const ServerHTTP = class {
                     "lastModified": date.toUTCString(),
                     "type": getMIMEType(path.extname(src)) || "text/plain",
                     "size": stats.size,
-                    "etag": "\"" + path.basename(src) + String(stats.size) + "\"",
+                    "mtimeMs": stats.mtimeMs,
+                    "etag": this.fileETag(src, stats),
                     "accesses": new Array(this.httpCacheUpdateLength*2).fill(0),
                     "accessed": 0,
                 });
@@ -200,7 +210,33 @@ const ServerHTTP = class {
         }
     };
 
+    // the metadata of an entry is as old as the boot that built it, and a
+    // buffer never expires on its own: a file that changed on disk since has to
+    // lose both, or the answer carries the old length and tag over new bytes -
+    // a Content-Length that does not match the body breaks the response itself,
+    // not just its freshness
+    async revalidateCache() {
+        for (const [key, fileData] of this.httpCache) {
+            let stats;
+            try {
+                stats = await fs.stat(fileData["path"]);
+            } catch (error) {
+                continue;   // gone from disk, the request answers that on its own
+            }
+            if (stats.size === fileData["size"] && stats.mtimeMs === fileData["mtimeMs"]) {
+                continue;
+            }
+            fileData["size"] = stats.size;
+            fileData["mtimeMs"] = stats.mtimeMs;
+            fileData["lastModified"] = new Date(stats.mtimeMs).toUTCString();
+            fileData["etag"] = this.fileETag(fileData["path"], stats);
+            delete fileData["buffer"];
+        }
+    };
+
     async refreshCache() {
+        await this.revalidateCache();
+
         // fill with priority order small -> high (smaller is better)
         const priorityOrder = [];
         const it = this.httpCache.entries();
@@ -237,7 +273,14 @@ const ServerHTTP = class {
         for (let i = 0; i < currentIndex; i++) {
             const fileData = this.httpCache.get(priorityOrder[i]["file"]);
             if (typeof fileData["buffer"] === "undefined") {
-                fileData["buffer"] = (await this.getFileData(fileData["path"]))["buffer"];
+                const file = await this.getFileData(fileData["path"]);
+                if (typeof file === "undefined") {
+                    continue;
+                }
+                fileData["buffer"] = file["buffer"];
+                fileData["size"] = file["size"];
+                fileData["lastModified"] = file["lastModified"];
+                fileData["etag"] = file["etag"];
             }
         }
 
@@ -313,7 +356,7 @@ const ServerHTTP = class {
                 res.end();
                 return;
             }
-            res.writeHead(200, this.fileHeaders(fileData));
+            res.writeHead(200, this.fileHeaders(file));
             file["stream"].pipe(res);
         } else {
             res.writeHead(200, this.fileHeaders(fileData));
