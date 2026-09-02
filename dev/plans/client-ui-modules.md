@@ -102,10 +102,10 @@ src/client/web/
     index.html                  the shell: nav, overlay, loading dialog, mount points
     index.css                   shell styles and the shared bits
     index.js                    boot, then hand off to the router
-    config.json                 server-generated, fetched at runtime
+    index.json                  server-generated, fetched at runtime
     src/
         env.js                  browser and OS detection
-        conf.js                 config.json fetch + the IndexedDB local config
+        conf.js                 index.json fetch + the IndexedDB local config
         desktop.js              the Electron require() block, loaded only under Electron
         server.js               the Server class
         localization.js         localization core (get, translate, putParameters)

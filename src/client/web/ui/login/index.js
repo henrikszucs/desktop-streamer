@@ -27,7 +27,7 @@ const LoginScreen = class extends Screen {
 
     setupGoogle() {
         const ctx = this.ctx;
-        const clientId = ctx["conf"]["ws"]["remote"]?.["auth"]?.["google"]?.["clientId"];
+        const clientId = ctx["conf"]["remote"]?.["auth"]?.["google"]?.["clientId"];
         if (typeof clientId === "undefined") {
             this.googleBox.classList.add("hide");
             return;

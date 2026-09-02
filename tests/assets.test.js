@@ -229,20 +229,24 @@ test("every asset the built client requests is in tmp/web", async (t) => {
     }
 });
 
-test("the build writes the generated client files", async (t) => {
+test("the build writes the generated client file", async (t) => {
     if (await exists(path.join(builtWebPath, "index.html")) === false) {
         t.skip("no build in ./tmp/web, run: npm run server -- --compile --exit");
         return;
     }
 
-    // config.json and version are written by the server, never copied from the sources
-    const config = JSON.parse(await fs.readFile(path.join(builtWebPath, "config.json"), "utf8"));
-    assert.equal(typeof config["ws"]["domain"], "string");
-    assert.equal(typeof config["ws"]["port"], "number");
+    // index.json is written by the build alone, never copied from the sources and
+    // never rewritten at boot, and it carries the version too - there is no
+    // separate version file
+    const config = JSON.parse(await fs.readFile(path.join(builtWebPath, "index.json"), "utf8"));
+    for (const section of ["http", "ws"]) {
+        assert.equal(typeof config[section]["domain"], "string", section + " has no domain");
+        assert.equal(typeof config[section]["port"], "number", section + " has no port");
+    }
 
-    const version = await fs.readFile(path.join(builtWebPath, "version"), "utf8");
     const packageJson = JSON.parse(await fs.readFile(path.join(repoPath, "package.json"), "utf8"));
-    assert.equal(version.trim(), packageJson["version"]);
+    assert.equal(config["version"], packageJson["version"]);
+    assert.equal(await exists(path.join(builtWebPath, "version")), false);
 });
 
 test("every built json and script survived minification", async (t) => {

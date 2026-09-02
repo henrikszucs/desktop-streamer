@@ -1,6 +1,6 @@
 {
     "name": "desktop-streamer",
-    "version": "0.0.2",
+    "version": "0.0.4",
     "description": "Free and open source screen sharing application for presentation, work, movies and gaming.",
     "scripts": {
         "server": "node ./src/server/server.js",

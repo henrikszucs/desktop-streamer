@@ -29,10 +29,10 @@ const DESKTOP_DIR = "desktop";
 const ZIP_LEVEL = 9;
 
 // the client configuration the server generates for the built clients
-const CONF_FILE = "config.json";
+const CONF_FILE = "index.json";
 
-// written by the server at boot, never copied from the sources
-const GENERATED_FILES = new Set([CONF_FILE, "version"]);
+// written by the build, never copied from the sources
+const GENERATED_FILES = new Set([CONF_FILE]);
 
 const WHITESPACE = " \t\r\n\f";
 
@@ -270,22 +270,22 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
     return built;
 };
 
-// the client configuration file the built clients read
+// the client configuration file the built clients read: the version, and the
+// domain and port of each of the two servers
 //
-// clients is the list of desktop zips this compile produces, the same field
-// ServerHTTP.start writes for the web client: the download screen of a desktop
-// client has no folder to read it out of, so it has to be shipped with it.
-const buildConfFile = async function(conf, clients=[]) {
+// The two are configured apart and may be reached at different addresses, so
+// each gets its own section. The WS half is the remote server when one is
+// configured, and the local one otherwise - which answers on the HTTP domain
+// when it shares the host with it.
+const buildConfFile = async function(conf) {
     const confData = {
+        "version": await getVersion(),
+        "http": {},
         "ws": {}
     };
     if (typeof conf["http"] === "object") {
-        confData["http"] = {
-            "domain": conf["http"]["domain"],
-            "port": conf["http"]["port"],
-            "clients": clients,
-            "version": await getVersion()
-        };
+        confData["http"]["domain"] = conf["http"]["domain"];
+        confData["http"]["port"] = conf["http"]["port"];
     }
     if (typeof conf["http"] === "object" && typeof conf["http"]["remote"] === "object") {
         confData["ws"]["domain"] = conf["http"]["remote"]["host"];
@@ -431,10 +431,8 @@ const compileClients = async function(conf) {
         });
     }
 
-    // generate conf file, the dists are known so it can carry the download list
-    const confFile = await buildConfFile(conf, dists.map(function(dist) {
-        return dist["os"] + "-" + dist["arch"] + ".zip";
-    }));
+    // generate conf file, the same one every dist and the web client is given
+    const confFile = await buildConfFile(conf);
 
     // minify the shared client parts once, they go into every dist
     process.stdout.write("\n    Building web client...    ");

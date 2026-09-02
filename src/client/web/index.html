@@ -133,6 +133,24 @@
             <progress></progress>
         </dialog>
 
+        <!--
+            The client and the server are one build: this is what is left on
+            screen when they are not. The desktop client is pointed at the
+            server it can download the matching one from, the browser client at
+            whoever runs the server - reloading a browser tab that is behind
+            fixes it, reloading one in front of the server does not.
+        -->
+        <dialog class="" id="dialog-version">
+            <h5 data-localization="version.title">Version mismatch</h5>
+            <br>
+            <div id="version-message" data-localization="version.web">Version mismatch contact to administrator</div>
+            <br>
+            <div class="small-text" id="version-numbers"></div>
+            <nav class="right-align hide" id="version-download">
+                <a class="button primary" id="version-download-link" target="_blank" rel="noreferrer"></a>
+            </nav>
+        </dialog>
+
         <dialog class="" id="dialog-confim">
 
         </dialog>

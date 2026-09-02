@@ -71,6 +71,41 @@ const main = async function() {
         }
     };
 
+    // the mismatch the connection can end on: a client that is not the build
+    // the server is running cannot be talked to out of, so this dialog replaces
+    // the loading one and nothing takes it back off the screen
+    const versionEl = document.getElementById("dialog-version");
+    const showVersionMismatch = function(client, serverVersion) {
+        document.getElementById("version-numbers").innerText = localization.putParameters(
+            localization.get("version.numbers"),
+            new Map([["client", client], ["server", serverVersion]])
+        );
+
+        // the desktop client is the one that can be replaced: point it at the
+        // HTTP server it was built against, which serves the matching download.
+        // A browser tab has nothing to install, so it keeps the message it was
+        // translated with and the user is sent to whoever runs the server.
+        if (desktop.isAvailable) {
+            const http = conf["http"];
+            const port = (http["port"] === 443) ? "" : (":" + http["port"]);
+            const url = "https://" + http["domain"] + port + "/downloads";
+            const link = document.getElementById("version-download-link");
+            link.innerText = url;
+            link.href = url;
+            link.addEventListener("click", function(event) {
+                event.preventDefault();
+                desktop.ipcRenderer.invoke("api", "open-external", url);
+            });
+            document.getElementById("version-message").innerText = localization.get("version.desktop");
+            document.getElementById("version-download").classList.remove("hide");
+        }
+
+        loading.close();
+        versionEl.classList.add("active");
+        overlay.classList.add("blur");
+        overlay.classList.add("active");
+    };
+
     const server = new Server();
 
     // what every UI module reaches the rest of the application through
@@ -172,7 +207,7 @@ const main = async function() {
     server.connect("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
 
     const switchOnline = function() {
-        const serverConf = conf["ws"]["remote"];
+        const serverConf = conf["remote"];
 
         const hasServices = typeof serverConf["serviceSharing"] !== "undefined";
         for (const el of document.querySelectorAll("[data-route=\"services\"]")) {
@@ -195,6 +230,10 @@ const main = async function() {
     server.addEventListener("offline", function() {
         router.closeDialogs();
         loading.open();
+    });
+    server.addEventListener("version-mismatch", function(event) {
+        router.closeDialogs();
+        showVersionMismatch(event.detail["client"], event.detail["server"]);
     });
 };
 main();

@@ -31,7 +31,7 @@ const MenuDialog = class extends Dialog {
     };
 
     onOnline = () => {
-        const hasServices = typeof this.ctx["conf"]["ws"]["remote"]?.["serviceSharing"] !== "undefined";
+        const hasServices = typeof this.ctx["conf"]["remote"]?.["serviceSharing"] !== "undefined";
         if (hasServices) {
             this.services.classList.remove("hide");
         } else {

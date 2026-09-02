@@ -17,12 +17,13 @@ import Communicator from "../libs/communicator/communicator.js";
 import { conf } from "./conf.js";
 
 // events:
-// online, offline
+// online, offline, version-mismatch
 const Server = class extends EventTarget {
     address = "";
     ws = null;
     communicator = null;
     isOnline = false;
+    isOutdated = false;
     constructor() {
         super();
     };
@@ -89,7 +90,32 @@ const Server = class extends EventTarget {
                 this.ws.close();
                 return;
             }
-            conf["ws"]["remote"] = message.data;
+            conf["remote"] = message.data;
+
+            // the build of this client against the build of the server process
+            // answering it. They are allowed to differ - a browser tab or an
+            // installed desktop client is as old as the day it was loaded - but
+            // nothing past this point is, so the connection ends here and the
+            // shell tells the user how to get the matching build.
+            const versionMessage = this.communicator.invoke({"type": "version-check", "version": conf["version"]});
+            await versionMessage.wait();
+            if (versionMessage.error !== "" || typeof versionMessage.data !== "object") {
+                console.error("Failed to check the server version:", versionMessage.error);
+                this.ws.close();
+                return;
+            }
+            if (versionMessage.data["success"] !== true) {
+                console.error("Version mismatch, client:", conf["version"], "server:", versionMessage.data["version"]);
+                this.isOutdated = true;
+                this.dispatchEvent(new CustomEvent("version-mismatch", {
+                    "detail": {
+                        "client": conf["version"],
+                        "server": versionMessage.data["version"]
+                    }
+                }));
+                this.ws.close();
+                return;
+            }
 
             // allow online
             console.log("connected");
@@ -100,10 +126,17 @@ const Server = class extends EventTarget {
         }, { "once": true });
 
         // handle disconnection
+        //
+        // An outdated client is not waiting for anything: reconnecting would
+        // fail the same check every two seconds, and going offline would put the
+        // loading dialog back over the mismatch the shell just showed.
         const handleDisconnection = () => {
             this.ws.removeEventListener("error", handleError);
             this.ws.removeEventListener("close", handleClose);
             this.isOnline = false;
+            if (this.isOutdated === true) {
+                return;
+            }
             this.dispatchEvent(new CustomEvent("offline"));
             setTimeout(() => {
                 this.reconnect();

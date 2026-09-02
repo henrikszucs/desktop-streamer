@@ -11,7 +11,7 @@ import https from "node:https";
 
 // first-party dependencies 
 import { getMIMEType } from "./mime.js";
-import { binarySearch, getVersion } from "./common.js";
+import { binarySearch } from "./common.js";
 
 // the folders holding the client assets, everything else is an SPA route
 const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
@@ -339,27 +339,11 @@ const ServerHTTP = class {
             return;
         }
 
-        // create configuration file
-        const files = await fs.readdir(this.httpDownloadPath);
-        const confData = {
-            "http": {
-                "clients": files.filter(function(file) {
-                    return path.extname(file).toLowerCase() === ".zip";
-                }),
-                "version": await getVersion()
-            },
-            "ws": {}
-        };
-        if (typeof conf["http"]["remote"] === "object") {
-            confData["ws"]["domain"] = conf["http"]["remote"]["host"];
-            confData["ws"]["port"] = conf["http"]["remote"]["port"];
-        } else {
-            confData["ws"]["domain"] = conf["http"]["domain"];
-            confData["ws"]["port"] = conf["ws"]["port"];
-        }
-        await fs.mkdir(this.httpBasePath, {"recursive": true});
-        await fs.writeFile(path.join(this.httpBasePath, "config.json"), JSON.stringify(confData));
-        await fs.writeFile(path.join(this.httpBasePath, "version"), await getVersion());
+        // This server writes nothing into what it serves: index.json is part of
+        // a build, written once by buildConfFile for the web client and every
+        // desktop zip alike. A boot that wrote it again would hand the browser a
+        // version the build never produced, and the client would fail its
+        // version check against a server it is in fact the client of.
 
         // create HTTP server request handler
         let requestHandle = null;

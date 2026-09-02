@@ -1,7 +1,12 @@
 "use strict";
 
 // the desktop client downloads: the operating systems and the architectures the
-// server actually built a client for, picked out of conf["http"]["clients"]
+// server actually built a client for
+//
+// index.json carries the version and the two server addresses and nothing else,
+// so the list of built clients has no source yet - the screen holds none and
+// offers no download until the server hands it over. See
+// dev/plans/ws-client-config.md.
 
 // first-party dependencies
 import { Screen } from "../../src/view.js";
@@ -50,9 +55,14 @@ const DownloadScreen = class extends Screen {
     selectedOs = "";
     selectedArch = "";
 
+    // the zips this server built, once there is somewhere to read them from
+    clientList() {
+        return [];
+    };
+
     async mount(ctx) {
         // convert client list to map
-        const clients = ctx["conf"]["http"]?.["clients"] || [];
+        const clients = this.clientList();
         for (const client of clients) {
             const name = client.slice(0, client.lastIndexOf("."));
             const parts = name.split("-");

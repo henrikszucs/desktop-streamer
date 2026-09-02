@@ -16,7 +16,7 @@ const AboutWindow = class extends Panel {
         const browser = ctx["ui"].env.browser;
 
         this.version = document.getElementById("about-version");
-        this.version.innerText = ctx["conf"]["http"]["version"];
+        this.version.innerText = ctx["conf"]["version"];
 
         this.supported = document.getElementById("about-supported");
         let isMissing = false;

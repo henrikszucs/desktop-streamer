@@ -30,12 +30,15 @@ the protocol knows nothing about WebSockets: it only calls a `sender` function.
 
 ## Where the address comes from
 
-The client never hard-codes the server. `ServerHTTP.start` writes
-`tmp/web/config.json` at boot with the WS endpoint in it, and the client fetches
-that file at load time (`src/client/web/src/conf.js`):
+The client never hard-codes the server. `buildConfFile` writes
+`tmp/web/index.json` at compile with the WS endpoint in it, and the client fetches
+that file at load time (`src/client/web/src/conf.js`). It holds the version and
+the address of each of the two servers - they are configured apart, so the WS
+half may be somewhere else entirely - and nothing else:
 
 ```json
-{"http": {"clients": ["win32-x64.zip"], "version": "0.0.2"},
+{"version": "0.0.2",
+ "http": {"domain": "localhost", "port": 8443},
  "ws": {"domain": "localhost", "port": 8444}}
 ```
 
@@ -298,14 +301,14 @@ carries the version it should be on.
 
 These are two different versions and they are allowed to disagree.
 
-| | `config.json` over HTTP | `version-check` over WS |
+| | `index.json` over HTTP | `version-check` over WS |
 | --- | --- | --- |
 | what it is | the **static** config the client was shipped with | the **live** version of the process answering right now |
-| written by | `buildConfFile` at compile, then `ServerHTTP.start` at boot | `getVersion()`, read from `package.json` |
-| read as | `conf["http"]["version"]` | the `version` field of the answer |
+| written by | `buildConfFile`, at compile and nowhere else | `getVersion()`, read from `package.json` |
+| read as | `conf["version"]` | the `version` field of the answer |
 | how stale it can get | as stale as the client build | never |
 
-`config.json` is fetched once, at load, by `src/client/web/src/conf.js`. Nothing
+`index.json` is fetched once, at load, by `src/client/web/src/conf.js`. Nothing
 refreshes it. So it goes stale in two ways:
 
 - a **browser** tab left open across a server upgrade keeps the copy it loaded;
@@ -321,38 +324,39 @@ intended behaviour:
 > new version.
 
 **None of that is implemented.** Nothing in the client calls `version-check`
-today, and `conf["http"]["version"]` is only ever printed in Settings → About
+today, and `conf["version"]` is only ever printed in Settings → About
 (`ui/settings/about/index.js`). The pieces that exist:
 
 - the check would go in the `open` handler of `src/client/web/src/server.js`,
   right after `conf-get`, and would raise an event the shell listens for;
 - the download page already exists as the `downloads` screen
-  (`ui/downloads/`, route `downloads`), which builds the OS/architecture list
-  from `conf["http"]["clients"]`.
+  (`ui/downloads/`, route `downloads`), but it has no list to build the
+  OS/architecture choice from any more - `index.json` no longer carries one, so
+  `clientList()` returns nothing and the screen offers no download.
 
 Two things to settle before wiring it up:
 
 1. **A stale browser tab does not need a download - it needs a reload.** The
    download page is the right answer for the desktop client
    (`desktop.isAvailable`); for the web client the same mismatch means the page
-   itself is old, and reloading fetches a current `config.json` and a current
+   itself is old, and reloading fetches a current `index.json` and a current
    build. The two cases probably want different UI.
-2. **How stale the download list of a desktop client is.** The two generators
-   write the same fields now - `buildConfFile` emits `clients` from the dists
-   the compile found, so the download screen has a list on both clients:
+2. **Where the download list comes from.** It used to be a `clients` array in
+   this file, written by two generators - `ServerHTTP.start` from the zips in
+   `tmp/desktop` at boot, `buildConfFile` from the dists the compile found.
+   There is one generator now, and it writes the same three keys into the web
+   client and into every desktop zip:
 
-   | key | web (`ServerHTTP.start`) | desktop zip (`buildConfFile`) |
-   | --- | --- | --- |
-   | `http.clients` | yes | yes |
-   | `http.version` | yes | yes |
-   | `http.domain`, `http.port` | no | yes |
-   | `ws.domain`, `ws.port` | yes | yes |
+   | key | web and desktop zip (`buildConfFile`) |
+   | --- | --- |
+   | `version` | yes |
+   | `http.domain`, `http.port` | yes |
+   | `ws.domain`, `ws.port` | yes |
 
-   The desktop copy is as old as the installed client, so a target the server
-   added since goes missing from it while a target it dropped is still offered.
-   The list is exactly what `version-check` implies is stale, so it probably
-   wants to come over the socket with the version answer rather than out of the
-   bundled file.
+   The bundled copy was as old as the installed client anyway, so a target the
+   server added since went missing from it while a target it dropped was still
+   offered - exactly what `version-check` implies is stale. The list wants to
+   come over the socket with the version answer instead.
 
 ### Answering, not aborting
 

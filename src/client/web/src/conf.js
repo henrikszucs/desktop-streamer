@@ -1,13 +1,13 @@
 "use strict";
 
-// the two configurations the client runs on: the server generated config.json
+// the two configurations the client runs on: the server generated index.json
 // it is served with, and the local one it keeps in IndexedDB
 
 // third-party dependencies
 import IDB from "../libs/idb/idb.js";
 
 // the server generated file, never hand written
-const conf = await (await fetch(new URL("../config.json", import.meta.url))).json();
+const conf = await (await fetch(new URL("../index.json", import.meta.url))).json();
 
 const DATABASE = "desktop_streamer";
 const CONF_TABLE = "configuration";

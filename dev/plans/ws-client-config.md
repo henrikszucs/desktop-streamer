@@ -76,10 +76,10 @@ grouping, and leaves out what the schema has no field for:
 `src/client/web/src/server.js` invokes `conf-get` as the first message after the
 communicator syncs, and closes the socket when it fails or answers `undefined`,
 so the client cannot get past connecting until this exists. The answer is stored
-as `conf["ws"]["remote"]` and read all over the UI.
+as `conf["remote"]` and read all over the UI.
 
 Worth doing at the same time: the client learns the server version from
-`config.json` over HTTP (`http.version`, written by `ServerHTTP.start`), but the
-WS server now answers `version-check` too. Have the client check its version over
-the socket after connecting, and show the download list from `config.json` when
-the versions differ.
+`index.json` over HTTP (`version`, written by `buildConfFile`), but the WS
+server now answers `version-check` too. Have the client check its version over
+the socket after connecting, and show a download list when the versions differ -
+`index.json` no longer carries one, so it has to come over the socket.
