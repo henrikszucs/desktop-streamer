@@ -33,15 +33,36 @@ npm run uninstall
 # Uninstall with bin folder
 npm run uninstall -- --bin
 
-# Run with custom configuration path
+# Run with custom configuration path (inline "=" form, or "-c <path>")
 npm run server -- --configuration=./config.json
+npm run server -- -c ./config.json
 
 # Test conf and exit
 npm run server -- --configuration=./config.json --compile --exit
+
+# Flags and version
+npm run server -- --help
+npm run server -- --version
+npm run uninstall -- --help
 ```
 
+Server flags:
+
+| Flag | Meaning |
+| ---- | ------- |
+| `-c <path>`, `--configuration=<path>` | configuration file (default `./conf/config.json`). Note the two forms: `-c` takes the path as the next argument, `--configuration` only as `--configuration=<path>`. `--configuration <path>` is **not** parsed and falls back to the default. |
+| `--compile` | force a rebuild of `./tmp/web` and `./tmp/desktop`. Without it, a boot that already finds `tmp/web/index.html` skips the build, so web client edits stay invisible. |
+| `--exit` | validate the configuration, build, start and stop again without serving |
+| `-h`, `--help` | usage |
+| `-v`, `--version` | project version |
+
 ## Server configuration
-server configuration file path: conf/config.json
+server configuration file path: `conf/config.json` (a working SQLite-backed starting point is in `conf/config.example.json`).
+
+The block below is annotated, not literal JSON: it carries `//` comments, and it
+shows the alternatives of `database` and of `email.auth` as repeated keys — pick
+one of each. At least one of `http` and `ws` must be present, and the two
+servers may share a port only when it is `http.port`.
 
 ```
 {
@@ -59,12 +80,16 @@ server configuration file path: conf/config.json
             "size": 524288000,          //max cache size in bytes
             "fileSizeLimit": 10485760   //max file size that can cached (ignore too big files)
         },
-        "remote": {                     //(optional) remote websocket server, it will ignore local ws creation
-            "host": "localhost",
-            "port": 444
+        "remote": {                     //(optional) point the clients at a websocket server run elsewhere.
+            "host": "localhost",        //  Mutually exclusive with the "ws" section below: a configuration
+            "port": 444                 //  carrying both is rejected, it is not silently ignored.
         }
     },
-    "ws": {
+    "ws": {                             //the realtime/signaling server. It is currently cut back to the
+                                        //  connection itself, so "database", "email" and the secret half of
+                                        //  "auth" are validated but not read yet; only auth.<provider>.clientId
+                                        //  reaches a client. They are still required/accepted so a configuration
+                                        //  written today keeps working when the persistence lands.
         "domain": "localhost",          //access domain
         "port": 444,
         "key": "server.key",            //private key path
@@ -124,6 +149,7 @@ server configuration file path: conf/config.json
 ├── conf/ - configuration files
 ├── dev/ - developer documents and helper temporary or useful mini scripts
 ├── model/ - The CNN model development folder
+├── tests/ - node --test suites (npm test)
 ├── src/ - source of the program
 │   ├── client/ - Client program's code
 │   │   ├── electron/ - ElectronJS specific codes
