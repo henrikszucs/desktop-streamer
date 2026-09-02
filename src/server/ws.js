@@ -93,24 +93,42 @@ const ServerWS = class {
     // the public half of the configuration, the answer of "conf-get". The
     // permission defaults repeat the ones in the schema, which are documentation
     // only - Ajv runs without "useDefaults", so a missing key arrives undefined.
+    //
+    // "permissions" is what this server would let the caller do, so the client
+    // can leave a feature it is going to refuse off the screen rather than fail
+    // it at the point of use. Every flag in it is answered for every client, set
+    // or not, so the client never has to know a default of its own.
+    //
+    // isGoogleAuth is the same question asked about sign-in: "auth" below is
+    // what the Google button needs to be built, this is what deciding to show
+    // the button needs. The two are read off the same key, so a provider cannot
+    // be announced and then be missing its client id.
+    //
+    // The permissions the schema carries and this does not are the ones the
+    // client has no say in: guestAllowRelay is enforced on the relay itself, and
+    // userRegisterRelay is a registration policy that decides nothing on screen.
     buildPublicConf(conf) {
         const permissions = conf["ws"]["permissions"] ?? {};
+        const google = conf["ws"]["auth"]?.["google"];
+        const isGoogleAuth = (typeof google?.["clientId"] === "string");
+
         const confPublic = {
             "webrtc": {
                 "iceServers": conf["ws"]["webrtc"]["iceServers"]
             },
             "permissions": {
                 "guestAllowShare": permissions["guestAllowShare"] ?? true,
-                "guestAllowJoin": permissions["guestAllowJoin"] ?? true
+                "guestAllowJoin": permissions["guestAllowJoin"] ?? true,
+                "isGoogleAuth": isGoogleAuth
             }
         };
 
         // the sign-in providers, the public client id of each and nothing else
         if (typeof conf["ws"]["auth"] === "object") {
             const auth = {};
-            if (typeof conf["ws"]["auth"]["google"] === "object") {
+            if (isGoogleAuth === true) {
                 auth["google"] = {
-                    "clientId": conf["ws"]["auth"]["google"]["clientId"]
+                    "clientId": google["clientId"]
                 };
             }
             confPublic["auth"] = auth;

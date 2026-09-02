@@ -80,6 +80,27 @@ body.dark {
     display: none !important;
 }
 
+/* The layers of the shell
+ *
+ * beercss gives nav, dialog and .overlay the same z-index: 100, so the DOM
+ * order is what decides between them - and every bar, screen and dialog is a
+ * module mounted into the body at runtime, after the overlay and the loading
+ * layer index.html starts with. Order cannot carry the stacking any more, so
+ * it is written down here: the bars stay under the overlay, every dialog sits
+ * over it, and the loading layer is over all of it, snackbars included.
+ */
+#dialog-overlay {
+    z-index: 101;
+}
+
+dialog {
+    z-index: 102;
+}
+
+#dialog-loading {
+    z-index: 300;
+}
+
 /* Side menu fix */
 .nav-side-fix > a {
     justify-content: flex-start;

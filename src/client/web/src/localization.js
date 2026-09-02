@@ -17,25 +17,11 @@ const setLang = (lang) => {
 };
 
 // the shell slice, every other key arrives through add()
+//
+// What is left here is what the shell itself shows: the loading layer of
+// index.html, and the strings the two navigation bars share with the menu
+// dialog. The version mismatch went with its markup, into ui/version/.
 const dict = {
-    "version": {
-        "title": {
-            "en": "Version mismatch",
-            "hu": "Verzióeltérés"
-        },
-        "web": {
-            "en": "Version mismatch contact to administrator",
-            "hu": "Verzióeltérés, vedd fel a kapcsolatot az üzemeltetővel"
-        },
-        "desktop": {
-            "en": "This client does not match the server. Download the matching one from:",
-            "hu": "Ez a kliens nem egyezik a szerverrel. A megfelelőt innen töltheted le:"
-        },
-        "numbers": {
-            "en": "Client: {client}, server: {server}",
-            "hu": "Kliens: {client}, szerver: {server}"
-        }
-    },
     "loading": {
         "title": {
             "en": "Loading...",

@@ -32,14 +32,15 @@ the protocol knows nothing about WebSockets: it only calls a `sender` function.
 
 The client never hard-codes the server. `buildConfFile` writes
 `tmp/web/index.json` at compile with the WS endpoint in it, and the client fetches
-that file at load time (`src/client/web/src/conf.js`). It holds the version and
-the address of each of the two servers - they are configured apart, so the WS
-half may be somewhere else entirely - and nothing else:
+that file at load time (`src/client/web/src/conf.js`). It holds the version, the
+address of each of the two servers - they are configured apart, so the WS half
+may be somewhere else entirely - and the desktop clients that compile wrote:
 
 ```json
-{"version": "0.0.2",
+{"version": "0.0.4",
  "http": {"domain": "localhost", "port": 8443},
- "ws": {"domain": "localhost", "port": 8444}}
+ "ws": {"domain": "localhost", "port": 8444},
+ "clients": ["win32-x64.zip"]}
 ```
 
 `index.js` then builds the URL and hands it to the transport:
@@ -275,19 +276,38 @@ Everything above carries plain objects with a `"type"` key. `handleAPI` in
 
 | type | request | answer |
 | --- | --- | --- |
-| `conf-get` | - | `{"webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool}, "auth": {"google": {"clientId": string}}}` |
+| `conf-get` | - | `{"webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isGoogleAuth": bool}, "auth": {"google": {"clientId": string}}}` |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
 | `version-check` | `{"version": string}` | `{"success": bool, "version": string}` |
 | anything else | - | `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
 
 `conf-get` is built once in `ServerWS.start` by `buildPublicConf` and is the
-**public half** of the configuration - ICE servers, the two guest permissions,
-and the public client id of each configured sign-in provider. Never key
-material, SMTP credentials, OAuth secrets or database settings. `auth` is absent
-when no provider is configured, and so is anything the current config schema has
-no field for (`serviceSharing`, which the client uses to decide whether to show
-the services route - so that route stays hidden).
+**public half** of the configuration - ICE servers, the permissions, and the
+public client id of each configured sign-in provider. Never key material, SMTP
+credentials, OAuth secrets or database settings. `auth` is absent when no
+provider is configured, and so is anything the current config schema has no
+field for (`serviceSharing`, which the client uses to decide whether to show the
+services route - so that route stays hidden).
+
+`permissions` is what this server would let the caller do, so the client can
+leave a feature it is going to refuse off the screen rather than fail it at the
+point of use. **Every flag is answered for every client, set or not**: a key the
+configuration omits comes back as the default the schema documents, so the
+client never carries a default of its own.
+
+| flag | default | means |
+| --- | --- | --- |
+| `guestAllowShare` | `true` | a guest may share this device |
+| `guestAllowJoin` | `true` | a guest may join someone else's room |
+| `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |
+
+`isGoogleAuth` is read off the same key as `auth.google.clientId`, so a provider
+can never be announced here and then be missing the client id the button is
+built from. The two permissions the schema carries and this answer does not are
+the ones the client has no say in: `guestAllowRelay` is enforced on the relay
+itself, and `userRegisterRelay` is a registration policy that decides nothing on
+screen.
 
 `sessionId` is the id of the **connection**, ten characters from
 `generateId(10)`, unique among the live `clients` Map. It is not an account

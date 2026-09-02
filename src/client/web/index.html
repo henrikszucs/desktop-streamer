@@ -18,113 +18,27 @@
     </head>
     <body>
         <!--
-            The shell: the two navigation bars, the shared overlay, the loading
-            dialog and the surface the screens are mounted into. Every screen and
-            every dialog lives in its own module under /ui and arrives when
-            it is first needed, see src/registry.js.
+            The three elements the application is built on top of, and nothing
+            else. Every bar, screen and dialog - the two navigation bars
+            included - is a UI module under /ui that index.js mounts into the
+            body at runtime, see src/registry.js.
 
-            data-route names the screen a click leads to, data-dialog the dialog,
-            data-route-active the class an entry carries while its screen is open.
+            What stays here is what has to exist before the first module can be
+            fetched: the surface a screen is mounted into, the overlay a dialog
+            is shown over, and the loading layer, which is on screen from the
+            first paint rather than from the first script.
         -->
 
-        <!-- Menus -->
-        <nav class="top surface" id="nav-top">
-            <button class="circle large transparent s" id="btn-menu-top" data-dialog="menu">
-                <i>menu</i>
-            </button>
-            <div class="max"></div>
-            <!--
-            <div class="max m l">
-                <div class="field large prefix round fill active wide-search">
-                    <i class="front" id="input-search-finish">search</i>
-                    <input placeholder="Searching..." id="input-search" data-localization="main.search"/>
-                    <menu class="min" id="input-search-menu">
-                        <li>
-                            <div class="field large prefix">
-                                <i class="front">arrow_back</i>
-                                <input placeholder="Searching..." id="input-search-true" data-localization="main.search"/>
-                            </div>
-                        </li>
-                        <li>
-                            <i>history</i>
-                            <div>Item 1</div>
-                        </li>
-                        <li>
-                            <i>history</i>
-                            <div>Item 2</div>
-                        </li>
-                        <li>
-                            <i>history</i>
-                            <div>Item 3</div>
-                        </li>
-                    </menu>
-                </div>
-            </div>
-            -->
-            <div class="max"></div>
-            <!--<button class="circle large transparent s" id="btn-search" data-dialog="search">
-                <i>search</i>
-            </button>-->
-            <button class="circle large transparent" id="btn-settings" data-dialog="settings">
-                <i>settings</i>
-            </button>
-            <button class="circle large fill" id="btn-user-circle">
-                <img class="responsive" src="/media/guest.svg" height="32" id="btn-user">
-                <menu class="border left no-wrap " id="btn-user-menu-logged-out">
-                    <li id="btn-login" data-route="login">
-                        <i>login</i>
-                        <span data-localization="main.login">Log in</span>
-                    </li>
-                </menu>
-                <menu class="border left no-wrap hide" id="btn-user-menu-logged-in">
-                    <li id="btn-account-settings" data-dialog="account">
-                        <i>settings</i>
-                        <span data-localization="main.account">Account settings</span>
-                    </li>
-                    <li id="btn-logout">
-                        <i>logout</i>
-                        <span data-localization="main.logout">Sign out</span>
-                    </li>
-                </menu>
-            </button>
-        </nav>
-
-        <nav class="left m l scroll max nav-side-fix" id="nav-left">
-            <header>
-                <button class="circle extra transparent" id="btn-menu-left">
-                    <i>menu</i>
-                </button>
-                <button class="primary-container square round extend" id="btn-new" data-route="new">
-                    <i>add</i>
-                    <span data-localization="main.new">New</span>
-                </button>
-            </header>
-            <a id="btn-services" data-route="services" data-route-active="active">
-                <i>filter_drama</i>
-                <div data-localization="main.services">Services</div>
-            </a>
-            <a id="btn-devices" data-route="devices" data-route-active="active">
-                <i>devices</i>
-                <div data-localization="main.devices">Devices</div>
-            </a>
-            <a id="btn-shares" data-route="shares" data-route-active="active">
-                <div>
-                    <i>upload</i>
-                    <div class="badge min top left hide" id="badge-shares"></div>
-                </div>
-                <div data-localization="main.shares">Shares</div>
-            </a>
-            <div class="max"></div>
-            <a class="primary" id="btn-download" data-route="downloads">
-                <i>download</i>
-                <div data-localization="main.downloads">Download client</div>
-            </a>
-        </nav>
-
-
-        <!-- Dialogs, every other one is mounted here by its module -->
+        <!-- The shared overlay, under every dialog and over everything else -->
         <div class="overlay blur active" id="dialog-overlay"></div>
 
+        <!--
+            The loading layer, over both segments of the shell and starting on
+            screen: the connection holds it from boot until the server answers
+            and takes it back the moment it drops, so a client that is not
+            talking to a server is never showing one it cannot use. index.js
+            names every holder, and the layer is up while any of them holds it.
+        -->
         <dialog class="active" id="dialog-loading">
             <h5 data-localization="loading.title">Loading...</h5>
             <br>
@@ -134,29 +48,12 @@
         </dialog>
 
         <!--
-            The client and the server are one build: this is what is left on
-            screen when they are not. The desktop client is pointed at the
-            server it can download the matching one from, the browser client at
-            whoever runs the server - reloading a browser tab that is behind
-            fixes it, reloading one in front of the server does not.
+            The surface the management screens are mounted into. The room is the
+            other segment, it mounts into the body and takes the whole window.
+            beercss lays the body out as a grid of named areas, so a bar mounted
+            after this one still lands around it.
         -->
-        <dialog class="" id="dialog-version">
-            <h5 data-localization="version.title">Version mismatch</h5>
-            <br>
-            <div id="version-message" data-localization="version.web">Version mismatch contact to administrator</div>
-            <br>
-            <div class="small-text" id="version-numbers"></div>
-            <nav class="right-align hide" id="version-download">
-                <a class="button primary" id="version-download-link" target="_blank" rel="noreferrer"></a>
-            </nav>
-        </dialog>
-
-        <dialog class="" id="dialog-confim">
-
-        </dialog>
-
-        <!-- Surfaces, the screens are mounted into the main below -->
-        <main class="surface-container round padding bottom-margin center-align" id="screen-main">
+        <main class="surface-container round padding bottom-margin center-align" id="screen-main" data-segment="management">
         </main>
     </body>
 </html>

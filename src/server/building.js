@@ -270,18 +270,26 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
     return built;
 };
 
-// the client configuration file the built clients read: the version, and the
-// domain and port of each of the two servers
+// the client configuration file the built clients read: the version, the domain
+// and port of each of the two servers, and the desktop clients this build makes
 //
-// The two are configured apart and may be reached at different addresses, so
-// each gets its own section. The WS half is the remote server when one is
-// configured, and the local one otherwise - which answers on the HTTP domain
-// when it shares the host with it.
-const buildConfFile = async function(conf) {
+// The two servers are configured apart and may be reached at different
+// addresses, so each gets its own section. The WS half is the remote server when
+// one is configured, and the local one otherwise - which answers on the HTTP
+// domain when it shares the host with it.
+//
+// The client list is the targets this compile is about to write, so the download
+// screen offers exactly the zips that end up beside it and never a link to a
+// target this server was not built for. Every dist is handed the same file, so a
+// desktop client knows about its siblings too.
+const buildConfFile = async function(conf, dists = []) {
     const confData = {
         "version": await getVersion(),
         "http": {},
-        "ws": {}
+        "ws": {},
+        "clients": dists.map(function(dist) {
+            return dist["os"] + "-" + dist["arch"] + ".zip";
+        })
     };
     if (typeof conf["http"] === "object") {
         confData["http"]["domain"] = conf["http"]["domain"];
@@ -432,7 +440,7 @@ const compileClients = async function(conf) {
     }
 
     // generate conf file, the same one every dist and the web client is given
-    const confFile = await buildConfFile(conf);
+    const confFile = await buildConfFile(conf, dists);
 
     // minify the shared client parts once, they go into every dist
     process.stdout.write("\n    Building web client...    ");

@@ -1,12 +1,13 @@
 "use strict";
 
-// the desktop client downloads: the operating systems and the architectures the
-// server actually built a client for
+// the desktop client downloads, chosen in two steps: the operating system, then
+// the architecture that operating system was built for
 //
-// index.json carries the version and the two server addresses and nothing else,
-// so the list of built clients has no source yet - the screen holds none and
-// offers no download until the server hands it over. See
-// dev/plans/ws-client-config.md.
+// The list comes from the generated index.json this client was served with, so
+// it names exactly the zips this build wrote beside it (see buildConfFile in
+// src/server/building.js). A server that built none shows the empty state and
+// offers nothing - the second step only ever offers the architectures the
+// operating system picked in the first one actually has.
 
 // first-party dependencies
 import { Screen } from "../../src/view.js";
@@ -55,9 +56,13 @@ const DownloadScreen = class extends Screen {
     selectedOs = "";
     selectedArch = "";
 
-    // the zips this server built, once there is somewhere to read them from
+    // the zips this server built, from the configuration it was served with
     clientList() {
-        return [];
+        const clients = this.ctx["conf"]["clients"];
+        if (Array.isArray(clients) === false) {
+            return [];
+        }
+        return clients;
     };
 
     async mount(ctx) {
@@ -83,6 +88,8 @@ const DownloadScreen = class extends Screen {
         }
 
         // get important elements
+        this.choice = document.getElementById("download-choice");
+        this.empty = document.getElementById("download-empty");
         this.downloadFinish = document.getElementById("download-finish");
         this.osButtons = new Map();
         for (const [os, id] of OS_BUTTONS) {
@@ -135,9 +142,13 @@ const DownloadScreen = class extends Screen {
     displayChoice(os, arch) {
         // a server with no desktop client at all has nothing to choose from
         if (this.clients.size === 0) {
+            this.choice.classList.add("hide");
+            this.empty.classList.remove("hide");
             this.downloadFinish.disabled = true;
             return;
         }
+        this.choice.classList.remove("hide");
+        this.empty.classList.add("hide");
         this.downloadFinish.disabled = false;
 
         // select OS

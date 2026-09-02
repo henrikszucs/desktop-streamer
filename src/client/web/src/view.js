@@ -16,6 +16,11 @@
 // view.css and its localization.json - the registry names the three beside the
 // script and has them loaded before mount() runs.
 //
+// A screen also names the segment of the shell it opens in - "management", the
+// navigation bars and the main surface, or "room", the whole window - and the
+// router switches the chrome to match. The loading layer is over both of them
+// and belongs to neither.
+//
 // ctx is the only way a module reaches anything outside itself:
 // {"server", "conf", "setLocal", "localization", "router", "desktop", "ui"}. A module
 // that has to talk upward dispatches an event on itself, nothing reaches into
@@ -56,10 +61,14 @@ const Panel = class extends View {
     };
 };
 
-// a whole screen, mounted into the main surface
+// a whole screen, mounted into the surface of the segment it belongs to
+//
+// A screen names its segment, the router puts the chrome of that segment on
+// screen around it: "management" carries the two navigation bars and the main
+// surface, "room" carries none and takes the whole window. See src/router.js.
 const Screen = class extends Panel {
     static mountPoint = "#screen-main";
-    static hidesNav = false;    // the room takes the whole window
+    static segment = "management";
 };
 
 // a dialog over the shared overlay
@@ -84,23 +93,22 @@ const Dialog = class extends View {
     close() {
         this.hide();
     };
+    // the overlay is shared with the loading layer and with every other dialog,
+    // so it is taken and given back by name rather than switched on and off -
+    // a module loading while this dialog is open must not take it away
     show() {
         const overlay = this.ctx["ui"].overlay;
-        overlay.classList.add("active");
-        if (this.constructor.blurOverlay === true) {
-            overlay.classList.add("blur");
-        }
+        overlay.take(this.constructor.id, this.constructor.blurOverlay === true);
         this.el.classList.add("active");
         if (this.constructor.closeOnOverlay === true) {
-            overlay.addEventListener("click", this.onOverlayClick);
+            overlay.el.addEventListener("click", this.onOverlayClick);
         }
     };
     hide() {
         const overlay = this.ctx["ui"].overlay;
-        overlay.classList.remove("active");
-        overlay.classList.remove("blur");
+        overlay.release(this.constructor.id);
         this.el.classList.remove("active");
-        overlay.removeEventListener("click", this.onOverlayClick);
+        overlay.el.removeEventListener("click", this.onOverlayClick);
     };
 };
 

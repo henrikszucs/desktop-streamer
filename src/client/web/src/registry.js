@@ -10,6 +10,20 @@
 // in one round trip. "html", "css" and "localization" are left out when a module
 // has none.
 const routes = new Map([
+    // the chrome of the management segment, mounted before the first navigation
+    ["nav-top", {
+        "load": () => import("../ui/nav-top/index.js"),
+        "html": "/ui/nav-top/view.html"
+    }],
+    ["nav-left", {
+        "load": () => import("../ui/nav-left/index.js"),
+        "html": "/ui/nav-left/view.html"
+    }],
+    ["version", {
+        "load": () => import("../ui/version/index.js"),
+        "html": "/ui/version/view.html",
+        "localization": "/ui/version/localization.json"
+    }],
     ["new", {
         "load": () => import("../ui/new/index.js"),
         "html": "/ui/new/view.html",

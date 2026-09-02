@@ -1,38 +1,60 @@
 <div class="hide center-align" id="screen-downloads">
     <h3>Download Desktop Streamer</h3>
     <h6 class="small">Get the Desktop Streamer client program for your computer to full remote control.</h6>
-    <div class="row center-align wrap gap padding-top">
-        <button class="small-round extra" id="download-win32">
-            <img class="responsive" src="/media/win32.svg">
-            Windows
-        </button>
-        <button class="small-round extra border" id="download-macos">
-            <img class="responsive" src="/media/macos.svg">
-            macOS
-        </button>
-        <button class="small-round extra border" id="download-linux">
-            <img class="responsive" src="/media/linux.svg">
-            Linux
-        </button>
+
+    <!-- the choice, in two steps: the operating system, then the architecture
+         this server actually built a client for -->
+    <div id="download-choice">
+        <div class="large-space"></div>
+
+        <h6 class="small">1. Operating system</h6>
+        <div class="row center-align wrap top-padding" id="download-os">
+            <button class="small-round extra" id="download-win32">
+                <img class="responsive" src="/media/win32.svg">
+                Windows
+            </button>
+            <button class="small-round extra border" id="download-macos">
+                <img class="responsive" src="/media/macos.svg">
+                macOS
+            </button>
+            <button class="small-round extra border" id="download-linux">
+                <img class="responsive" src="/media/linux.svg">
+                Linux
+            </button>
+        </div>
+
+        <div class="space"></div>
+
+        <h6 class="small">2. Architecture</h6>
+        <div class="row center-align wrap top-padding" id="download-arch">
+            <button class="small-round extra" id="download-x64">
+                x64
+            </button>
+            <button class="small-round extra border" id="download-x86">
+                x86
+            </button>
+            <button class="small-round extra border" id="download-arm64">
+                arm64
+            </button>
+            <button class="small-round extra border" id="download-arm32">
+                arm32
+            </button>
+        </div>
+
+        <div class="large-space"></div>
+
+        <div class="row center-align wrap top-padding">
+            <button class="small-round extra primary" id="download-finish">
+                <i>download</i>
+                <span id="download-finish-label">Download</span>
+            </button>
+        </div>
     </div>
-    <div class="row center-align wrap gap padding-top">
-        <button class="small-round extra" id="download-x64">
-            x64
-        </button>
-        <button class="small-round extra border" id="download-x86">
-            x86
-        </button>
-        <button class="small-round extra border" id="download-arm64">
-            arm64
-        </button>
-        <button class="small-round extra border" id="download-arm32">
-            arm32
-        </button>
-    </div>
-    <div class="row center-align wrap gap padding-top">
-        <button class="small-round extra" id="download-finish">
-            <i>download</i>
-            Download
-        </button>
+
+    <!-- a server that built no desktop client at all has nothing to choose -->
+    <div class="hide" id="download-empty">
+        <div class="large-space"></div>
+        <i class="extra">block</i>
+        <p>This server has no desktop client to download.</p>
     </div>
 </div>

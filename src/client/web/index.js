@@ -16,6 +16,12 @@ import localization from "./src/localization.js";
 import registry from "./src/registry.js";
 import Router from "./src/router.js";
 
+// the chrome of the management segment: markup rather than screens, so it is
+// mounted before the first navigation - the router puts a segment on screen by
+// hiding the [data-segment] chrome of the other one, and it can only hide what
+// is already in the document
+const SHELL = ["nav-top", "nav-left"];
+
 // the modules pulled in while nothing is waiting for them, so the first click
 // on one of them is not the first time the browser hears about it
 const PREFETCH = ["downloads", "settings", "devices", "shares", "menu", "login",
@@ -56,54 +62,71 @@ const main = async function() {
     //
     // the shell
     //
-    const overlay = document.getElementById("dialog-overlay");
+    const overlayEl = document.getElementById("dialog-overlay");
     const loadingEl = document.getElementById("dialog-loading");
-    const loading = {
-        "open": function() {
-            loadingEl.classList.add("active");
-            overlay.classList.add("blur");
-            overlay.classList.add("active");
+
+    // the shared overlay, under the loading layer and under every dialog
+    //
+    // Both of them raise it, both of them take it down, and they overlap: a
+    // dialog that opens its first window asks the router for a module, and the
+    // loading layer handed back at the end of that load would take the overlay
+    // out from under the dialog that is still open. So the overlay is held by
+    // name as well, and it is on screen while anything holds it - blurred while
+    // anything holding it asked for the blur. It starts held by the loading
+    // layer, which is the state the markup is written in.
+    const overlayHolders = new Map([["loading", true]]);
+    const applyOverlay = function() {
+        if (overlayHolders.size === 0) {
+            overlayEl.classList.remove("active");
+            overlayEl.classList.remove("blur");
+            return;
+        }
+        overlayEl.classList.add("active");
+        overlayEl.classList.toggle("blur", [...overlayHolders.values()].includes(true));
+    };
+    const overlay = {
+        "el": overlayEl,
+        "take": function(holder, isBlurred=false) {
+            overlayHolders.set(holder, isBlurred);
+            applyOverlay();
         },
-        "close": function() {
-            loadingEl.classList.remove("active");
-            overlay.classList.remove("blur");
-            overlay.classList.remove("active");
+        "release": function(holder) {
+            overlayHolders.delete(holder);
+            applyOverlay();
         }
     };
 
-    // the mismatch the connection can end on: a client that is not the build
-    // the server is running cannot be talked to out of, so this dialog replaces
-    // the loading one and nothing takes it back off the screen
-    const versionEl = document.getElementById("dialog-version");
-    const showVersionMismatch = function(client, serverVersion) {
-        document.getElementById("version-numbers").innerText = localization.putParameters(
-            localization.get("version.numbers"),
-            new Map([["client", client], ["server", serverVersion]])
-        );
-
-        // the desktop client is the one that can be replaced: point it at the
-        // HTTP server it was built against, which serves the matching download.
-        // A browser tab has nothing to install, so it keeps the message it was
-        // translated with and the user is sent to whoever runs the server.
-        if (desktop.isAvailable) {
-            const http = conf["http"];
-            const port = (http["port"] === 443) ? "" : (":" + http["port"]);
-            const url = "https://" + http["domain"] + port + "/downloads";
-            const link = document.getElementById("version-download-link");
-            link.innerText = url;
-            link.href = url;
-            link.addEventListener("click", function(event) {
-                event.preventDefault();
-                desktop.ipcRenderer.invoke("api", "open-external", url);
-            });
-            document.getElementById("version-message").innerText = localization.get("version.desktop");
-            document.getElementById("version-download").classList.remove("hide");
+    // the loading layer, over both segments of the shell
+    //
+    // Two things ask for it and they overlap: the connection, which holds it
+    // from boot until the server answers and takes it back the moment it drops,
+    // and a module that is slow to arrive. A screen that finishes loading while
+    // the socket is down must not hand the layer back, so every holder is named
+    // and the layer is on screen while any of them holds it. It starts held by
+    // the connection, which is the state the markup is written in.
+    const loadingHolders = new Set(["connection"]);
+    const loading = {
+        "open": function(holder="connection") {
+            loadingHolders.add(holder);
+            loadingEl.classList.add("active");
+            overlay.take("loading", true);
+        },
+        "close": function(holder="connection") {
+            loadingHolders.delete(holder);
+            if (loadingHolders.size > 0) {
+                return;
+            }
+            loadingEl.classList.remove("active");
+            overlay.release("loading");
+        },
+        // what replaces the layer rather than waits for it: the version
+        // mismatch is terminal, so it takes the layer off whoever holds it and
+        // leaves the overlay to the dialog that replaces it
+        "dismiss": function() {
+            loadingHolders.clear();
+            loadingEl.classList.remove("active");
+            overlay.release("loading");
         }
-
-        loading.close();
-        versionEl.classList.add("active");
-        overlay.classList.add("blur");
-        overlay.classList.add("active");
     };
 
     const server = new Server();
@@ -138,86 +161,20 @@ const main = async function() {
     globalThis.desktop = desktop;
     globalThis.router = router;
 
-    // The user menu of the top bar and the shares badge of the left bar follow
-    // the sign-in state and the joins, and the server answers neither today
-    // (see dev/plans/). The markup they start from - the logged out menu, the
-    // hidden badge - is what a client without them shows, so nothing is wired
-    // here until the transport carries them again.
-
     //
-    // the left bar, wide or narrow
+    // the shell, then the connection
     //
-    const menuBtn = document.getElementById("btn-menu-left");
-    let isMenuMax = false;
-    const switchMenu = function(isMax = isMenuMax) {
-        const btnDownload = document.getElementById("btn-download");
-        const btnShares = document.getElementById("btn-shares");
-        if (isMax) {
-            menuBtn.parentElement.parentElement.classList.add("max");
-            btnDownload.classList.add("primary");
-            btnDownload.children[0].classList.remove("primary");
-            // fix point in shares
-            if (btnShares.children.item(0).tagName !== "DIV") {
-                const icon = btnShares.children.item(0);
-                const badge = btnShares.children.item(1);
-                const div = document.createElement("div");
-                div.prepend(badge);
-                div.prepend(icon);
-                btnShares.prepend(div);
-            }
-        } else {
-            menuBtn.parentElement.parentElement.classList.remove("max");
-            btnDownload.classList.remove("primary");
-            btnDownload.children[0].classList.add("primary");
+    // The bars are in the document before the router runs, so the first
+    // navigation finds the chrome it has to show or hide - a deep link into the
+    // room segment would otherwise leave them on screen over it.
+    await Promise.all(SHELL.map(function(id) {
+        return router.load(id);
+    }));
 
-            // fix point in shares
-            if (btnShares.children.item(0).tagName === "DIV") {
-                const div = btnShares.children.item(0);
-                const icon = div.children.item(0);
-                const badge = div.children.item(1);
-                div.remove();
-                btnShares.prepend(badge);
-                btnShares.prepend(icon);
-            }
-        }
-    };
-    if (sizeS < width) {
-        isMenuMax = (width >= sizeM);
-        switchMenu();
-    }
-    menuBtn.addEventListener("click", function() {
-        isMenuMax = !isMenuMax;
-        switchMenu();
-    });
-    window.addEventListener("resize", function() {
-        if (sizeS < window.innerWidth && router.isDialogOpen("menu") === true) {
-            router.closeDialog("menu");
-        }
-    });
-
-    // the desktop client is already the download
-    if (desktop.isAvailable) {
-        document.getElementById("btn-download").classList.add("hide");
-    }
-
-    //
-    // the connection, and the UI that depends on what the server supports
-    //
     router.start();
     server.connect("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
 
     const switchOnline = function() {
-        const serverConf = conf["remote"];
-
-        const hasServices = typeof serverConf["serviceSharing"] !== "undefined";
-        for (const el of document.querySelectorAll("[data-route=\"services\"]")) {
-            if (hasServices) {
-                el.classList.remove("hide");
-            } else {
-                el.classList.add("hide");
-            }
-        }
-
         loading.close();
         router.closeDialogs();
         router.loadPath();
@@ -227,13 +184,15 @@ const main = async function() {
         switchOnline();
     }
     server.addEventListener("online", switchOnline);
+    // the connection is gone, so nothing on either segment can be acted on:
+    // the layer comes back over whichever one is open, and the screen below it
+    // is left alone so it is still there when the socket comes back
     server.addEventListener("offline", function() {
         router.closeDialogs();
         loading.open();
     });
     server.addEventListener("version-mismatch", function(event) {
-        router.closeDialogs();
-        showVersionMismatch(event.detail["client"], event.detail["server"]);
+        router.openDialog("version", event.detail);
     });
 };
 main();

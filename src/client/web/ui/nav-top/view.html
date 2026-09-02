@@ -1,0 +1,28 @@
+<nav class="top surface" id="nav-top" data-segment="management">
+    <button class="circle large transparent s" id="btn-menu-top" data-dialog="menu">
+        <i>menu</i>
+    </button>
+    <div class="max"></div>
+    <button class="circle large transparent" id="btn-settings" data-dialog="settings">
+        <i>settings</i>
+    </button>
+    <button class="circle large fill" id="btn-user-circle">
+        <img class="responsive" src="/media/guest.svg" height="32" id="btn-user">
+        <menu class="border left no-wrap" id="btn-user-menu-logged-out">
+            <li id="btn-login" data-route="login">
+                <i>login</i>
+                <span data-localization="main.login">Log in</span>
+            </li>
+        </menu>
+        <menu class="border left no-wrap hide" id="btn-user-menu-logged-in">
+            <li id="btn-account-settings" data-dialog="account">
+                <i>settings</i>
+                <span data-localization="main.account">Account settings</span>
+            </li>
+            <li id="btn-logout">
+                <i>logout</i>
+                <span data-localization="main.logout">Sign out</span>
+            </li>
+        </menu>
+    </button>
+</nav>
