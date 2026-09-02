@@ -33,7 +33,9 @@
             "Bash(git fetch --dry-run *)",
             "Bash(git help *)",
             "Bash(git --version)",
-            "Bash(git rebase)"
+            "Bash(git rebase)",
+            "Bash(rm -rf *)",
+            "Bash(rm -f *)"
         ],
         "deny": [
             "Bash(git commit *)",
@@ -91,8 +93,6 @@
             "Bash(git worktree lock *)",
             "Bash(git worktree unlock *)",
             "Bash(git worktree move *)",
-            "Bash(rm -rf *)",
-            "Bash(rm -f *)",
             "Bash(wget * | bash)",
             "Bash(nc *)",
             "Bash(kill -9 *)",
@@ -109,7 +109,8 @@
             "Read(*.key)",
             "Read(**/.env.*)",
             "Read(**/secrets.*)",
-            "Read(**/*credentials*)"
+            "Read(**/*credentials*)",
+            "Read(conf/config.json)"
         ]
     }
 }
