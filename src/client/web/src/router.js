@@ -298,13 +298,17 @@ const Router = class extends EventTarget {
         });
     };
 
-    // a beercss menu stays open until whatever holds it loses the focus
+    // a beercss menu stays open until whatever holds it loses the focus, and a
+    // submenu hangs on an <li> that cannot hold any: the walk up the nesting is
+    // what reaches the element that does - the button of the user menu, for an
+    // entry of the switch-account submenu inside it
     blurMenu(el) {
-        const menu = el.closest("menu");
-        if (menu === null) {
-            return;
+        let menu = el.closest("menu");
+        while (menu !== null && typeof menu !== "undefined") {
+            const holder = menu.parentElement;
+            holder?.blur?.();
+            menu = holder?.closest?.("menu") ?? null;
         }
-        menu.parentElement?.blur?.();
     };
 };
 

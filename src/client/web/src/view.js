@@ -22,7 +22,7 @@
 // and belongs to neither.
 //
 // ctx is the only way a module reaches anything outside itself:
-// {"server", "conf", "setLocal", "localization", "router", "desktop", "ui"}. A module
+// {"server", "conf", "setLocal", "resetUser", "localization", "router", "desktop", "ui"}. A module
 // that has to talk upward dispatches an event on itself, nothing reaches into
 // its fields.
 

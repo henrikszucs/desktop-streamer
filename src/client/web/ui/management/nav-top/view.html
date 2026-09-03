@@ -8,17 +8,40 @@
     </button>
     <button class="circle large fill" id="btn-user-circle">
         <img class="responsive" src="/media/guest.svg" height="32" id="btn-user">
-        <menu class="border left no-wrap" id="btn-user-menu-logged-out">
-            <li id="btn-login" data-route="login">
-                <i>login</i>
-                <span data-localization="main.login">Log in</span>
+        <!--
+            One menu, not two: the client is always somebody. It starts as the
+            guest - a user with nothing behind it rather than a signed out
+            state - so every entry below is there for every user, and what
+            follows the current one is the picture in the bar and the mark in
+            the submenu, not which entries the menu has.
+        -->
+        <menu class="border left no-wrap" id="btn-user-menu">
+            <li id="btn-user-switch">
+                <i>switch_account</i>
+                <span class="max" data-localization="main.switchAccount">Switch account</span>
+                <i>arrow_right</i>
+                <!--
+                    The accounts this client is signed in as. The entry that
+                    adds one more is the top of the submenu and stays there;
+                    every row below it is one account, built by ./index.js from
+                    the list it is handed - see setAccounts().
+                -->
+                <menu class="border left no-wrap" id="btn-user-switch-menu">
+                    <li id="btn-user-add" data-route="login">
+                        <i>add</i>
+                        <span data-localization="main.addUser">Add new user</span>
+                    </li>
+                </menu>
             </li>
-        </menu>
-        <menu class="border left no-wrap hide" id="btn-user-menu-logged-in">
             <li id="btn-account-settings" data-dialog="account">
                 <i>settings</i>
                 <span data-localization="main.account">Account settings</span>
             </li>
+            <!--
+                For an account this ends the session. For the guest there is
+                none to end, so it forgets what this client keeps for it - the
+                local connections - see logout() in ./index.js.
+            -->
             <li id="btn-logout">
                 <i>logout</i>
                 <span data-localization="main.logout">Sign out</span>

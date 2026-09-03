@@ -69,6 +69,18 @@ const dict = {
             "en": "Logout",
             "hu": "Kijelentkezés"
         },
+        "guest": {
+            "en": "Guest",
+            "hu": "Vendég"
+        },
+        "switchAccount": {
+            "en": "Switch account",
+            "hu": "Fiókváltás"
+        },
+        "addUser": {
+            "en": "Add new user",
+            "hu": "Új felhasználó"
+        },
         "menu": {
             "en": "Menu",
             "hu": "Menü"
