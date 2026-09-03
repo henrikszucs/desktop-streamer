@@ -18,15 +18,22 @@
     </head>
     <body>
         <!--
-            The three elements the application is built on top of, and nothing
+            The four elements the application is built on top of, and nothing
             else. Every bar, screen and dialog - the two navigation bars
-            included - is a UI module under /ui that ui/ui.js mounts into the
-            body at runtime, see src/registry.js.
+            included - is a UI module under /ui that ui/ui.js mounts into one of
+            them at runtime, see src/registry.js.
 
             What stays here is what has to exist before the first module can be
-            fetched: the surface a screen is mounted into, the overlay a dialog
-            is shown over, and the loading layer, which is on screen from the
-            first paint rather than from the first script.
+            fetched: the overlay a dialog is shown over, the loading layer,
+            which is on screen from the first paint rather than from the first
+            script, and one surface per segment of the shell - the layers the
+            three folders of /ui are named after.
+
+            A surface carries its own [data-segment]: the router puts the open
+            segment's surface and chrome on screen and takes the other one off,
+            so the two never share the window. The management one starts on
+            screen and the room one starts hidden, which is the segment the
+            shell boots into.
         -->
 
         <!-- The shared overlay, under every dialog and over everything else -->
@@ -49,12 +56,20 @@
         </dialog>
 
         <!--
-            The surface the management screens are mounted into. The room is the
-            other segment, it mounts into the body and takes the whole window.
-            beercss lays the body out as a grid of named areas, so a bar mounted
-            after this one still lands around it.
+            The surface the management screens are mounted into. beercss lays
+            the body out as a grid of named areas, so a bar mounted after this
+            one still lands around it.
         -->
         <main class="surface-container round padding bottom-margin center-align" id="screen-main" data-segment="management">
+        </main>
+
+        <!--
+            The surface of the other segment, the room: the stream and the
+            toolbar over it, no chrome around them. It is the same grid area as
+            the management surface above - one of the two is always hidden - so
+            the room takes the whole window once the bars are off screen.
+        -->
+        <main class="hide" id="room-main" data-segment="room">
         </main>
     </body>
 </html>
