@@ -2,7 +2,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
-import { argGet } from "./server/common.js";
+import { getArg } from "./server/common.js";
 
 const deletePath = async function (targetPath, keepDir, skipPaths = []) {
     const resolvedTarget = path.resolve(targetPath);
@@ -56,13 +56,13 @@ const deleteContents = async function (rootPath, currentPath, skipPaths) {
 };
 
 const main = async function() {
-    const helpFlag = argGet(process.argv, "--help", false) || argGet(process.argv, "-h", false);
+    const helpFlag = getArg(process.argv, "--help", false) || getArg(process.argv, "-h", false);
     if (helpFlag) {
         console.log("Usage: npm run uninstall [-- --bin] [-- --help] [-- --version]\n\n  --bin        also remove ./bin\n  -h, --help   show this help message\n  -v, --version  show the project version");
         return;
     }
 
-    const versionFlag = argGet(process.argv, "--version", false) || argGet(process.argv, "-v", false);
+    const versionFlag = getArg(process.argv, "--version", false) || getArg(process.argv, "-v", false);
     if (versionFlag) {
         const packageJsonPath = path.resolve(import.meta.dirname, "../package.json");
         const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
@@ -76,7 +76,7 @@ const main = async function() {
 		{"path": "./tmp", "keepDir": true, "skipPaths": ["tmp"]}
     ]);
 
-    const binFlag = argGet(process.argv, "--bin", false); 
+    const binFlag = getArg(process.argv, "--bin", false); 
     if (binFlag) {
         itemList.add({"path": "./bin", "keepDir": true, "skipPaths": ["bin"]});
     }

@@ -121,58 +121,59 @@ const httpsGetImage = async function(url) {
 
 // search in parameters
 //
-// One rule for the whole CLI, and it is read off the name rather than carried
-// in a flag beside it: a short option takes its value as the next argument,
-// "-c ./conf/config.json", and a long one takes it joined by an equals sign,
-// "--configuration=./conf/config.json". Nothing accepts both, so there is one
-// spelling of every call and --help can state it exactly.
-//
-// Without isKeyValue the name is a switch and is true when it is there at all.
-const argGet = function(args, argName, isKeyValue=false) {
-    const isLong = argName.startsWith("--");
+// The caller says which form it wants: a switch, "--name=value" with isInline,
+// or "--name value" without it. The CLI spells that one way per option kind -
+// a short option takes the next argument, a long one takes an equals sign -
+// and checkArg below is what holds callers to it, so this stays a plain reader
+// with no opinion of its own.
+const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     for (let i = 0, length=args.length; i < length; i++) {
         const arg = args[i];
-        if (isKeyValue === false) {
+        if (isKeyValue) {
+            if (isInline) {
+                if (arg.startsWith(argName + "=")) {
+                    return arg.slice(argName.length + 1);
+                }
+            } else {
+                if (arg === argName) {
+                    return args[i + 1];
+                }
+            }
+        } else {
             if (arg === argName) {
                 return true;
             }
-            continue;
-        }
-        if (isLong === true) {
-            if (arg.startsWith(argName + "=")) {
-                return arg.slice(argName.length + 1);
-            }
-            continue;
-        }
-        if (arg === argName) {
-            const value = args[i + 1];
-            // the option was written with nothing behind it, or with the next
-            // option behind it - taking "--compile" as the path would fail much
-            // further along, and as something the user never typed
-            if (typeof value === "undefined" || value.startsWith("-") === true) {
-                return undefined;
-            }
-            return value;
         }
     }
     return undefined;
 };
 
-// the rule above, broken the two ways it can be
+// the CLI rule, broken every way it can be
 //
-// A form argGet does not read is a value it never sees, and the caller falls
-// back to its default: the server would boot on a configuration nobody asked
-// for and say nothing. The names that carry a value are handed in here so the
-// CLI can refuse the wrong form and name the right one.
-const argCheck = function(args, valueArgs) {
-    for (const arg of args) {
+// A form getArg is not asked to read is a value it never returns, and the
+// caller falls back to its default: the server would boot on a configuration
+// nobody asked for and say nothing about it. The names that carry a value are
+// handed in here, so a wrong form is refused by name instead. It also catches
+// what getArg cannot see on its own - a short option with nothing behind it,
+// or with the next option behind it, where "-c --compile" would otherwise be
+// read as a path called "--compile" and fail much further along.
+const checkArg = function(args, valueArgs) {
+    for (let i = 0, length=args.length; i < length; i++) {
+        const arg = args[i];
         for (const argName of valueArgs) {
+            const inlineForm = argName + " takes its value joined by an equals sign: " + argName + "=<value>";
+            const separateForm = argName + " takes its value as the next argument: " + argName + " <value>";
             if (argName.startsWith("--") === true) {
                 if (arg === argName) {
-                    return argName + " takes its value joined by an equals sign: " + argName + "=<value>";
+                    return inlineForm;
                 }
             } else if (arg.startsWith(argName + "=") === true) {
-                return argName + " takes its value as the next argument: " + argName + " <value>";
+                return separateForm;
+            } else if (arg === argName) {
+                const value = args[i + 1];
+                if (typeof value === "undefined" || value.startsWith("-") === true) {
+                    return separateForm;
+                }
             }
         }
     }
@@ -202,5 +203,5 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
-export { serverScriptPath, getVersion, generateId, binarySearch, argGet, argCheck, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
-export default { serverScriptPath, getVersion, generateId, binarySearch, argGet, argCheck, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
+export { serverScriptPath, getVersion, generateId, binarySearch, getArg, checkArg, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
+export default { serverScriptPath, getVersion, generateId, binarySearch, getArg, checkArg, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };

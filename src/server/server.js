@@ -8,7 +8,7 @@ import path from "node:path";
 import process from "node:process";
 
 // first-party dependencies
-import { argGet, argCheck, getVersion } from "./common.js";
+import { getArg, checkArg, getVersion } from "./common.js";
 import { loadConfig } from "./config.js";
 import { compileClients } from "./building.js";
 import serverHTTP from "./http.js";
@@ -19,14 +19,14 @@ import serverWS from "./ws.js";
 //
 const main = async function(args) {
     // Help
-    const helpFlag = argGet(args, "--help", false) || argGet(args, "-h", false);
+    const helpFlag = getArg(args, "--help", false) || getArg(args, "-h", false);
     if (helpFlag) {
         console.log("Usage: npm run server [-- -c <path> | --configuration=<path>] [-- --compile] [-- --exit] [-- --help] [-- --version]\n\n  A short option takes its value as the next argument, a long one joined by an equals sign.\n\n  -c <path>                    path to the JSON configuration file (default: ./conf/config.json)\n  --configuration=<path>       the same, in the long form\n  --compile                    force (re)compile the Electron client bundles from ./bin into ./tmp\n  --exit                       validate the configuration/compile and exit without starting listeners\n  -h, --help                   show this help message\n  -v, --version                show the project version");
         return;
     }
 
     // Verison
-    const versionFlag = argGet(args, "--version", false) || argGet(args, "-v", false);
+    const versionFlag = getArg(args, "--version", false) || getArg(args, "-v", false);
     if (versionFlag) {
         console.log(await getVersion());
         return;
@@ -36,7 +36,7 @@ const main = async function(args) {
     process.stdout.write("Reading arguments...    ");
     // a form the rule does not read is a value that never arrives, and the
     // fallback below would boot this server on a configuration nobody asked for
-    const argError = argCheck(args, ["--configuration", "-c"]);
+    const argError = checkArg(args, ["--configuration", "-c"]);
     if (typeof argError !== "undefined") {
         process.stdout.write("failed\n");
         console.error(argError);
@@ -44,14 +44,14 @@ const main = async function(args) {
         return;
     }
 
-    // one spelling each, the rule argGet reads off the name: --configuration
-    // takes its value joined by an equals sign, -c takes the next argument
+    // one spelling each: --configuration takes its value joined by an equals
+    // sign (the inline form), -c takes the next argument
     const confPath = path.resolve(
-        argGet(args, "--configuration", true)
-        || argGet(args, "-c", true)
+        getArg(args, "--configuration", true, true)
+        || getArg(args, "-c", true, false)
         || "./conf/config.json");
-    const compileFlag = argGet(args, "--compile", false) || false;
-    const exitFlag = argGet(args, "--exit", false) || false;
+    const compileFlag = getArg(args, "--compile", false) || false;
+    const exitFlag = getArg(args, "--exit", false) || false;
     process.stdout.write("done\n");
 
     // Load and check the configuration

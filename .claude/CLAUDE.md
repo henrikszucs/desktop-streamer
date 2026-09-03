@@ -8,7 +8,7 @@ Desktop Streamer — an open source remote desktop / screen sharing application 
 
 ## Commands
 
-`npm run server` and `npm run uninstall` are the only scripts; both accept `--help`, which is the authoritative list of their flags (`npm run server -- --help`). Arguments after `--` are forwarded. One rule covers every option that takes a value, and `argGet` in `common.js` reads it off the name rather than from a flag beside it: a **short** option takes its value as the next argument (`-c ./conf/config.json`), a **long** one joined by an equals sign (`--configuration=./conf/config.json`). Neither accepts the other's form, and `argCheck` refuses the wrong one by name at startup rather than letting it fall through to a default nobody asked for. A short option will not swallow the token behind it if that token is itself an option.
+`npm run server` and `npm run uninstall` are the only scripts; both accept `--help`, which is the authoritative list of their flags (`npm run server -- --help`). Arguments after `--` are forwarded. One rule covers every option that takes a value: a **short** option takes its value as the next argument (`-c ./conf/config.json`), a **long** one joined by an equals sign (`--configuration=./conf/config.json`). `getArg` in `common.js` is a plain reader and the caller names the form it wants (`isKeyValue`, `isInline`); `checkArg` beside it is what holds the CLI to the rule, refusing the wrong form by name at startup rather than letting it fall through to a default nobody asked for. It also catches what `getArg` cannot see on its own - a short option with nothing behind it, or with the next option behind it, where `-c --compile` would be read as a path called `--compile`.
 
 `npm test` runs `tests/**/*.test.js` through Node's built-in runner (`node --test`, no dev dependencies — keep it that way). The tests covering build output skip themselves unless `./tmp/web` holds a build, so run `npm run server -- --compile --exit` first to exercise them. There is no linter and nothing type-checks. `dev/rollup/conf.mjs` is an ad hoc helper for vendoring third-party packages into a `libs/` folder, never part of a normal run.
 
@@ -93,7 +93,7 @@ what each one taught, so the shape does not come back.
 - **`--help` is a promise.** The usage line advertised `-c, --configuration
   <path>` while `argGet` was inline-only, so `--configuration ./x` matched
   nothing and silently booted the default configuration. The CLI now has one
-  rule per form (see Commands above), `--help` states it, and `argCheck` fails
+  rule per form (see Commands above), `--help` states it, and `checkArg` fails
   the run on the wrong form instead of falling back.
 - **Closing the connections is not closing the server.** `ws.js` `stop()` calls
   `wsServer.close()`, so in shared-port mode the `upgrade` listener comes off
