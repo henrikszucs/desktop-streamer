@@ -119,13 +119,8 @@ const httpsGetImage = async function(url) {
     });
 };
 
-// search in parameters
-//
-// The caller says which form it wants: a switch, "--name=value" with isInline,
-// or "--name value" without it. The CLI spells that one way per option kind -
-// a short option takes the next argument, a long one takes an equals sign -
-// and checkArg below is what holds callers to it, so this stays a plain reader
-// with no opinion of its own.
+// search in parameters: a switch, "--name=value" with isInline, or "--name value"
+// without it - a plain reader, checkArg below is what holds callers to one form
 const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     for (let i = 0, length=args.length; i < length; i++) {
         const arg = args[i];
@@ -148,15 +143,8 @@ const getArg = function(args, argName, isKeyValue=false, isInline=false) {
     return undefined;
 };
 
-// the CLI rule, broken every way it can be
-//
-// A form getArg is not asked to read is a value it never returns, and the
-// caller falls back to its default: the server would boot on a configuration
-// nobody asked for and say nothing about it. The names that carry a value are
-// handed in here, so a wrong form is refused by name instead. It also catches
-// what getArg cannot see on its own - a short option with nothing behind it,
-// or with the next option behind it, where "-c --compile" would otherwise be
-// read as a path called "--compile" and fail much further along.
+// the CLI rule: a wrong form is refused by name instead of falling back to a
+// default, as is a short option with nothing or the next option behind it
 const checkArg = function(args, valueArgs) {
     for (let i = 0, length=args.length; i < length; i++) {
         const arg = args[i];

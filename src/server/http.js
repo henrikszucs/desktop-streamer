@@ -16,13 +16,11 @@ import { binarySearch } from "./common.js";
 // the folders holding the client assets, everything else is an SPA route
 const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
 
-// a host name worth echoing back into a Location: a name or an IPv4, or an
-// IPv6 in the brackets the authority form puts it in
+// a host name worth echoing into a Location: a name, an IPv4, or a bracketed IPv6
 const HOST_NAME = /^(?:[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*|\[[0-9A-Fa-f:.]{2,45}\])$/;
 
-// what the download folder is allowed to hand out - the built client zips and
-// nothing else. Both request handlers ask, so the cache and the streaming path
-// serve the same set of files rather than each having its own idea of it.
+// the download folder hands out the built client zips and nothing else, both
+// request handlers ask so they serve the same set of files
 const isDownloadable = function(filePath) {
     return path.extname(filePath).toLowerCase() === ".zip";
 };
@@ -46,11 +44,8 @@ const ServerHTTP = class {
 
     };
 
-    // the tag that stands for this exact content
-    //
-    // The size alone cannot: an edit that keeps the byte count - a version
-    // bumped from 0.0.4 to 0.0.7 - would keep its tag, and every client holding
-    // the old copy would be answered 304 with it forever.
+    // the tag that stands for this exact content, the size alone cannot: an edit
+    // keeping the byte count would keep its tag and be answered 304 forever
     fileETag(src, stats) {
         return "\"" + path.basename(src) + String(stats.size) + "-" + String(Math.floor(stats.mtimeMs)) + "\"";
     };
@@ -147,9 +142,8 @@ const ServerHTTP = class {
         return full;
     };
 
-    // the SPA fallback is for routes only: a missing asset has to stay a 404, or
-    // a mistyped import() specifier arrives as index.html with a text/html type
-    // and fails with an opaque MIME error instead of a plain missing file
+    // the SPA fallback is for routes only: a missing asset stays a 404, or a
+    // mistyped import() specifier would arrive as index.html and fail on its MIME
     isRoutePath(filePath) {
         if (filePath === "") {
             return true;
@@ -190,11 +184,8 @@ const ServerHTTP = class {
         };
     };
 
-    // and what a 304 carries instead: the same freshness, no Content-Length
-    //
-    // A 304 has no body, and a length describing one the client will never
-    // receive is the kind of mismatch that leaves it waiting on the socket.
-    // The two used to share fileHeaders(), which is where the length came from.
+    // what a 304 carries instead: the same freshness, no Content-Length for a
+    // body that is not coming, which would leave the client waiting on the socket
     notModifiedHeaders(fileData) {
         return {
             "Cache-Control": "no-cache",
@@ -250,17 +241,8 @@ const ServerHTTP = class {
         };
     };
 
-    // the index, brought back in line with the disk
-    //
-    // It is rebuilt from a fresh listing rather than only revalidated. A file
-    // that *changed* has to lose its metadata and its buffer - an answer that
-    // carried the old length over new bytes would break the response itself,
-    // not only its freshness - but a file that was *created* since the boot
-    // would never enter an index built once and only walked afterwards, and
-    // would 404 for the life of the process however many times it was compiled;
-    // one that was deleted would go on being answered out of memory. What does
-    // survive a rebuild is the access history, because it belongs to the file
-    // rather than to this scan of it, and it is what the cache is scored on.
+    // the index, rebuilt from a fresh listing so a file created or deleted since
+    // the boot is seen; the access history survives, it belongs to the file
     async buildCache() {
         const found = await this.scanFiles();
         const cache = new Map();
@@ -298,13 +280,8 @@ const ServerHTTP = class {
             priorityOrder.splice(i, 0, el);
         }
 
-        // walk in priority order and admit what fits
-        //
-        // The budget is a limit rather than something to step over: the walk
-        // used to stop only once it was already past it, which put the whole of
-        // the last file admitted over the size the configuration asked for. A
-        // file too large for what is left is passed over instead, so a smaller
-        // one behind it still gets in.
+        // walk in priority order and admit what fits, a file too large for what
+        // is left is passed over so a smaller one behind it still gets in
         const admitted = new Set();
         let currentSize = 0;
         for (const el of priorityOrder) {
@@ -424,13 +401,8 @@ const ServerHTTP = class {
     };
 
     httpRedirectHandler = (req, res) => {
-        // An HTTP/1.1 request with no Host is answered by node itself, but an
-        // HTTP/1.0 one reaches this handler, and reading .split of undefined
-        // here is an uncaught exception inside a request handler: the whole
-        // process goes down, from the one port that is open in plaintext. The
-        // header is also whatever the client typed, so a name that is not one
-        // would be echoed straight into a Location - the configured domain
-        // stands in for anything missing or malformed.
+        // an HTTP/1.0 request carries no Host, and the header is attacker text
+        // besides: the configured domain stands in for anything malformed
         const host = typeof req.headers.host === "string" ? req.headers.host : "";
         const name = host.split(":")[0];
         const myURL = HOST_NAME.test(name) === true ? name : this.httpDomain;
@@ -449,11 +421,8 @@ const ServerHTTP = class {
             return;
         }
 
-        // This server writes nothing into what it serves: index.json is part of
-        // a build, written once by buildConfFile for the web client and every
-        // desktop zip alike. A boot that wrote it again would hand the browser a
-        // version the build never produced, and the client would fail its
-        // version check against a server it is in fact the client of.
+        // index.json is part of a build, never rewritten here: a client is only
+        // ever handed the configuration of the build it is part of
 
         // create HTTP server request handler
         let requestHandle = null;

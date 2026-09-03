@@ -274,10 +274,7 @@ const wsSchema = {
                     "default": false
                 },
                 // Allow an account the server has never seen to be created at
-                // sign-in. When false the auth methods still work, but only the
-                // accounts already stored may sign in. It decides nothing when
-                // "auth" is absent: sign-in is disabled then and every client
-                // stays a guest.
+                // sign-in, when false only the stored accounts may sign in
                 "userRegister": {
                     "type": "boolean",
                     "default": true

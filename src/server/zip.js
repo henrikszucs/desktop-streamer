@@ -249,10 +249,8 @@ const emptyEntry = function() {
     };
 };
 
-// backpressure, a 200 MB zip does not fit in the pipe at once
-//
-// One error listener stands for the whole write, a listener per chunk would run
-// the stream past its limit on the first big file.
+// backpressure, a 200 MB zip does not fit in the pipe at once - one error
+// listener for the whole write, a listener per chunk would run past the limit
 const streamWriter = function(stream) {
     let failure = null;
     stream.on("error", function(error) {
@@ -280,30 +278,16 @@ const streamWriter = function(stream) {
     };
 };
 
-// write a zip of the given entries into a stream, in the order they arrive
-//
-// An entry is either taken over from another zip as it is - "raw" with the "crc"
-// and "size" beside it, which costs nothing because the bytes are already
-// deflated - or a new file given as "data" or as a "path" to read, which is
-// deflated here. A few entries are deflated at once, so the cores are busy while
-// the writer walks the list in order.
+// write a zip of the given entries in order: "raw" with its "crc"/"size" is
+// copied over already deflated, "data" or "path" is deflated here, a few at once
 const writeZip = async function(stream, entries, level=9) {
     if (entries.length > MAX_UINT16) {
         throw new Error("Too many zip entries for a plain zip: " + entries.length);
     }
     const write = streamWriter(stream);
 
-    // start the first few, every write takes the next one on
-    //
-    // Each one is settled rather than left to reject on its own. They run up to
-    // CONCURRENCY ahead of the writer, so an entry that fails - a "path" that
-    // cannot be read - would reject with nothing awaiting it yet, and node ends
-    // the process for an unhandled rejection: the build died before writeZip
-    // could throw, which made the try/catch around it unreachable for exactly
-    // the failures it is there for. The failure is carried instead and thrown
-    // in the writer's own order, and the ones still in flight when that happens
-    // - or when the loop itself throws, over 4 GB or on a stream error - can no
-    // longer reject at all.
+    // start the first few, every write takes the next one on - each is settled
+    // rather than left to reject ahead of its await and end the process
     const pending = new Array(entries.length).fill(null);
     const settle = function(promise) {
         return promise.then(function(value) {

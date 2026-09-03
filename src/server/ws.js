@@ -90,45 +90,13 @@ const ServerWS = class {
         process.stdout.write("done\n");
     };
 
-    // the public half of the configuration, the answer of "conf-get". The
-    // permission defaults repeat the ones in the schema, which are documentation
-    // only - Ajv runs without "useDefaults", so a missing key arrives undefined.
-    //
-    // "permissions" is what this server would let the caller do, so the client
-    // can leave a feature it is going to refuse off the screen rather than fail
-    // it at the point of use. Every flag in it is answered for every client, set
-    // or not, so the client never has to know a default of its own.
-    //
-    // isAuth and isGoogleAuth are the same question asked about sign-in, one
-    // step apart: isAuth is whether this server has any way to sign in at all,
-    // which is what the shell asks before it offers to add an account, and
-    // isGoogleAuth is whether that one provider is there, which is what deciding
-    // to show its button needs. "auth" below is what building the button needs.
-    // Every one of them is read off the same key, so a provider cannot be
-    // announced and then be missing its client id, and isAuth cannot be true
-    // with nothing behind it - today Google is the only provider, so the two
-    // flags agree and a second one would only widen isAuth.
-    //
-    // With no "auth" section there is no sign-in: isAuth is false, the auth
-    // section is left off the answer, every client stays a guest, and the whole
-    // auth half of the configuration - the userRegister policy included -
-    // decides nothing.
-    //
-    // When "auth" is absent there is no sign-in at all: isGoogleAuth is false,
-    // the auth section is left off and every client stays a guest, so the whole
-    // auth half of the configuration - the userRegister policy included - has
-    // nothing to decide.
-    //
-    // The permissions the schema carries and this does not are the ones the
-    // client has no say in: guestAllowRelay is enforced on the relay itself,
-    // userRegister is enforced at sign-in (the client cannot know whether the
-    // account behind a credential exists yet), and userRegisterRelay is a
-    // registration policy that decides nothing on screen.
+    // the public half of the configuration, answered to "conf-get": the schema
+    // defaults are repeated here, Ajv runs without "useDefaults"
     buildPublicConf(conf) {
         const permissions = conf["ws"]["permissions"] ?? {};
         const google = conf["ws"]["auth"]?.["google"];
         const isGoogleAuth = (typeof google?.["clientId"] === "string");
-        const isAuth = (isGoogleAuth === true);
+        const isAuth = (isGoogleAuth === true);      // any sign-in at all, Google is the only provider today
 
         const confPublic = {
             "webrtc": {
@@ -328,9 +296,8 @@ const ServerWS = class {
         this.reject(messageObj, "unknown-type");
     };
 
-    // the answer of a call this server does not serve. An aborted incoming
-    // message sends nothing back, so the caller would sit out its whole
-    // interaction timeout instead of failing on the spot - answer every invoke.
+    // the answer of a call this server does not serve, an aborted message sends
+    // nothing back and would leave the caller on its interaction timeout
     reject(messageObj, error) {
         /*{
             "success": false,
@@ -391,13 +358,8 @@ const ServerWS = class {
 
             });
 
-            // and the server itself, not only what is connected to it
-            //
-            // In shared-port mode the WebSocketServer is an "upgrade" listener
-            // on the HTTP server's own listener, and closing the sockets leaves
-            // it sitting there: the HTTP server would go on answering upgrades
-            // after this returned, and a second start() would add a second
-            // listener beside the first one.
+            // and the server itself: in shared-port mode it is an "upgrade"
+            // listener on the HTTP server, left behind by closing the sockets
             await new Promise((resolve) => {
                 const timeOut = setTimeout(function() {
                     resolve(false);
@@ -410,9 +372,8 @@ const ServerWS = class {
             this.wsServer = null;
         }
 
-        // outside the branch above, because a start() that failed between
-        // creating this listener and assigning wsServer would otherwise leave
-        // the port bound for the life of the process
+        // outside the branch above, a start() that failed before assigning
+        // wsServer would otherwise leave the port bound for the process life
         if (this.wsHttpServer !== null) {
             await new Promise((resolve) => {
                 const timeOut = setTimeout(function() {

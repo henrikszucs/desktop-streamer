@@ -273,18 +273,8 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
     return built;
 };
 
-// the client configuration file the built clients read: the version, the domain
-// and port of each of the two servers, and the desktop clients this build makes
-//
-// The two servers are configured apart and may be reached at different
-// addresses, so each gets its own section. The WS half is the remote server when
-// one is configured, and the local one otherwise - which answers on the HTTP
-// domain when it shares the host with it.
-//
-// The client list is the targets this compile is about to write, so the download
-// screen offers exactly the zips that end up beside it and never a link to a
-// target this server was not built for. Every dist is handed the same file, so a
-// desktop client knows about its siblings too.
+// the configuration the built clients read: the version, a section per server
+// (they are configured apart), and the zips this compile is about to write
 const buildConfFile = async function(conf, dists = []) {
     const confData = {
         "version": await getVersion(),
@@ -323,11 +313,8 @@ const writeWeb = async function(webDestPath, webFiles, confFile) {
     await fs.writeFile(path.join(webDestPath, CONF_FILE), confFile);
 };
 
-// the Electron dist as zip entries, without its default app
-//
-// A dist that is already a zip is taken over entry by entry with its bytes still
-// deflated: it is the bulk of the output, and deflating it again would cost more
-// than everything else the build does put together.
+// the Electron dist as zip entries, without its default app - an entry of a zip
+// dist keeps its deflated bytes rather than going through deflate a second time
 const packDist = async function(dist) {
     let asarFile = path.join("resources", "default_app.asar");
     if (dist["os"] === "darwin") {
@@ -362,12 +349,8 @@ const packDist = async function(dist) {
     return entries;
 };
 
-// stream one dist zip to disk, the whole thing never stands in memory at once
-//
-// It is written beside the target and moved onto it only once it is whole. The
-// caller catches a failed dist and carries on to the next target, so a stream
-// opened at the final name left a truncated zip exactly where http.js serves
-// the downloads from - offered to clients as a client.
+// stream one dist zip to disk, never held in memory at once and written beside
+// the target so a failed build leaves no truncated zip where it is served from
 const writeDistZip = async function(destPath, entries) {
     const partPath = destPath + PART_SUFFIX;
     try {
