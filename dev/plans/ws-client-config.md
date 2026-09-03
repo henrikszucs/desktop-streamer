@@ -39,7 +39,8 @@ config the schema accepts makes the old code throw on an undefined property.
 | - | `ws.permissions.userRegisterRelay` (unused) |
 
 So the WS server has never started against a valid configuration file. Decide
-one shape, then make the schema, `conf/config.example.json` and `ws.js` agree.
+one shape, then make the schema, `conf/config.example.json` and
+`ws/handlers/conf.js` agree.
 
 ## Decisions to make
 

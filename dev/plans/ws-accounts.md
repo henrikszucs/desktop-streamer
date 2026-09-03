@@ -15,7 +15,7 @@ Depends on [ws-database.md](ws-database.md) and [ws-client-config.md](ws-client-
 
 ## Two different session ids
 
-`ws.js` today generates a **connection** session id in `generateSessionId()`: ten
+`ws/ws.js` today generates a **connection** session id in `generateSessionId()`: ten
 characters, unique among live connections, gone when the socket closes, never
 written anywhere. This plan adds the **account** session - a `sessions` row with
 a `session_id` and a secret `session_key`, an expiry and the last used time, that

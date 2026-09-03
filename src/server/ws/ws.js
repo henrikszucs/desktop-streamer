@@ -10,11 +10,13 @@ import https from "node:https";
 import { WebSocketServer } from "ws";
 
 // first-party dependencies
-import Communicator from "./communicator.js";
-import { generateId, getVersion } from "./common.js";
-import serverHTTP from "./http.js";
+import Communicator from "../communicator.js";
+import { generateId, getVersion } from "../common.js";
+import serverHTTP from "../http.js";
+import { handleAPI } from "./api.js";
+import { buildPublicConf } from "./handlers/conf.js";
 
-// create the WS server, the files are served by the HTTP server
+// the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
     wsServer = null;
     wsHttpServer = null;
@@ -47,7 +49,7 @@ const ServerWS = class {
 
         // what a client is allowed to learn about this server, never key
         // material, SMTP credentials, OAuth secrets or database settings
-        this.confPublic = this.buildPublicConf(conf);
+        this.confPublic = buildPublicConf(conf);
 
         // the WS server is reachable on the HTTP domain when they share a host
         let domain = conf["ws"]["domain"];
@@ -88,40 +90,6 @@ const ServerWS = class {
         });
         process.stdout.write("\n    Available: wss://" + domain + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
         process.stdout.write("done\n");
-    };
-
-    // the public half of the configuration, answered to "conf-get": the schema
-    // defaults are repeated here, Ajv runs without "useDefaults"
-    buildPublicConf(conf) {
-        const permissions = conf["ws"]["permissions"] ?? {};
-        const google = conf["ws"]["auth"]?.["google"];
-        const isGoogleAuth = (typeof google?.["clientId"] === "string");
-        const isAuth = (isGoogleAuth === true);      // any sign-in at all, Google is the only provider today
-
-        const confPublic = {
-            "webrtc": {
-                "iceServers": conf["ws"]["webrtc"]["iceServers"]
-            },
-            "permissions": {
-                "guestAllowShare": permissions["guestAllowShare"] ?? true,
-                "guestAllowJoin": permissions["guestAllowJoin"] ?? true,
-                "isAuth": isAuth,
-                "isGoogleAuth": isGoogleAuth
-            }
-        };
-
-        // the sign-in providers, the public client id of each and nothing else
-        if (typeof conf["ws"]["auth"] === "object") {
-            const auth = {};
-            if (isGoogleAuth === true) {
-                auth["google"] = {
-                    "clientId": google["clientId"]
-                };
-            }
-            confPublic["auth"] = auth;
-        }
-
-        return confPublic;
     };
 
     // a session id that no live connection holds
@@ -205,7 +173,7 @@ const ServerWS = class {
         // listen messages and handle API
         com.onIncoming(async (messageObj) => {
             try {
-                await this.handleAPI(messageObj, sessionId);
+                await handleAPI(messageObj, sessionId, this);
             } catch (error) {
                 console.log("Error handling message:", error);
                 client.get("ws").terminate();
@@ -218,99 +186,6 @@ const ServerWS = class {
 
         // debug info
         console.log("Client connected (" + sessionId + ")");
-    };
-
-    // the client facing protocol, every known message type answers the caller
-    async handleAPI(messageObj, sessionId) {
-        // check basic structure
-        await messageObj.wait();
-        const message = messageObj.data;
-        if (typeof message !== "object" || typeof message["type"] !== "string") {
-            console.log("Invalid message format", message);
-            this.reject(messageObj, "invalid-format");
-            return;
-        }
-
-        // the public half of the server configuration, the first message a
-        // client sends - it stays offline until this one answers
-        if (message["type"] === "conf-get") {
-            /*{
-            }*/
-            /*{
-                "webrtc": {"iceServers": string[]},
-                "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean,
-                                "isAuth": boolean, "isGoogleAuth": boolean},
-                "auth": {"google": {"clientId": string}}   (only when configured)
-            }*/
-            messageObj.send(this.confPublic);
-            return;
-        }
-
-        // connection test, the answer carries the server time of the answer
-        if (message["type"] === "ping") {
-            /*{
-            }*/
-            /*{
-                "success": boolean,
-                "timestamp": number
-            }*/
-            messageObj.send({
-                "success": true,
-                "timestamp": Date.now()
-            });
-            return;
-        }
-
-        // session id of this connection
-        if (message["type"] === "session-get") {
-            /*{
-            }*/
-            /*{
-                "success": boolean,
-                "sessionId": string
-            }*/
-            messageObj.send({
-                "success": true,
-                "sessionId": sessionId
-            });
-            return;
-        }
-
-        // version check, a client that does not match the server has to update
-        if (message["type"] === "version-check") {
-            /*{
-                "version": string
-            }*/
-            /*{
-                "success": boolean,
-                "version": string
-            }*/
-            messageObj.send({
-                "success": message["version"] === this.version,
-                "version": this.version
-            });
-            return;
-        }
-
-        console.log("Unknown message type", message["type"]);
-        this.reject(messageObj, "unknown-type");
-    };
-
-    // the answer of a call this server does not serve, an aborted message sends
-    // nothing back and would leave the caller on its interaction timeout
-    reject(messageObj, error) {
-        /*{
-            "success": false,
-            "error": string
-        }*/
-        if (messageObj.isInvoke === true) {
-            messageObj.send({
-                "success": false,
-                "error": error
-            });
-            return;
-        }
-        messageObj.abort();
     };
 
     async stop() {

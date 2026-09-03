@@ -9,7 +9,7 @@ be restored see [../plans/README.md](../plans/README.md).
 
 ```
     application    {"type": "conf-get"}  ->  {"webrtc": {...}, "permissions": {...}}
-                   src/server/ws.js  <->  src/client/web/src/server.js
+                src/server/ws/ws.js  <->  src/client/web/src/server.js
     ----------------------------------------------------------------------------
     communicator   packets, acks, retries, split, message ids, invoke/answer
                    src/server/communicator.js  <->  libs/communicator/communicator.js
@@ -25,7 +25,7 @@ the protocol knows nothing about WebSockets: it only calls a `sender` function.
 
 | side | files |
 | --- | --- |
-| server | [`src/server/ws.js`](../../src/server/ws.js), [`src/server/communicator.js`](../../src/server/communicator.js) |
+| server | [`src/server/ws/ws.js`](../../src/server/ws/ws.js), [`src/server/ws/api.js`](../../src/server/ws/api.js), [`src/server/communicator.js`](../../src/server/communicator.js) |
 | client | [`src/client/web/src/server.js`](../../src/client/web/src/server.js), [`src/client/web/libs/communicator/communicator.js`](../../src/client/web/libs/communicator/communicator.js) |
 
 ## Where the address comes from
@@ -244,7 +244,7 @@ message is always a single packet but is acked the same way.
 
 ### Timeouts
 
-Both sides are configured identically (`ws.js` `clientConnect`, `server.js`
+Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
 `connect`):
 
 | option | value | what it limits |
@@ -272,7 +272,9 @@ Both sides are configured identically (`ws.js` `clientConnect`, `server.js`
 ## The application API
 
 Everything above carries plain objects with a `"type"` key. `handleAPI` in
-`ws.js` dispatches on it and every branch answers the caller.
+`handleAPI` in `ws/api.js` dispatches on it and every handler answers the caller.
+A type is served by one function in one group file under `ws/handlers/`; the
+groups are merged into the dispatch table in `api.js`.
 
 | type | request | answer |
 | --- | --- | --- |
@@ -461,7 +463,7 @@ ws.addEventListener("open", async function() {
 ## Not implemented yet
 
 Sign-in and account sessions, user data subscriptions, pair codes, joins and the
-WebRTC signaling relay were cut out of `ws.js` and are planned in
+WebRTC signaling relay were cut out of the WS server and are planned in
 [../plans/](../plans/). The client's `Server` class was cut back to match, so
 nothing in the browser sends a type the server does not answer: what is left of
 it is the socket lifecycle and `conf-get`. The UI modules those methods fed -

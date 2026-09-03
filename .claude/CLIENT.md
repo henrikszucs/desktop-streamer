@@ -114,7 +114,7 @@ leaves the overlay to the dialog that replaces it.
 `ctx["ui"].permissions` is the `permissions` block of the `conf-get` answer,
 asked as a question rather than read as a value. The server answers every flag
 for every client whether its configuration sets it or not (`buildPublicConf` in
-`src/server/ws.js`), so a flag that is not there is *an answer that has not
+`src/server/ws/handlers/conf.js`), so a flag that is not there is *an answer that has not
 arrived* rather than a client-side default — and nothing but the loading layer is
 on screen until it has, so "not yet" and "no" are the same thing to a module.
 

@@ -5,7 +5,8 @@ one written so it can be picked up on its own.
 
 ## WS server
 
-Most of what is here was cut out of `src/server/ws.js` when the WS server was
+Most of what is here was cut out of the WS server (a single `src/server/ws.js`
+at the time, `src/server/ws/` today) when it was
 wired into `src/server/server.js`. That file was reduced to the parts that make
 a connection usable at all - the socket lifecycle, the session id of a
 connection, the connection test and the version check - so the server can boot
@@ -22,7 +23,7 @@ Treat that code as a reference, not as something to paste back. It was written
 against an older configuration shape and never ran against the current schema
 (see `ws-client-config.md`), so parts of it are known broken.
 
-### What `ws.js` answers today
+### What the WS server answers today
 
 | type | request | answer |
 | --- | --- | --- |
@@ -31,12 +32,21 @@ against an older configuration shape and never ran against the current schema
 | `session-get` | - | `{"success": true, "sessionId": string}` |
 | `version-check` | `{"version": string}` | `{"success": boolean, "version": string}` |
 
+Each of those is one function in a group file under `src/server/ws/handlers/`,
+reached through the dispatch table in `src/server/ws/api.js` - a new call is a
+function in the group it belongs to, not another branch in one growing file.
+
 Anything else is logged and answered `{"success": false, "error": "unknown-type"}`.
 It is *answered* rather than aborted on purpose - see
 [../docs/websocket.md](../docs/websocket.md), which describes the whole client/server
 protocol from the socket up to these types.
 
 ### WS plans
+
+[ws-api.md](ws-api.md) is the inventory across all of them: every call still to
+be written, its request and answer as the removed code actually had them, and the
+handler group it belongs to. Read it before picking up any plan below - it also
+lists where these plan files disagree with that code.
 
 | plan | what it restores | depends on |
 | --- | --- | --- |

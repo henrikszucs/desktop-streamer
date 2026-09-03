@@ -12,7 +12,7 @@ import { getArg, checkArg, getVersion } from "./common.js";
 import { loadConfig } from "./config.js";
 import { compileClients } from "./building.js";
 import serverHTTP from "./http.js";
-import serverWS from "./ws.js";
+import serverWS from "./ws/ws.js";
 
 //
 // Main

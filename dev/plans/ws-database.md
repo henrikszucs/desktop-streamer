@@ -8,7 +8,7 @@ Source of the removed code: `git show 6c0d18a:src/server/ws.js`, lines 53-178
 
 The dependencies are still in `package.json` (`knex`, `better-sqlite3`,
 `mysql2`), and `config.js` still validates and resolves the `ws.database`
-section, so only `ws.js` lost its half.
+section, so only the WS server lost its half.
 
 ## What the removed code did
 
