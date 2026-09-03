@@ -136,6 +136,7 @@ servers may share a port only when it is `http.port`.
             "guestAllowShare": true,    // Allow guest user to share screen
             "guestAllowJoin": true,     // Allow guest user to join to a screen
             "guestAllowRelay": false,   // Guest user allow to use server for media data transfer
+            "userRegister": true,       // Allow a new user to be registered at sign-in (false: only the already stored accounts may sign in, irrelevant without "auth")
             "userRegisterRelay": true   // Newly registered users get relay permission as allow or deny (this stores for later usage, for modification need DB table update)
         }
     } 

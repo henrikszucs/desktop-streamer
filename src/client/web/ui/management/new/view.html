@@ -1,7 +1,7 @@
 <div class="hide" id="screen-new">
     <!-- Start screen -->
     <h5 data-localization="new.join.title">Join room</h5>
-    <nav class="no-space center-align">
+    <nav class="no-space center-align" id="new-join">
         <div class="field label border left-round" >
             <input type="text" id="input-new-code"/>
             <label data-localization="new.join.join-code">Join code</label>
@@ -12,6 +12,22 @@
             <span data-localization="new.join.btn">Join</span>
         </button>
     </nav>
+    <!--
+        What stands where the flow was when the server does not let a guest
+        through it. The way out is an account, so the button is there when the
+        server has a sign-in to offer and gone when it has none - see
+        applyPermissions() in ./index.js.
+    -->
+    <article class="border round hide" id="new-join-denied">
+        <nav>
+            <i>lock</i>
+            <div class="max" data-localization="new.guest.denied">This feature is not available for guests.</div>
+            <button class="border hide" id="btn-new-join-login" data-route="login">
+                <i>login</i>
+                <span data-localization="main.login">Login</span>
+            </button>
+        </nav>
+    </article>
     <!--<nav class="center-align">
         <button class="large">
             <i>qr_code_scanner</i>
@@ -26,10 +42,20 @@
     <div class="divider margin-top margin-bottom"></div>
     <h5 data-localization="new.share.title">Share device</h5>
     <div class="space"></div>
-    <nav class="center-align">
+    <nav class="center-align" id="new-share">
         <button class="large" id="btn-new-create">
             <i>add_circle</i>
             <span data-localization="new.share.btn">Share this device</span>
         </button>
     </nav>
+    <article class="border round hide" id="new-share-denied">
+        <nav>
+            <i>lock</i>
+            <div class="max" data-localization="new.guest.denied">This feature is not available for guests.</div>
+            <button class="border hide" id="btn-new-share-login" data-route="login">
+                <i>login</i>
+                <span data-localization="main.login">Login</span>
+            </button>
+        </nav>
+    </article>
 </div>

@@ -1,0 +1,21 @@
+/* An entry of the user menu the server has switched off
+ *
+ * It stays in the menu and carries the reason in its tooltip, so it has to keep
+ * taking the pointer: the click leads nowhere because ./index.js takes the
+ * [data-route] off it, not because the element is out of reach.
+ */
+#nav-top .entry-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* The tooltip of that entry has to leave the menu to be seen
+ *
+ * The submenu scrolls the account list it holds, and a scroll container clips
+ * whatever hangs outside it. The only entry that can be disabled is the one
+ * that leads to a sign-in, and a server with no sign-in has no account to list,
+ * so what this lets out of the box is the guest row and the tooltip.
+ */
+#btn-user-switch-menu:has(> .entry-disabled) {
+    overflow: visible;
+}

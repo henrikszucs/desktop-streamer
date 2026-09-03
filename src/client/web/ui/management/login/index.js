@@ -18,9 +18,13 @@ const LoginScreen = class extends Screen {
 
     async mount(ctx) {
         this.googleBox = document.getElementById("google-login");
+        this.disabledBox = document.getElementById("login-disabled");
     };
 
     open(params) {
+        // a server with no provider at all has nothing on this screen, so the
+        // screen says so; which provider is there is setupGoogle()'s question
+        this.disabledBox.classList.toggle("hide", this.ctx["ui"].permissions.isAuth() === true);
         this.setupGoogle();
         super.open(params);
     };

@@ -30,6 +30,13 @@
                     <li id="btn-user-add" data-route="login">
                         <i>add</i>
                         <span data-localization="main.addUser">Add new user</span>
+                        <!--
+                            A server with no sign-in configured has no account
+                            to add: the entry stays where it is, stops leading
+                            anywhere and says whose decision it was - see
+                            applyPermissions() in ./index.js.
+                        -->
+                        <div class="tooltip hide" id="btn-user-add-tooltip" data-localization="main.authDisabled">The administrator disabled authentication</div>
                     </li>
                 </menu>
             </li>

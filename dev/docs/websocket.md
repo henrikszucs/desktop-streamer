@@ -276,7 +276,7 @@ Everything above carries plain objects with a `"type"` key. `handleAPI` in
 
 | type | request | answer |
 | --- | --- | --- |
-| `conf-get` | - | `{"webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isGoogleAuth": bool}, "auth": {"google": {"clientId": string}}}` |
+| `conf-get` | - | `{"webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isAuth": bool, "isGoogleAuth": bool}, "auth": {"google": {"clientId": string}}}` |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
 | `version-check` | `{"version": string}` | `{"success": bool, "version": string}` |
@@ -300,14 +300,29 @@ client never carries a default of its own.
 | --- | --- | --- |
 | `guestAllowShare` | `true` | a guest may share this device |
 | `guestAllowJoin` | `true` | a guest may join someone else's room |
+| `isAuth` | - | this server has some way to sign in, so an account is worth offering |
 | `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |
 
+`isAuth` and `isGoogleAuth` are the same question one step apart: whether there
+is any sign-in at all, and whether that one provider is there. Google is the only
+provider today, so the two agree and a second one would only widen `isAuth`.
 `isGoogleAuth` is read off the same key as `auth.google.clientId`, so a provider
 can never be announced here and then be missing the client id the button is
-built from. The two permissions the schema carries and this answer does not are
-the ones the client has no say in: `guestAllowRelay` is enforced on the relay
-itself, and `userRegisterRelay` is a registration policy that decides nothing on
-screen.
+built from.
+
+The client asks both through `ctx["ui"].permissions` (see
+`src/client/web/ui/ui.js`), never off `conf["remote"]` directly. `isAuth()` is
+what the user menu greys its *add an account* entry on, and what decides whether
+a guest notice offers a way to the sign-in screen; `allows(name)` answers a guest
+flag for whoever this client is, and the `new` screen puts each of its two flows
+on screen or replaces it with that notice. A flag that has not arrived reads as a
+refusal, which is only ever true while the loading layer is still up. When `auth` is absent there is no sign-in at all - `isGoogleAuth` is
+`false`, the `auth` section is left off, every client stays a guest, and the auth
+half of the configuration decides nothing. The permissions the schema carries and
+this answer does not are the ones the client has no say in: `guestAllowRelay` is
+enforced on the relay itself, `userRegister` is enforced at sign-in (the client
+cannot know whether the account behind a credential exists yet), and
+`userRegisterRelay` is a registration policy that decides nothing on screen.
 
 `sessionId` is the id of the **connection**, ten characters from
 `generateId(10)`, unique among the live `clients` Map. It is not an account

@@ -99,18 +99,36 @@ const ServerWS = class {
     // it at the point of use. Every flag in it is answered for every client, set
     // or not, so the client never has to know a default of its own.
     //
-    // isGoogleAuth is the same question asked about sign-in: "auth" below is
-    // what the Google button needs to be built, this is what deciding to show
-    // the button needs. The two are read off the same key, so a provider cannot
-    // be announced and then be missing its client id.
+    // isAuth and isGoogleAuth are the same question asked about sign-in, one
+    // step apart: isAuth is whether this server has any way to sign in at all,
+    // which is what the shell asks before it offers to add an account, and
+    // isGoogleAuth is whether that one provider is there, which is what deciding
+    // to show its button needs. "auth" below is what building the button needs.
+    // Every one of them is read off the same key, so a provider cannot be
+    // announced and then be missing its client id, and isAuth cannot be true
+    // with nothing behind it - today Google is the only provider, so the two
+    // flags agree and a second one would only widen isAuth.
+    //
+    // With no "auth" section there is no sign-in: isAuth is false, the auth
+    // section is left off the answer, every client stays a guest, and the whole
+    // auth half of the configuration - the userRegister policy included -
+    // decides nothing.
+    //
+    // When "auth" is absent there is no sign-in at all: isGoogleAuth is false,
+    // the auth section is left off and every client stays a guest, so the whole
+    // auth half of the configuration - the userRegister policy included - has
+    // nothing to decide.
     //
     // The permissions the schema carries and this does not are the ones the
-    // client has no say in: guestAllowRelay is enforced on the relay itself, and
-    // userRegisterRelay is a registration policy that decides nothing on screen.
+    // client has no say in: guestAllowRelay is enforced on the relay itself,
+    // userRegister is enforced at sign-in (the client cannot know whether the
+    // account behind a credential exists yet), and userRegisterRelay is a
+    // registration policy that decides nothing on screen.
     buildPublicConf(conf) {
         const permissions = conf["ws"]["permissions"] ?? {};
         const google = conf["ws"]["auth"]?.["google"];
         const isGoogleAuth = (typeof google?.["clientId"] === "string");
+        const isAuth = (isGoogleAuth === true);
 
         const confPublic = {
             "webrtc": {
@@ -119,6 +137,7 @@ const ServerWS = class {
             "permissions": {
                 "guestAllowShare": permissions["guestAllowShare"] ?? true,
                 "guestAllowJoin": permissions["guestAllowJoin"] ?? true,
+                "isAuth": isAuth,
                 "isGoogleAuth": isGoogleAuth
             }
         };
@@ -251,7 +270,8 @@ const ServerWS = class {
             }*/
             /*{
                 "webrtc": {"iceServers": string[]},
-                "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean},
+                "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean,
+                                "isAuth": boolean, "isGoogleAuth": boolean},
                 "auth": {"google": {"clientId": string}}   (only when configured)
             }*/
             messageObj.send(this.confPublic);

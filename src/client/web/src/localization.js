@@ -85,6 +85,10 @@ const dict = {
             "en": "Menu",
             "hu": "Menü"
         },
+        "authDisabled": {
+            "en": "The administrator disabled authentication",
+            "hu": "Az adminisztrátor letiltotta a bejelentkezést"
+        },
     }
 };
 

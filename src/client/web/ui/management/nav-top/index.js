@@ -49,13 +49,44 @@ const NavTop = class extends View {
         this.avatarEl = document.getElementById("btn-user");
         this.switchMenu = document.getElementById("btn-user-switch-menu");
         this.addEntry = document.getElementById("btn-user-add");
+        this.addTooltip = document.getElementById("btn-user-add-tooltip");
         this.logoutEntry = document.getElementById("btn-logout");
 
         this.logoutEntry.addEventListener("click", () => {
             this.logout();
         });
 
+        // whether there is any sign-in to add an account with is the server's
+        // answer, and it arrives after this bar is mounted - and again after
+        // every reconnect, which may be a server configured differently. So the
+        // entry follows the answer rather than the boot.
+        this.applyPermissions();
+        ctx["server"].addEventListener("online", () => {
+            this.applyPermissions();
+        });
+
         this.setAccounts();
+    };
+
+    //
+    // the permissions
+    //
+    // the entry that adds an account, against a server that may have no sign-in
+    // at all. It is left in the menu rather than taken out of it: an entry that
+    // is gone says nothing, and what the user needs to know is that the account
+    // is refused by the administrator and not by this client. So it is greyed,
+    // it carries the reason in its tooltip, and the route is taken off it -
+    // which is what stops the click, since the delegated handler of the router
+    // walks past an element with no [data-route].
+    applyPermissions() {
+        const isAuth = this.ctx["ui"].permissions.isAuth();
+        this.addEntry.classList.toggle("entry-disabled", isAuth === false);
+        this.addTooltip.classList.toggle("hide", isAuth === true);
+        if (isAuth === true) {
+            this.addEntry.setAttribute("data-route", "login");
+        } else {
+            this.addEntry.removeAttribute("data-route");
+        }
     };
 
     //

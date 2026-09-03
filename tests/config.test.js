@@ -59,6 +59,7 @@ const wsSection = function() {
             "guestAllowShare": true,
             "guestAllowJoin": true,
             "guestAllowRelay": false,
+            "userRegister": true,
             "userRegisterRelay": true
         }
     };

@@ -273,6 +273,15 @@ const wsSchema = {
                     "type": "boolean",
                     "default": false
                 },
+                // Allow an account the server has never seen to be created at
+                // sign-in. When false the auth methods still work, but only the
+                // accounts already stored may sign in. It decides nothing when
+                // "auth" is absent: sign-in is disabled then and every client
+                // stays a guest.
+                "userRegister": {
+                    "type": "boolean",
+                    "default": true
+                },
                 // Newly registered users get relay permission as allow or deny
                 "userRegisterRelay": {
                     "type": "boolean",

@@ -15,8 +15,9 @@ connects and goes online without any config change. See
 
 **Work items 1 and 2 are open** - the shape questions below were not settled,
 they were side-stepped. `serviceSharing` is still absent from the answer, so the
-services route stays hidden, and `guestAllowRelay` / `userRegisterRelay` are
-still read by nothing.
+services route stays hidden, and `guestAllowRelay` / `userRegister` /
+`userRegisterRelay` are still read by nothing - `userRegister` waits on the
+sign-in work in [ws-accounts.md](ws-accounts.md), which is where it is enforced.
 
 ## Why this comes first
 
@@ -34,6 +35,7 @@ config the schema accepts makes the old code throw on an undefined property.
 | `ws.features.screenSharing.allowGuestJoin` | `ws.permissions.guestAllowJoin` |
 | `ws.features.serviceSharing.isHomePage` | not present |
 | - | `ws.permissions.guestAllowRelay` (unused) |
+| - | `ws.permissions.userRegister` (unused) |
 | - | `ws.permissions.userRegisterRelay` (unused) |
 
 So the WS server has never started against a valid configuration file. Decide

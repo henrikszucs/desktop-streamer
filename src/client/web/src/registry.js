@@ -27,7 +27,8 @@ const routes = new Map([
     // navigation, then the screens the bars lead to and the dialogs over them
     ["nav-top", {
         "load": () => import("../ui/management/nav-top/index.js"),
-        "html": "/ui/management/nav-top/view.html"
+        "html": "/ui/management/nav-top/view.html",
+        "css": "/ui/management/nav-top/view.css"
     }],
     ["nav-left", {
         "load": () => import("../ui/management/nav-left/index.js"),

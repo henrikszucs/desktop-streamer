@@ -1,5 +1,11 @@
 {
     "new": {
+        "guest": {
+            "denied": {
+                "en": "This feature is not available for guests.",
+                "hu": "Ez a funkció vendégként nem érhető el."
+            }
+        },
         "share": {
             "title": {
                 "en": "Share device",

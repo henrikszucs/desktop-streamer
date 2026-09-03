@@ -99,9 +99,39 @@ const createUI = function(ctx) {
     // shown over - see ./loading/loading.js
     const loading = createLoading(overlay);
 
+    // what this server would let this client do: the "permissions" block of the
+    // conf-get answer, asked as a question rather than read as a value
+    //
+    // The server answers every flag for every client whether its configuration
+    // sets it or not (see buildPublicConf in src/server/ws.js), so a flag that
+    // is not there is an answer that has not arrived rather than a default of
+    // the client's own - and nothing but the loading layer is on screen until
+    // it has, so "not yet" and "no" are the same thing to a module.
+    //
+    // The guest flags are the permissions of the user this client is, so they
+    // only hold while it is the guest. Nothing carries accounts yet
+    // (dev/plans/ws-accounts.md) and the client is only ever the guest, which
+    // makes isGuest() the one place that has to learn about them later.
+    const permissions = {
+        "get": function(name) {
+            return ctx["conf"]["remote"]?.["permissions"]?.[name] === true;
+        },
+        "isAuth": function() {
+            return permissions.get("isAuth");
+        },
+        "isGuest": function() {
+            return true;
+        },
+        // a guest permission, answered for whoever this client is
+        "allows": function(name) {
+            return permissions.isGuest() === false || permissions.get(name) === true;
+        }
+    };
+
     return {
         "overlay": overlay,
         "loading": loading,
+        "permissions": permissions,
         "env": {"browser": browser, "width": width, "sizeS": sizeS, "sizeM": sizeM},
         "navigate": function(path) { return ctx["router"].navigate(path); },
         "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
