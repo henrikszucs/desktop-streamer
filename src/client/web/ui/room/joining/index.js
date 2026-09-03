@@ -1,12 +1,7 @@
 "use strict";
 
-// waiting for the host to answer a join request, with the bar that runs out
-// when the request times out. Closing it gives the request up, which is not the
-// same as the host rejecting it, so it says so with a "cancel" event.
-//
-// The request it waits on went with the pairing server
-// (dev/plans/ws-pairing-joins.md), so nothing opens this dialog today and the
-// "cancel" event has nothing to call off on the server.
+// waiting for the host to answer a join request, with the bar that runs out on
+// timeout. Closing gives it up, which is not a rejection - hence "cancel".
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

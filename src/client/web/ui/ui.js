@@ -1,20 +1,7 @@
 "use strict";
 
-// the shell layer: what is on screen before any UI module is, and what puts
-// them all there
-//
-// index.js is boot - the environment, the configuration, the connection - and
-// everything it needs a document for lives here: the local appearance and
-// language settings, the shared overlay, the ctx["ui"] namespace every module
-// reaches the shell through, and the build that mounts the whole module tree
-// before the router runs.
-//
-// The modules themselves sit under the layer of the shell they belong to, and
-// this file is the only thing in ./ui that is not one of them:
-//
-//     ./loading           the layer over both segments, and the version dialog
-//     ./management        the two bars, the screens they lead to, the dialogs
-//     ./room              the stream, and the dialogs of the flows into it
+// the shell layer: everything boot needs a document for, and the build that
+// mounts the module tree - the one file in ./ui that is not a module
 
 // first-party dependencies
 import { browser, width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
@@ -22,16 +9,8 @@ import localization from "../src/localization.js";
 import registry from "../src/registry.js";
 import { createLoading } from "./loading/loading.js";
 
-//
-// the size of the UI, from the display it is going to be read on
-//
-// Every length in the shell is a rem - beercss's own and this client's alike -
-// so the root font size is the size of the whole UI, and this is the one thing
-// that has to be settled before anything is drawn. It is written on <html>
-// rather than in a stylesheet because only script can ask what display it is
-// on, and it is written again on a resize, since a window dragged onto a
-// second monitor changes the pixel ratio under it. See getDisplay() in
-// src/env.js for what the browser will and will not say about a display.
+// the size of the UI, from the display it is read on: every length in the shell
+// is a rem, so the root font size is the size of the whole UI
 const applyScale = function() {
     const display = getDisplay();
     const kind = getDisplayKind(display);
@@ -39,11 +18,8 @@ const applyScale = function() {
     return {"display": display, "kind": kind};
 };
 
-//
-// the local configuration, applied to the document
-//
-// beercss is asked for the theme first and the mode a tick later: the mode is
-// derived from the theme it just built, so the two cannot be set in one go.
+// the theme, then the mode a tick later - beercss derives the mode from the
+// theme it just built, so the two cannot be set in one go
 const applyTheme = function(local) {
     globalThis.ui("theme", local["color"]);
     setTimeout(() => {
@@ -55,9 +31,8 @@ const applyTheme = function(local) {
     }, 1);
 };
 
-// the language of the shell, resolved against what the client actually has:
-// "auto" follows the browser, anything unsupported falls back to English. The
-// resolved one is handed back because the desktop shell has to be told too.
+// the language of the shell: "auto" follows the browser, anything unsupported
+// falls back to English, and the resolved one goes back to the desktop shell
 const applyLanguage = function(local) {
     let lang = local["lang"];
     if (lang === "auto") {
@@ -71,25 +46,13 @@ const applyLanguage = function(local) {
     return lang;
 };
 
-//
-// the shell
-//
-// the ctx["ui"] namespace: the overlay, the loading layer, the environment a
-// module lays itself out against, and the router calls a module makes without
-// holding the router itself. ctx is handed in before its router is there, so
+// the ctx["ui"] namespace. ctx is handed in before its router is there, so
 // every call below reads ctx["router"] at the time of the call, not now.
 const createUI = function(ctx) {
     const overlayEl = document.getElementById("dialog-overlay");
 
-    // the shared overlay, under the loading layer and under every dialog
-    //
-    // Both of them raise it, both of them take it down, and they overlap: a
-    // dialog that opens its first window asks the router for a module, and the
-    // loading layer handed back at the end of that load would take the overlay
-    // out from under the dialog that is still open. So the overlay is held by
-    // name as well, and it is on screen while anything holds it - blurred while
-    // anything holding it asked for the blur. It starts held by the loading
-    // layer, which is the state the markup is written in.
+    // the shared overlay, held by name because the loading layer and the dialogs
+    // overlap - on screen while anything holds it, blurred if any holder asked
     const overlayHolders = new Map([["loading", true]]);
     const applyOverlay = function() {
         if (overlayHolders.size === 0) {
@@ -112,23 +75,11 @@ const createUI = function(ctx) {
         }
     };
 
-    // the loading layer, over both segments, holding the overlay it is
-    // shown over - see ./loading/loading.js
+    // the loading layer, over both segments - see ./loading/loading.js
     const loading = createLoading(overlay);
 
-    // what this server would let this client do: the "permissions" block of the
-    // conf-get answer, asked as a question rather than read as a value
-    //
-    // The server answers every flag for every client whether its configuration
-    // sets it or not (see buildPublicConf in src/server/ws.js), so a flag that
-    // is not there is an answer that has not arrived rather than a default of
-    // the client's own - and nothing but the loading layer is on screen until
-    // it has, so "not yet" and "no" are the same thing to a module.
-    //
-    // The guest flags are the permissions of the user this client is, so they
-    // only hold while it is the guest. Nothing carries accounts yet
-    // (dev/plans/ws-accounts.md) and the client is only ever the guest, which
-    // makes isGuest() the one place that has to learn about them later.
+    // the "permissions" block of the conf-get answer, asked as a question rather
+    // than read as a value - a missing flag has not arrived, it is not a default
     const permissions = {
         "get": function(name) {
             return ctx["conf"]["remote"]?.["permissions"]?.[name] === true;
@@ -158,20 +109,8 @@ const createUI = function(ctx) {
     };
 };
 
-// every UI module, built and mounted before the router runs
-//
-// The client is a small enough tree of modules that loading them one at a time
-// buys nothing and costs a wait on the first click of each, so the whole UI is
-// in the document before anything asks for a piece of it. It is also what the
-// router needs: it puts a segment on screen by hiding the [data-segment] chrome
-// of the other one, and it can only hide what is already there.
-//
-// A module that mounts into the markup of another one has to follow it, and the
-// registry id says which: "settings" carries the markup "settings.appearance"
-// mounts into, so the ids are built one dot-depth at a time.
-//
-// A module that cannot be built is logged and skipped rather than left to take
-// the boot down with it - the rest of the UI is still worth having.
+// every UI module, mounted before the router runs, one dot-depth of the registry
+// id at a time so a module lands after the one it mounts into
 const buildUI = async function(router) {
     const ids = registry.ids();
     const depthOf = function(id) {

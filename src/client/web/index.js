@@ -1,12 +1,7 @@
 "use strict";
 
-// boot
-//
-// Five stages and nothing else: the environment, the configuration, the shell,
-// the UI, then the connection. Everything that touches the document - the
-// appearance and language settings, the overlay, the loading layer, the
-// ctx["ui"] namespace and the build that mounts every module - lives in
-// ./ui/ui.js, and every screen and dialog in a module under ./ui.
+// boot: the environment, the configuration, the shell, the UI, the connection
+// - everything that touches the document is in ./ui/ui.js (see .claude/CLIENT.md)
 
 // first-party dependencies
 import { domReady } from "./src/env.js";
@@ -18,12 +13,8 @@ import Router from "./src/router.js";
 import { applyScale, applyTheme, applyLanguage, createUI, buildUI } from "./ui/ui.js";
 
 const main = async function() {
-    //
-    // the environment
-    //
-    // the size of the UI first, before anything is drawn at the wrong one: a
-    // television is read from across a room and the platform sizes its pixel
-    // for a desk - see applyScale() in ./ui/ui.js
+    // the environment - the size of the UI first, before anything is drawn at
+    // the wrong one
     applyScale();
     window.addEventListener("resize", applyScale);
 
@@ -49,9 +40,8 @@ const main = async function() {
     //
     const server = new Server();
 
-    // what every UI module reaches the rest of the application through. The ui
-    // namespace and the router both close over ctx, so each is filled in as
-    // soon as it exists and neither has to be built before the other.
+    // what every UI module reaches the rest of the application through, the ui
+    // namespace and the router both close over it
     const ctx = {
         "server": server,
         "conf": conf,
@@ -83,8 +73,7 @@ const main = async function() {
     router.start();
     server.connect("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
 
-    // the route is opened under the loading layer and the layer lifts off it
-    // once it is there, so the first thing on screen is the screen itself
+    // the route is opened under the loading layer, which lifts once it is there
     const switchOnline = async function() {
         router.closeDialogs();
         await router.loadPath();
@@ -94,9 +83,8 @@ const main = async function() {
         switchOnline();
     }
     server.addEventListener("online", switchOnline);
-    // the connection is gone, so nothing on either segment can be acted on:
-    // the layer comes back over whichever one is open, and the screen below it
-    // is left alone so it is still there when the socket comes back
+    // the layer comes back over whichever segment is open, the screen below it
+    // is left alone so it is still there when the socket returns
     server.addEventListener("offline", function() {
         router.closeDialogs();
         loading.open();

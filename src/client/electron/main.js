@@ -180,9 +180,8 @@ const main = async function() {
             }
                 
         } else if (handle === "open-external") {
-            // the download of a client zip is the one link that leaves the app:
-            // the window is on local://, the zip is on the server, and a browser
-            // downloads it instead of trying to render it
+            // the one link that leaves the app: the window is on local://, the
+            // zip is on the server, and a browser downloads it
             const target = args[0];
             if (typeof target !== "string") {
                 return false;

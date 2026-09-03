@@ -1,8 +1,7 @@
 "use strict";
 
-// the side menu of the small layout: the same entries the left navigation bar
-// carries, as a dialog. The entries are [data-route] like every other one, the
-// router closes the dialog when it switches screen.
+// the side menu of the small layout: the left rail's entries as a dialog, all
+// [data-route], so the router closes it when it switches screen
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

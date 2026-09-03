@@ -1,19 +1,10 @@
 "use strict";
 
-// the lazy loader and the module cache
-//
-// every specifier below is a literal, on purpose: a built specifier works at
-// runtime but hides every path from tests/assets.test.js, and a mistyped path
-// is the one class of error the browser reports badly.
+// the lazy loader and the module cache. Every specifier below is a literal on
+// purpose: a built one would hide every path from tests/assets.test.js.
 
-// a module is its code, its markup, its styles and its strings, pulled together
-// in one round trip. "html", "css" and "localization" are left out when a module
-// has none.
-//
-// The table is grouped the way ./ui is: the loading layer, the management
-// segment and the room segment, a module of a segment under the folder of
-// that segment. An id stays what it always was - the name the shell and the
-// markup know a module by, not where its files sit.
+// a module is its code, markup, styles and strings in one round trip, the three
+// left out when it has none. An id is not a path, it is what the shell knows.
 const routes = new Map([
     // the loading layer, over both segments: the boot and the connection,
     // and the one dialog that replaces it rather than waiting behind it

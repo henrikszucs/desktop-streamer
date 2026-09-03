@@ -1,12 +1,7 @@
 "use strict";
 
-// the left rail of the management segment: the entries the bars lead to, wide
-// or narrow
-//
-// It is chrome rather than a screen, so the router puts it on and off the screen
-// by its data-segment attribute and never opens or closes it. What it owns is
-// its own width - which the shares badge has to be re-parented for - and the two
-// entries that are not there for every client.
+// the left rail of the management segment, wide or narrow. Chrome rather than a
+// screen: it owns its width and the two entries not every client has.
 
 // first-party dependencies
 import { View } from "../../../src/view.js";
@@ -68,11 +63,8 @@ const NavLeft = class extends View {
         }
     };
 
-    // wide, labels beside the icons, or narrow
-    //
-    // beercss reads the badge of a nav entry as nav.left > a > .badge, so the
-    // narrow rail wants it as a direct child of the entry and the wide one wants
-    // it inside the wrapper beside the icon. The badge moves with the width.
+    // wide, labels beside the icons, or narrow - beercss reads a nav badge as
+    // nav.left > a > .badge, so it is re-parented with the width
     switchMenu() {
         if (this.isMax) {
             this.el.classList.add("max");

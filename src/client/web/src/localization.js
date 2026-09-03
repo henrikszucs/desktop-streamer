@@ -1,10 +1,7 @@
 "use strict";
 
-// the localization core: the strings the shell itself shows, and the lookup,
-// substitution and translation every module goes through. A module ships its
-// own slice as the localization.json beside its markup, and the registry hands
-// it to add() while the module loads, so the dictionary grows with the UI
-// instead of arriving whole at boot.
+// the localization core: the shell's own strings, and the lookup every module
+// goes through - the registry add()s each module's slice as it loads
 
 let curLang = "en";
 
@@ -16,11 +13,8 @@ const setLang = (lang) => {
     curLang = lang;
 };
 
-// the shell slice, every other key arrives through add()
-//
-// What is left here is what the shell itself shows: the loading layer of
-// index.html, and the strings the two navigation bars share with the menu
-// dialog. The version mismatch went with its markup, into ui/loading/version/.
+// the shell slice, every other key arrives through add(): the loading layer of
+// index.html, and what the two bars share with the menu dialog
 const dict = {
     "loading": {
         "title": {

@@ -1,12 +1,7 @@
 "use strict";
 
-// every device signed in to this account, this one first, each one with the
-// button that signs it out
-//
-// The list came from the user data of the server and each box from
-// ./session-box.js. Neither the sessions nor the sign-out they need is served
-// today (dev/plans/ws-accounts.md), so the window opens on an empty list and
-// session-box.js waits there for it.
+// every device signed in to this account, each with its sign-out button - not
+// served today (dev/plans/ws-accounts.md), so the list opens empty
 
 // first-party dependencies
 import { Panel } from "../../../../src/view.js";

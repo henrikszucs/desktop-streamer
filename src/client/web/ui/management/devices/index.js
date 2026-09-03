@@ -1,12 +1,7 @@
 "use strict";
 
-// the devices this client can connect to: the ones paired as a guest, kept in
-// the local database, and the ones the account carries
-//
-// Both lists were built from the joins the server keeps and followed its join
-// events while the screen was open. Nothing carries joins today
-// (dev/plans/ws-pairing-joins.md), so the screen opens on two empty areas and
-// ./device-box.js waits there for them.
+// the devices this client can connect to, paired as a guest or carried by the
+// account - no joins are served today (dev/plans/ws-pairing-joins.md)
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";

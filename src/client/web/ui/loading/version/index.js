@@ -1,11 +1,7 @@
 "use strict";
 
-// the version mismatch
-//
-// The client and the server are one build: this is what is left on screen when
-// they are not. It is terminal - nothing takes it back off - so it replaces the
-// loading layer rather than waiting behind it, and a click outside does not
-// close it.
+// the version mismatch: terminal, so it replaces the loading layer rather than
+// waiting behind it and does not close on a click outside
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";
@@ -25,10 +21,8 @@ const VersionDialog = class extends Dialog {
             new Map([["client", params["client"]], ["server", params["server"]]])
         );
 
-        // the desktop client is the one that can be replaced: point it at the
-        // HTTP server it was built against, which serves the matching download.
-        // A browser tab has nothing to install, so it keeps the message it was
-        // translated with and the user is sent to whoever runs the server.
+        // only a desktop client can be replaced - point it at the HTTP server it
+        // was built against, a browser tab has nothing to install
         if (ctx["desktop"].isAvailable) {
             const http = ctx["conf"]["http"];
             const port = (http["port"] === 443) ? "" : (":" + http["port"]);

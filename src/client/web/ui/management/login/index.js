@@ -1,10 +1,7 @@
 "use strict";
 
-// the sign-in screen, built from whatever the server says it supports. Only
-// Google is wired today, and only when the server hands out a client id.
-//
-// The avatar and the user menu of the top bar belong to the shell, not here -
-// they are on screen whether this route is or not.
+// the sign-in screen, built from whatever the server says it supports - only
+// Google today, and only when the server hands out a client id
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";

@@ -1,9 +1,7 @@
 "use strict";
 
 // the settings dialog: the column of buttons, and a router of its own over the
-// five windows beside it. Each window is a module in a folder below this one and
-// arrives the first time it is asked for, so opening the dialog costs the
-// appearance window and nothing else.
+// five windows beside it, each a module in a folder below this one
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

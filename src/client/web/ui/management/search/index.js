@@ -1,11 +1,7 @@
 "use strict";
 
-// the search dialog of the small layout, kept in step with the wide search field
-// of the top bar
-//
-// Nothing opens it yet: the field it mirrors and the button that opens it are
-// both still commented out in the shell markup, so the module wires the halves
-// that are actually there and leaves the rest alone.
+// the search dialog of the small layout, in step with the top bar's wide field -
+// nothing opens it yet, both halves are commented out in the shell markup
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

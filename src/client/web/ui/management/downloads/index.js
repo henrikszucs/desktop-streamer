@@ -1,22 +1,13 @@
 "use strict";
 
-// the desktop client downloads, chosen in two steps: the operating system, then
-// the architecture that operating system was built for
-//
-// The list comes from the generated index.json this client was served with, so
-// it names exactly the zips this build wrote beside it (see buildConfFile in
-// src/server/building.js). A server that built none shows the empty state and
-// offers nothing - the second step only ever offers the architectures the
-// operating system picked in the first one actually has.
+// the desktop client downloads, in two steps: the operating system, then the
+// architecture. The list is the generated index.json this client was served with.
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";
 
-// The build names its targets after the folders in ./bin, which follow node's
-// own platform and architecture names, while the markup and the detection below
-// were written with the names a user reads. Every spelling of the same thing is
-// listed here, mapped onto the one name the screen holds it under, so a zip is
-// never dropped for the name it carries.
+// every spelling of one platform - node's names, which ./bin follows, and the
+// ones a user reads - onto the single name the screen holds it under
 const OS_NAMES = new Map([
     ["win32", "win32"],
     ["darwin", "darwin"],
@@ -193,12 +184,8 @@ const DownloadScreen = class extends Screen {
         }
     };
 
-    // the zips sit at the root of the HTTP server, next to the web client
-    //
-    // The browser is served by that server, so a root absolute URL reaches them
-    // - the route the screen sits on is not part of the path. The desktop shell
-    // is served by its own local:// protocol instead, so it has to be told where
-    // the server is, and hands the link to the system browser.
+    // the zips sit at the root of the HTTP server, so a root-absolute URL reaches
+    // them - the desktop shell is on local:// and has to be told the address
     download() {
         const archs = this.clients.get(this.selectedOs);
         if (archs === undefined) {

@@ -1,14 +1,7 @@
 "use strict";
 
-// the other end of the join flow: this device asks the server for a pair code,
-// shows it, and waits. When someone claims the code the request dialog comes up
-// over this one, so this dialog steps aside instead of closing - the pair code
-// has to stay alive until the flow ends.
-//
-// The pair code and the request that claims it went with the pairing server
-// (dev/plans/ws-pairing-joins.md), so the dialog opens on an empty field and
-// nobody arrives on it. What is left here is its own half: the field, the copy
-// button and the close button.
+// the other end of the join flow: a pair code, shown while this device waits. It
+// steps aside for the request dialog rather than closing - the code must live on.
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

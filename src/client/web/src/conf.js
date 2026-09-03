@@ -13,17 +13,11 @@ const DATABASE = "desktop_streamer";
 const CONF_TABLE = "configuration";
 const USER_TABLE = "user";
 
-// the table the guest used to have to itself, kept only to drop it: everything
-// it held is a row of USER_TABLE now
+// the table the guest used to have to itself, kept only to drop it
 const OLD_GUEST_TABLE = "guest";
 
-// the id of the guest
-//
-// Every user this client keeps records for is one row of USER_TABLE under the
-// id of the user it belongs to - the guest included, which is what the empty
-// id is: a user with no account behind it rather than a table of its own. A
-// client is only ever one guest, so the empty key is that guest's row and
-// collides with no account id.
+// the id of the guest: every user is a row of USER_TABLE under its own id, and
+// a client is only ever one guest, so the empty key collides with no account
 const GUEST_ID = "";
 
 // the local keys and the value each falls back to
@@ -45,9 +39,8 @@ const confLoad = new Promise(async function(resolve) {
     await IDB.TableSet(DATABASE, CONF_TABLE);
     await IDB.TableSet(DATABASE, USER_TABLE);
 
-    // a client that ran the two-table build still carries the guest table, and
-    // it is a row of the user one now. Dropping a table that is not there is
-    // nothing, so this costs a database version only the once.
+    // a client that ran the two-table build still carries the guest table -
+    // dropping one that is not there is free, so this costs a version only once
     await IDB.TableDel(DATABASE, OLD_GUEST_TABLE);
 
     DB = await IDB.DatabaseGet(DATABASE);
@@ -80,10 +73,8 @@ const setLocal = async function(key, value, stored=value) {
     await IDB.RowSet(table(CONF_TABLE), [[key, stored]]);
 };
 
-// the records of one user: everything this client keeps for whoever it is
-// signed in as - the connections it can reach, and whatever is stored beside
-// them later. One row per user, the guest under GUEST_ID, and a user nothing
-// was ever stored for reads back as an empty record rather than as a row.
+// the records of one user, one row each and the guest under GUEST_ID - a user
+// nothing was stored for reads back as an empty record rather than as a row
 const getUser = async function(id=GUEST_ID) {
     const rows = await IDB.RowGet(table(USER_TABLE), [id]);
     return rows[0] ?? {};
@@ -93,12 +84,8 @@ const setUser = async function(id, data) {
     await IDB.RowSet(table(USER_TABLE), [[id, data]]);
 };
 
-// forget everything this client keeps for one user
-//
-// For the guest this is the reset the user menu offers where an account would
-// be signed out: the guest is not a session, so there is nothing to end on the
-// server, only the records here. The local configuration is a table of its own
-// and no user's row, so the theme and the language survive it.
+// forget everything this client keeps for one user - the guest is no session, so
+// this is its sign out; the local configuration is its own table and survives
 const resetUser = async function(id=GUEST_ID) {
     await IDB.RowDel(table(USER_TABLE), [id]);
 };

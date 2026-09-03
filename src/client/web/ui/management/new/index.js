@@ -1,19 +1,7 @@
 "use strict";
 
-// the default screen: join a room with a code, or share this device
-//
-// it owns both flows, so the dialogs of a flow are opened from here and the
-// result comes back to the field that started it. The share flow hands over to
-// room-create, which carries it from there.
-//
-// Neither flow can go through today: the pair code the join asks about and the
-// answer it waits for both went with the pairing server
-// (dev/plans/ws-pairing-joins.md). The field and the two buttons are here, and
-// the join stops at the point where the code would be sent.
-//
-// Both flows are also a permission the server answers - guestAllowJoin and
-// guestAllowShare - so each of them is either on screen or replaced by the
-// notice that says why it is not.
+// the default screen: join a room with a code, or share this device. It owns
+// both flows; neither goes through yet (dev/plans/ws-pairing-joins.md).
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";
@@ -58,13 +46,8 @@ const NewScreen = class extends Screen {
         super.close();
     };
 
-    //
-    // the permissions
-    //
-    // What the server would refuse is taken off the screen rather than left to
-    // fail at the point of use, and the notice in its place says why. This runs
-    // on every open() - every navigation here, and every reconnect - so a
-    // server that comes back configured differently is followed.
+    // what the server would refuse is replaced by the notice that says why, on
+    // every open() so a server that comes back configured differently is followed
     applyPermissions() {
         const permissions = this.ctx["ui"].permissions;
         const isAuth = permissions.isAuth();
@@ -72,8 +55,8 @@ const NewScreen = class extends Screen {
         this.setFlow(this.shareBox, this.shareDenied, this.shareLoginBtn, permissions.allows("guestAllowShare"), isAuth);
     };
 
-    // one flow: itself, or the notice - and the notice offers the sign-in only
-    // when there is a sign-in to offer
+    // one flow: itself, or the notice - which offers the sign-in only when there
+    // is one to offer
     setFlow(box, denied, loginBtn, isAllowed, isAuth) {
         box.classList.toggle("hide", isAllowed === false);
         denied.classList.toggle("hide", isAllowed === true);

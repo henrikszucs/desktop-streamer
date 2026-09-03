@@ -1,32 +1,13 @@
 "use strict";
 
-// path to module, history, popstate - and the one delegated click handler that
-// every navigation in the shell goes through
-//
-// the router owns what is open: one segment, one screen inside it, and a stack
-// of dialogs over that. Adding a screen is a route below plus a [data-route]
-// attribute in the markup, it never touches the boot code.
+// path to module, history, popstate, and the one delegated click handler every
+// navigation goes through - it owns one segment, one screen, a dialog stack
 
 // first-party dependencies
 import registry from "./registry.js";
 
-// the shell is two segments, and the loading layer over both of them:
-//
-//     loading                 boot, and every time the connection drops
-//     management              the navigation bars and the main surface
-//         new                 create a connection
-//         devices, shares     manage the existing ones
-//         services
-//         downloads           get the desktop client
-//         login
-//     room                    the stream, the whole window, no chrome
-//
-// A segment is the layer above the screens: the chrome that is on screen while
-// any of its own screens is. Which chrome belongs to which segment is an
-// attribute in the markup ([data-segment]), and a screen names the segment it
-// opens in (static segment, see src/view.js) - neither is listed here. The
-// loading layer is not a segment: it covers whichever one is open and gives it
-// back untouched, see the loading holders in ui/loading/loading.js.
+// the two segments of the shell. Which chrome belongs to one is [data-segment]
+// in the markup and a screen names its own, so neither is listed here.
 const SEGMENTS = new Map([
     ["management", {
         "screens": ["new", "downloads", "login", "services", "devices", "shares"],
@@ -73,12 +54,8 @@ const Router = class extends EventTarget {
         this.ctx = ctx;
     };
 
-    //
-    // loading
-    //
-    // the module, with the loading layer if it does not arrive quickly. It is
-    // taken under the "module" name, so a connection that drops while a screen
-    // is still on its way keeps the layer when this one gives it back.
+    // the module, with the loading layer if it is slow - taken by name so a
+    // connection that drops meanwhile keeps the layer when this one lets go
     async load(id) {
         if (registry.isLoaded(id) === true) {
             return await registry.load(id, this.ctx);
@@ -94,14 +71,8 @@ const Router = class extends EventTarget {
         }
     };
 
-    //
-    // segments
-    //
-    // the chrome of a segment: every [data-segment] element of the shell is on
-    // screen for its own segment and hidden for the others, so a new piece of
-    // chrome is an attribute in the markup and no change here. The body carries
-    // the open one as a class, for the styles that follow the segment rather
-    // than the screen.
+    // the chrome of a segment: every [data-segment] element is shown for its own
+    // and hidden for the rest, and body carries the open one as a class
     setSegment(id) {
         if (this.segmentId === id) {
             return;
@@ -124,8 +95,8 @@ const Router = class extends EventTarget {
         this.dispatchEvent(new CustomEvent("segment", {"detail": {"id": id, "previous": previous}}));
     };
 
-    // the segment a route opens in, without loading it: the module is the one
-    // that knows for certain, this is what the shell can say before it arrives
+    // the segment a route opens in, without loading it - the module knows for
+    // certain, this is what the shell can say before it arrives
     segmentOf(id) {
         for (const [segmentId, segment] of SEGMENTS) {
             if (segment["screens"].includes(id) === true || segment["deep"].includes(id) === true) {
@@ -260,9 +231,8 @@ const Router = class extends EventTarget {
         return path;
     };
 
-    // both hand back the promise of the screen being open, so a caller that has
-    // to know the route is on screen - the boot, lifting the loading layer off
-    // it - can wait for it
+    // both hand back the promise of the screen being open, so boot can wait for
+    // the route before it lifts the loading layer off it
     loadPath() {
         const path = this.routeOf(window.location.pathname);
         window.history.replaceState({}, "", "/" + path.join("/"));
@@ -274,11 +244,8 @@ const Router = class extends EventTarget {
         return this.loadPath();
     };
 
-    //
-    // wiring
-    //
-    // one delegated handler for every [data-route] and [data-dialog] in the
-    // shell and in every module, so adding a screen wires no buttons by hand
+    // one delegated handler for every [data-route] and [data-dialog] in the shell
+    // and in every module, so adding a screen wires no buttons by hand
     start() {
         document.addEventListener("click", (event) => {
             const routeEl = event.target.closest?.("[data-route]");
@@ -298,10 +265,8 @@ const Router = class extends EventTarget {
         });
     };
 
-    // a beercss menu stays open until whatever holds it loses the focus, and a
-    // submenu hangs on an <li> that cannot hold any: the walk up the nesting is
-    // what reaches the element that does - the button of the user menu, for an
-    // entry of the switch-account submenu inside it
+    // a beercss menu stays open until its holder loses focus, and a submenu hangs
+    // on an <li> that holds none - the walk up reaches the element that does
     blurMenu(el) {
         let menu = el.closest("menu");
         while (menu !== null && typeof menu !== "undefined") {

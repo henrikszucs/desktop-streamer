@@ -1,14 +1,7 @@
 "use strict";
 
-// the transport the whole UI talks to the server through: one WebSocket and the
-// packetized communicator on top of it. It is not a UI module - the shell builds
-// it once and hands it to every module in ctx.
-//
-// It was cut back to what `src/server/ws.js` answers today: the socket
-// lifecycle and `conf-get`. Sign-in, user data, pair codes and joins went with
-// the server side of them and are planned in `dev/plans/`, with the previous
-// implementation at commit `da3921d`. That code read message types the server no
-// longer serves, so do not paste it back untouched.
+// the transport the whole UI talks to the server through, built once by the shell
+// and handed to every module in ctx - cut back to what ws.js answers today
 
 // third-party dependencies
 import Communicator from "../libs/communicator/communicator.js";
@@ -80,9 +73,8 @@ const Server = class extends EventTarget {
             await this.communicator.sideSync();
             await this.communicator.timeSync();
 
-            // get server conf. Nothing here goes online without it, and wait()
-            // reports a failed call in message.error instead of throwing, so the
-            // answer has to be checked rather than caught.
+            // nothing goes online without it, and wait() reports a failed call
+            // in message.error instead of throwing, so it is checked not caught
             const message = this.communicator.invoke({"type":"conf-get"});
             await message.wait();
             if (message.error !== "" || typeof message.data !== "object" || message.data["success"] === false) {
@@ -92,11 +84,8 @@ const Server = class extends EventTarget {
             }
             conf["remote"] = message.data;
 
-            // the build of this client against the build of the server process
-            // answering it. They are allowed to differ - a browser tab or an
-            // installed desktop client is as old as the day it was loaded - but
-            // nothing past this point is, so the connection ends here and the
-            // shell tells the user how to get the matching build.
+            // this build against the build of the server answering it: they may
+            // differ, nothing past this point may, so a mismatch ends here
             const versionMessage = this.communicator.invoke({"type": "version-check", "version": conf["version"]});
             await versionMessage.wait();
             if (versionMessage.error !== "" || typeof versionMessage.data !== "object") {
@@ -125,11 +114,8 @@ const Server = class extends EventTarget {
             this.dispatchEvent(new CustomEvent("online"));
         }, { "once": true });
 
-        // handle disconnection
-        //
-        // An outdated client is not waiting for anything: reconnecting would
-        // fail the same check every two seconds, and going offline would put the
-        // loading dialog back over the mismatch the shell just showed.
+        // an outdated client does not reconnect: it would fail the same check
+        // every two seconds, under the mismatch the shell just showed
         const handleDisconnection = () => {
             this.ws.removeEventListener("error", handleError);
             this.ws.removeEventListener("close", handleClose);

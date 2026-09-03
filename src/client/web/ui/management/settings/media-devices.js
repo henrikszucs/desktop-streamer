@@ -1,9 +1,7 @@
 "use strict";
 
-// listing the cameras and microphones the browser will admit to
-//
-// a browser hands out unnamed, id-less devices until the page has been granted
-// access once, so an empty list is asked for again after a getUserMedia call
+// the cameras and microphones the browser will admit to - it hands out unnamed,
+// id-less devices until the page has been granted access once
 
 const listDevicesHelper = async function(type) {
     const selectedDevices = [];

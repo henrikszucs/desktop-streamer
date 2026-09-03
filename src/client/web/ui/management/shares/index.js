@@ -1,11 +1,7 @@
 "use strict";
 
-// what this client shares out: the guest shares kept in the local database, and
-// the ones the account carries
-//
-// Both lists were built from the joins the server keeps. Nothing carries joins
-// today (dev/plans/ws-pairing-joins.md), so the screen opens on two empty areas
-// and ./share-box.js waits there for them.
+// what this client shares out, as a guest or as the account - no joins are
+// served today (dev/plans/ws-pairing-joins.md), so both areas open empty
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";

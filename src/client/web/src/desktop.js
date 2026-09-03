@@ -7,9 +7,8 @@ const desktop = {
     "isAvailable": false
 };
 
-// fill the object above when there is an Electron renderer around it, the
-// modules it pulls in only exist there so the require() block below never runs
-// in a browser
+// fill the object above under an Electron renderer - the modules it pulls in
+// only exist there, so the require() block never runs in a browser
 const initDesktop = async function() {
     if (typeof require === "undefined") {
         return desktop;

@@ -18,9 +18,8 @@ const DeleteWindow = class extends Panel {
         this.deleteConfirm = document.getElementById("btn-account-delete-confirm");
         this.deleteConfirmError = document.getElementById("account-delete-confirm-error");
 
-        // there is no account server to mail the key out or to delete against
-        // (dev/plans/ws-accounts.md), so both steps can only report that they
-        // failed
+        // no account server to mail the key out or delete against
+        // (dev/plans/ws-accounts.md), so both steps only report the failure
         this.deleteSend.addEventListener("click", () => {
             this.deleteSendSuccess.classList.add("hide");
             this.deleteSendError.classList.remove("hide");

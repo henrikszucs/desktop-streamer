@@ -2,9 +2,6 @@
 
 // somebody wants in: who they are, and how long there is to answer. Closing it
 // rejects, which is why it does not close on a click outside.
-//
-// Both answers went with the pairing server (dev/plans/ws-pairing-joins.md), so
-// nothing opens this dialog today and neither button answers anybody.
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

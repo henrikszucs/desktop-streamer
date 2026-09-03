@@ -1,10 +1,7 @@
 "use strict";
 
-// the name and the e-mail behind the account
-//
-// The fields were filled from the user data the server pushed while the window
-// was open. Nothing carries that today (dev/plans/ws-accounts.md), so the
-// window opens empty.
+// the name and the e-mail behind the account - nothing carries the user data
+// today (dev/plans/ws-accounts.md), so the window opens empty
 
 // first-party dependencies
 import { Panel } from "../../../../src/view.js";

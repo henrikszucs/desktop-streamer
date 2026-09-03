@@ -1,8 +1,7 @@
 "use strict";
 
-// the cameras and the screens: a preview for both, and under the desktop shell
-// the screen preview goes through the same ffmpeg encoder and decoder a room
-// would use
+// the cameras and the screens, a preview for both - under the desktop shell the
+// screen preview goes through the same ffmpeg encoder a room would use
 
 // third-party dependencies
 import { Decoder } from "../../../../libs/ffmpeg-chunkifier/decoder.js";
