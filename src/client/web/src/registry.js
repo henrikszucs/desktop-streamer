@@ -9,142 +9,154 @@
 // a module is its code, its markup, its styles and its strings, pulled together
 // in one round trip. "html", "css" and "localization" are left out when a module
 // has none.
+//
+// The table is grouped the way ./ui is: the loading layer, the management
+// segment and the room segment, a module of a segment under the folder of
+// that segment. An id stays what it always was - the name the shell and the
+// markup know a module by, not where its files sit.
 const routes = new Map([
-    // the chrome of the management segment, mounted before the first navigation
+    // the loading layer, over both segments: the boot and the connection,
+    // and the one dialog that replaces it rather than waiting behind it
+    ["version", {
+        "load": () => import("../ui/loading/version/index.js"),
+        "html": "/ui/loading/version/view.html",
+        "localization": "/ui/loading/version/localization.json"
+    }],
+
+    // the management segment: the chrome first, mounted before the first
+    // navigation, then the screens the bars lead to and the dialogs over them
     ["nav-top", {
-        "load": () => import("../ui/nav-top/index.js"),
-        "html": "/ui/nav-top/view.html"
+        "load": () => import("../ui/management/nav-top/index.js"),
+        "html": "/ui/management/nav-top/view.html"
     }],
     ["nav-left", {
-        "load": () => import("../ui/nav-left/index.js"),
-        "html": "/ui/nav-left/view.html"
+        "load": () => import("../ui/management/nav-left/index.js"),
+        "html": "/ui/management/nav-left/view.html"
     }],
-    ["version", {
-        "load": () => import("../ui/version/index.js"),
-        "html": "/ui/version/view.html",
-        "localization": "/ui/version/localization.json"
+    ["menu", {
+        "load": () => import("../ui/management/menu/index.js"),
+        "html": "/ui/management/menu/view.html",
+        "css": "/ui/management/menu/view.css"
+    }],
+    ["search", {
+        "load": () => import("../ui/management/search/index.js"),
+        "html": "/ui/management/search/view.html",
+        "css": "/ui/management/search/view.css"
     }],
     ["new", {
-        "load": () => import("../ui/new/index.js"),
-        "html": "/ui/new/view.html",
-        "localization": "/ui/new/localization.json"
+        "load": () => import("../ui/management/new/index.js"),
+        "html": "/ui/management/new/view.html",
+        "localization": "/ui/management/new/localization.json"
     }],
     ["downloads", {
-        "load": () => import("../ui/downloads/index.js"),
-        "html": "/ui/downloads/view.html"
+        "load": () => import("../ui/management/downloads/index.js"),
+        "html": "/ui/management/downloads/view.html"
     }],
     ["login", {
-        "load": () => import("../ui/login/index.js"),
-        "html": "/ui/login/view.html",
-        "css": "/ui/login/view.css"
+        "load": () => import("../ui/management/login/index.js"),
+        "html": "/ui/management/login/view.html",
+        "css": "/ui/management/login/view.css"
     }],
     ["services", {
-        "load": () => import("../ui/services/index.js"),
-        "html": "/ui/services/view.html"
+        "load": () => import("../ui/management/services/index.js"),
+        "html": "/ui/management/services/view.html"
     }],
     ["devices", {
-        "load": () => import("../ui/devices/index.js"),
-        "html": "/ui/devices/view.html",
-        "css": "/ui/devices/view.css"
+        "load": () => import("../ui/management/devices/index.js"),
+        "html": "/ui/management/devices/view.html",
+        "css": "/ui/management/devices/view.css"
     }],
     ["shares", {
-        "load": () => import("../ui/shares/index.js"),
-        "html": "/ui/shares/view.html",
-        "css": "/ui/shares/view.css"
+        "load": () => import("../ui/management/shares/index.js"),
+        "html": "/ui/management/shares/view.html",
+        "css": "/ui/management/shares/view.css"
     }],
+    ["settings", {
+        "load": () => import("../ui/management/settings/index.js"),
+        "html": "/ui/management/settings/view.html",
+        "localization": "/ui/management/settings/localization.json"
+    }],
+    ["settings.appearance", {
+        "load": () => import("../ui/management/settings/appearance/index.js"),
+        "html": "/ui/management/settings/appearance/view.html",
+        "css": "/ui/management/settings/appearance/view.css",
+        "localization": "/ui/management/settings/appearance/localization.json"
+    }],
+    ["settings.audio", {
+        "load": () => import("../ui/management/settings/audio/index.js"),
+        "html": "/ui/management/settings/audio/view.html",
+        "css": "/ui/management/settings/audio/view.css",
+        "localization": "/ui/management/settings/audio/localization.json"
+    }],
+    ["settings.video", {
+        "load": () => import("../ui/management/settings/video/index.js"),
+        "html": "/ui/management/settings/video/view.html",
+        "css": "/ui/management/settings/video/view.css",
+        "localization": "/ui/management/settings/video/localization.json"
+    }],
+    ["settings.control", {
+        "load": () => import("../ui/management/settings/control/index.js"),
+        "html": "/ui/management/settings/control/view.html",
+        "css": "/ui/management/settings/control/view.css",
+        "localization": "/ui/management/settings/control/localization.json"
+    }],
+    ["settings.about", {
+        "load": () => import("../ui/management/settings/about/index.js"),
+        "html": "/ui/management/settings/about/view.html",
+        "css": "/ui/management/settings/about/view.css",
+        "localization": "/ui/management/settings/about/localization.json"
+    }],
+    ["account", {
+        "load": () => import("../ui/management/account/index.js"),
+        "html": "/ui/management/account/view.html",
+        "localization": "/ui/management/account/localization.json"
+    }],
+    ["account.information", {
+        "load": () => import("../ui/management/account/information/index.js"),
+        "html": "/ui/management/account/information/view.html",
+        "localization": "/ui/management/account/information/localization.json"
+    }],
+    ["account.sessions", {
+        "load": () => import("../ui/management/account/sessions/index.js"),
+        "html": "/ui/management/account/sessions/view.html",
+        "css": "/ui/management/account/sessions/view.css",
+        "localization": "/ui/management/account/sessions/localization.json"
+    }],
+    ["account.delete", {
+        "load": () => import("../ui/management/account/delete/index.js"),
+        "html": "/ui/management/account/delete/view.html",
+        "css": "/ui/management/account/delete/view.css",
+        "localization": "/ui/management/account/delete/localization.json"
+    }],
+
+    // the room segment: the screen that takes the whole window, and the
+    // dialogs of the flows that lead into it
     ["room", {
         "load": () => import("../ui/room/index.js"),
         "html": "/ui/room/view.html",
         "css": "/ui/room/view.css"
     }],
-    ["menu", {
-        "load": () => import("../ui/menu/index.js"),
-        "html": "/ui/menu/view.html",
-        "css": "/ui/menu/view.css"
-    }],
-    ["search", {
-        "load": () => import("../ui/search/index.js"),
-        "html": "/ui/search/view.html",
-        "css": "/ui/search/view.css"
-    }],
-    ["settings", {
-        "load": () => import("../ui/settings/index.js"),
-        "html": "/ui/settings/view.html",
-        "localization": "/ui/settings/localization.json"
-    }],
-    ["settings.appearance", {
-        "load": () => import("../ui/settings/appearance/index.js"),
-        "html": "/ui/settings/appearance/view.html",
-        "css": "/ui/settings/appearance/view.css",
-        "localization": "/ui/settings/appearance/localization.json"
-    }],
-    ["settings.audio", {
-        "load": () => import("../ui/settings/audio/index.js"),
-        "html": "/ui/settings/audio/view.html",
-        "css": "/ui/settings/audio/view.css",
-        "localization": "/ui/settings/audio/localization.json"
-    }],
-    ["settings.video", {
-        "load": () => import("../ui/settings/video/index.js"),
-        "html": "/ui/settings/video/view.html",
-        "css": "/ui/settings/video/view.css",
-        "localization": "/ui/settings/video/localization.json"
-    }],
-    ["settings.control", {
-        "load": () => import("../ui/settings/control/index.js"),
-        "html": "/ui/settings/control/view.html",
-        "css": "/ui/settings/control/view.css",
-        "localization": "/ui/settings/control/localization.json"
-    }],
-    ["settings.about", {
-        "load": () => import("../ui/settings/about/index.js"),
-        "html": "/ui/settings/about/view.html",
-        "css": "/ui/settings/about/view.css",
-        "localization": "/ui/settings/about/localization.json"
-    }],
-    ["account", {
-        "load": () => import("../ui/account/index.js"),
-        "html": "/ui/account/view.html",
-        "localization": "/ui/account/localization.json"
-    }],
-    ["account.information", {
-        "load": () => import("../ui/account/information/index.js"),
-        "html": "/ui/account/information/view.html",
-        "localization": "/ui/account/information/localization.json"
-    }],
-    ["account.sessions", {
-        "load": () => import("../ui/account/sessions/index.js"),
-        "html": "/ui/account/sessions/view.html",
-        "css": "/ui/account/sessions/view.css",
-        "localization": "/ui/account/sessions/localization.json"
-    }],
-    ["account.delete", {
-        "load": () => import("../ui/account/delete/index.js"),
-        "html": "/ui/account/delete/view.html",
-        "css": "/ui/account/delete/view.css",
-        "localization": "/ui/account/delete/localization.json"
-    }],
     ["room-create", {
-        "load": () => import("../ui/room-create/index.js"),
-        "html": "/ui/room-create/view.html",
-        "css": "/ui/room-create/view.css",
-        "localization": "/ui/room-create/localization.json"
+        "load": () => import("../ui/room/create/index.js"),
+        "html": "/ui/room/create/view.html",
+        "css": "/ui/room/create/view.css",
+        "localization": "/ui/room/create/localization.json"
     }],
     ["room-request", {
-        "load": () => import("../ui/room-request/index.js"),
-        "html": "/ui/room-request/view.html",
-        "css": "/ui/room-request/view.css",
-        "localization": "/ui/room-request/localization.json"
+        "load": () => import("../ui/room/request/index.js"),
+        "html": "/ui/room/request/view.html",
+        "css": "/ui/room/request/view.css",
+        "localization": "/ui/room/request/localization.json"
     }],
     ["room-joining", {
-        "load": () => import("../ui/room-joining/index.js"),
-        "html": "/ui/room-joining/view.html",
-        "localization": "/ui/room-joining/localization.json"
+        "load": () => import("../ui/room/joining/index.js"),
+        "html": "/ui/room/joining/view.html",
+        "localization": "/ui/room/joining/localization.json"
     }],
     ["room-settings", {
-        "load": () => import("../ui/room-settings/index.js"),
-        "html": "/ui/room-settings/view.html",
-        "css": "/ui/room-settings/view.css"
+        "load": () => import("../ui/room/settings/index.js"),
+        "html": "/ui/room/settings/view.html",
+        "css": "/ui/room/settings/view.css"
     }]
 ]);
 

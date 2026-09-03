@@ -20,7 +20,7 @@
         <!--
             The three elements the application is built on top of, and nothing
             else. Every bar, screen and dialog - the two navigation bars
-            included - is a UI module under /ui that index.js mounts into the
+            included - is a UI module under /ui that ui/ui.js mounts into the
             body at runtime, see src/registry.js.
 
             What stays here is what has to exist before the first module can be
@@ -36,8 +36,9 @@
             The loading layer, over both segments of the shell and starting on
             screen: the connection holds it from boot until the server answers
             and takes it back the moment it drops, so a client that is not
-            talking to a server is never showing one it cannot use. index.js
-            names every holder, and the layer is up while any of them holds it.
+            talking to a server is never showing one it cannot use. ui/loading/
+            loading.js names every holder, and the layer is up while any of
+            them holds it.
         -->
         <dialog class="active" id="dialog-loading">
             <h5 data-localization="loading.title">Loading...</h5>

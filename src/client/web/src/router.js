@@ -26,7 +26,7 @@ import registry from "./registry.js";
 // attribute in the markup ([data-segment]), and a screen names the segment it
 // opens in (static segment, see src/view.js) - neither is listed here. The
 // loading layer is not a segment: it covers whichever one is open and gives it
-// back untouched, see the loading holders in index.js.
+// back untouched, see the loading holders in ui/loading/loading.js.
 const SEGMENTS = new Map([
     ["management", {
         "screens": ["new", "downloads", "login", "services", "devices", "shares"],

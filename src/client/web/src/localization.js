@@ -20,7 +20,7 @@ const setLang = (lang) => {
 //
 // What is left here is what the shell itself shows: the loading layer of
 // index.html, and the strings the two navigation bars share with the menu
-// dialog. The version mismatch went with its markup, into ui/version/.
+// dialog. The version mismatch went with its markup, into ui/loading/version/.
 const dict = {
     "loading": {
         "title": {
