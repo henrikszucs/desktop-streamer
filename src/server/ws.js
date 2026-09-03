@@ -350,6 +350,7 @@ const ServerWS = class {
         this.isClosing = true;
 
         process.stdout.write("\n    Closing WS server....    ");
+        const wasRunning = this.wsServer !== null || this.wsHttpServer !== null;
         if (this.wsServer !== null) {
             // close WS server and its connections
             await new Promise((resolve) => {
@@ -390,24 +391,41 @@ const ServerWS = class {
 
             });
 
-            // close WS HTTP server if exists
-            if (this.wsHttpServer !== null) {
-                await new Promise((resolve) => {
-                    const timeOut = setTimeout(function() {
-                        resolve(false);
-                    }, 5000);
-                    this.wsHttpServer.close(function() {
-                        clearTimeout(timeOut);
-                        resolve(true);
-                    });
+            // and the server itself, not only what is connected to it
+            //
+            // In shared-port mode the WebSocketServer is an "upgrade" listener
+            // on the HTTP server's own listener, and closing the sockets leaves
+            // it sitting there: the HTTP server would go on answering upgrades
+            // after this returned, and a second start() would add a second
+            // listener beside the first one.
+            await new Promise((resolve) => {
+                const timeOut = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.wsServer.close(function() {
+                    clearTimeout(timeOut);
+                    resolve(true);
                 });
-                this.wsHttpServer = null;
-            }
+            });
             this.wsServer = null;
-            process.stdout.write("done\n");
-        } else {
-            process.stdout.write("skipped\n");
         }
+
+        // outside the branch above, because a start() that failed between
+        // creating this listener and assigning wsServer would otherwise leave
+        // the port bound for the life of the process
+        if (this.wsHttpServer !== null) {
+            await new Promise((resolve) => {
+                const timeOut = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.wsHttpServer.close(function() {
+                    clearTimeout(timeOut);
+                    resolve(true);
+                });
+            });
+            this.wsHttpServer = null;
+        }
+        process.stdout.write(wasRunning === true ? "done\n" : "skipped\n");
 
         // drop the connection state
         this.clients.clear();

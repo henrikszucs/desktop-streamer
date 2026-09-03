@@ -1,14 +1,32 @@
 /* the room screen */
 
+/* The surface the room is mounted into
+ *
+ * #room-main is a beercss <main>, and beercss gives every main .5rem of
+ * padding while the body grid sizes its row from what the row holds. The room
+ * is the one screen with no chrome around it - it is the window - so the
+ * stream sized the surface instead of the other way round, and the toolbar sat
+ * below the fold at every size. The surface is pinned to the window here and
+ * the padding taken off, which is what leaves the layout below a height to
+ * divide. dvh first, so a phone's collapsing address bar does not push the
+ * toolbar off screen.
+ */
+#room-main {
+    padding: 0;
+    block-size: 100vh;
+    block-size: 100dvh;
+    overflow: hidden;
+}
+
 /* Room dialog */
-/* the screen fills the surface it is mounted into (#room-main in index.html),
-   which is the grid area of the shell and the height of the window */
+/* the screen fills the surface above, which is the window: the stream takes
+   what the toolbar leaves rather than setting the height between them */
 .room-layout {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     height: 100%;
-    max-height: 100vh;
+    max-height: 100%;
 }
 
 .room-layout > :nth-child(1) {
@@ -19,9 +37,12 @@
     min-width: 0;
 }
 
+/* the stream takes the space the toolbar leaves and is letterboxed inside it,
+   so a 4:3 desktop on a 16:9 window keeps its shape rather than stretching */
 .room-layout > :nth-child(1) > video {
     width: 100%;
-    aspect-ratio: 16/9;
+    height: 100%;
+    object-fit: contain;
 }
 
 .room-layout > :nth-child(2) {

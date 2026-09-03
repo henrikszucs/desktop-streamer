@@ -47,30 +47,37 @@ const routes = new Map([
     ["new", {
         "load": () => import("../ui/management/new/index.js"),
         "html": "/ui/management/new/view.html",
+        "css": "/ui/management/new/view.css",
         "localization": "/ui/management/new/localization.json"
     }],
     ["downloads", {
         "load": () => import("../ui/management/downloads/index.js"),
-        "html": "/ui/management/downloads/view.html"
+        "html": "/ui/management/downloads/view.html",
+        "css": "/ui/management/downloads/view.css",
+        "localization": "/ui/management/downloads/localization.json"
     }],
     ["login", {
         "load": () => import("../ui/management/login/index.js"),
         "html": "/ui/management/login/view.html",
-        "css": "/ui/management/login/view.css"
+        "css": "/ui/management/login/view.css",
+        "localization": "/ui/management/login/localization.json"
     }],
     ["services", {
         "load": () => import("../ui/management/services/index.js"),
-        "html": "/ui/management/services/view.html"
+        "html": "/ui/management/services/view.html",
+        "localization": "/ui/management/services/localization.json"
     }],
     ["devices", {
         "load": () => import("../ui/management/devices/index.js"),
         "html": "/ui/management/devices/view.html",
-        "css": "/ui/management/devices/view.css"
+        "css": "/ui/management/devices/view.css",
+        "localization": "/ui/management/devices/localization.json"
     }],
     ["shares", {
         "load": () => import("../ui/management/shares/index.js"),
         "html": "/ui/management/shares/view.html",
-        "css": "/ui/management/shares/view.css"
+        "css": "/ui/management/shares/view.css",
+        "localization": "/ui/management/shares/localization.json"
     }],
     ["settings", {
         "load": () => import("../ui/management/settings/index.js"),

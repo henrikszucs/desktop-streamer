@@ -1,0 +1,13 @@
+/* the downloads screen */
+
+/* The Apple logo carries no fill of its own
+ *
+ * /media/macos.svg is a bare path, so it paints black, and an <img> takes no
+ * colour from the page around it: under the dark palette it was a black mark
+ * on a dark button while the Windows and Linux logos beside it - which do
+ * carry their own colours - were fine. It follows the mode instead. See the
+ * same treatment of the built-in avatars in ../nav-top/view.css.
+ */
+body.dark #download-macos > img {
+    filter: invert(1);
+}

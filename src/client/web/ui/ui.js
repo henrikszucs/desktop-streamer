@@ -17,10 +17,27 @@
 //     ./room              the stream, and the dialogs of the flows into it
 
 // first-party dependencies
-import { browser, width, sizeS, sizeM } from "../src/env.js";
+import { browser, width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
 import localization from "../src/localization.js";
 import registry from "../src/registry.js";
 import { createLoading } from "./loading/loading.js";
+
+//
+// the size of the UI, from the display it is going to be read on
+//
+// Every length in the shell is a rem - beercss's own and this client's alike -
+// so the root font size is the size of the whole UI, and this is the one thing
+// that has to be settled before anything is drawn. It is written on <html>
+// rather than in a stylesheet because only script can ask what display it is
+// on, and it is written again on a resize, since a window dragged onto a
+// second monitor changes the pixel ratio under it. See getDisplay() in
+// src/env.js for what the browser will and will not say about a display.
+const applyScale = function() {
+    const display = getDisplay();
+    const kind = getDisplayKind(display);
+    document.documentElement.style.fontSize = getRootFontSize(display, kind) + "px";
+    return {"display": display, "kind": kind};
+};
 
 //
 // the local configuration, applied to the document
@@ -176,5 +193,5 @@ const buildUI = async function(router) {
     }
 };
 
-export { applyTheme, applyLanguage, createUI, buildUI };
-export default { applyTheme, applyLanguage, createUI, buildUI };
+export { applyScale, applyTheme, applyLanguage, createUI, buildUI };
+export default { applyScale, applyTheme, applyLanguage, createUI, buildUI };

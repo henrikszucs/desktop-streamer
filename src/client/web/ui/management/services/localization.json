@@ -1,0 +1,12 @@
+{
+    "services": {
+        "title": {
+            "en": "Services",
+            "hu": "Szolgáltatások"
+        },
+        "subtitle": {
+            "en": "Available services which can rent from this device.",
+            "hu": "Az erről az eszközről bérelhető szolgáltatások."
+        }
+    }
+}

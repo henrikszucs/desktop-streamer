@@ -15,12 +15,18 @@ import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
-import { applyTheme, applyLanguage, createUI, buildUI } from "./ui/ui.js";
+import { applyScale, applyTheme, applyLanguage, createUI, buildUI } from "./ui/ui.js";
 
 const main = async function() {
     //
     // the environment
     //
+    // the size of the UI first, before anything is drawn at the wrong one: a
+    // television is read from across a room and the platform sizes its pixel
+    // for a desk - see applyScale() in ./ui/ui.js
+    applyScale();
+    window.addEventListener("resize", applyScale);
+
     // the Electron modules, if this is running under the desktop shell
     await initDesktop();
 

@@ -4,3 +4,15 @@
 .select-appearance-lang {
     margin: 0 !important;
 }
+
+/* The name of a language is a whole phrase - "-- Automatic selection --" - and
+ * beercss leaves a select wrapping, while the field around it keeps a fixed
+ * 3rem. On a phone the selected option broke onto a second line and that line
+ * was clipped by the field. It is kept on one line and cut with an ellipsis
+ * instead, which is what a select that is too narrow should do.
+ */
+.select-appearance-lang > select {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

@@ -120,22 +120,59 @@ const httpsGetImage = async function(url) {
 };
 
 // search in parameters
-const argGet = function(args, argName, isKeyValue=false, isInline=false) {
+//
+// One rule for the whole CLI, and it is read off the name rather than carried
+// in a flag beside it: a short option takes its value as the next argument,
+// "-c ./conf/config.json", and a long one takes it joined by an equals sign,
+// "--configuration=./conf/config.json". Nothing accepts both, so there is one
+// spelling of every call and --help can state it exactly.
+//
+// Without isKeyValue the name is a switch and is true when it is there at all.
+const argGet = function(args, argName, isKeyValue=false) {
+    const isLong = argName.startsWith("--");
     for (let i = 0, length=args.length; i < length; i++) {
         const arg = args[i];
-        if (isKeyValue) {
-            if (isInline) {
-                if (arg.startsWith(argName + "=")) {
-                    return arg.slice(argName.length + 1);
-                }
-            } else {
-                if (arg === argName) {
-                    return args[i + 1];
-                }
-            }
-        } else {
+        if (isKeyValue === false) {
             if (arg === argName) {
                 return true;
+            }
+            continue;
+        }
+        if (isLong === true) {
+            if (arg.startsWith(argName + "=")) {
+                return arg.slice(argName.length + 1);
+            }
+            continue;
+        }
+        if (arg === argName) {
+            const value = args[i + 1];
+            // the option was written with nothing behind it, or with the next
+            // option behind it - taking "--compile" as the path would fail much
+            // further along, and as something the user never typed
+            if (typeof value === "undefined" || value.startsWith("-") === true) {
+                return undefined;
+            }
+            return value;
+        }
+    }
+    return undefined;
+};
+
+// the rule above, broken the two ways it can be
+//
+// A form argGet does not read is a value it never sees, and the caller falls
+// back to its default: the server would boot on a configuration nobody asked
+// for and say nothing. The names that carry a value are handed in here so the
+// CLI can refuse the wrong form and name the right one.
+const argCheck = function(args, valueArgs) {
+    for (const arg of args) {
+        for (const argName of valueArgs) {
+            if (argName.startsWith("--") === true) {
+                if (arg === argName) {
+                    return argName + " takes its value joined by an equals sign: " + argName + "=<value>";
+                }
+            } else if (arg.startsWith(argName + "=") === true) {
+                return argName + " takes its value as the next argument: " + argName + " <value>";
             }
         }
     }
@@ -165,5 +202,5 @@ const setAbsolute = function(src, origin) {
     return path.resolve(src);
 };
 
-export { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
-export default { serverScriptPath, getVersion, generateId, binarySearch, argGet, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
+export { serverScriptPath, getVersion, generateId, binarySearch, argGet, argCheck, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };
+export default { serverScriptPath, getVersion, generateId, binarySearch, argGet, argCheck, isDirEmpty, setAbsolute, httpsGetText, httpsGetImage };

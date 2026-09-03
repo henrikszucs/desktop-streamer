@@ -1,10 +1,18 @@
 /* the devices screen */
 
 /* Devices screen */
-#screen-devices {
+/* A grid of cards is worth the whole surface on a large display, so it opts
+ * out of the width the shell caps a screen of text at (see #screen-main > div
+ * in /index.css). The headings go back to the start edge with it: the surface
+ * is centre-aligned for the screens that are one column of text, and a centred
+ * heading over a left-packed grid read as a mistake.
+ */
+#screen-main > #screen-devices {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    max-inline-size: none;
+    text-align: start;
 }
 
 .devices-article {

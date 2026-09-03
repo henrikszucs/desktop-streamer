@@ -19,3 +19,34 @@
 #btn-user-switch-menu:has(> .entry-disabled) {
     overflow: visible;
 }
+
+/* That tooltip is wider than the entry it hangs over
+ *
+ * The user menu opens against the right edge of the window, so a tooltip
+ * centred on the entry - which is what beercss does - left the screen on a
+ * phone. It is pinned to the entry's start edge instead, where the menu itself
+ * already has room.
+ */
+#btn-user-add-tooltip {
+    inset-inline: 0 auto;
+    transform: translate(0, -100%) scale(0.9);
+}
+
+#btn-user-add:hover > #btn-user-add-tooltip {
+    transform: translate(0, -100%) scale(1);
+}
+
+/* The two built-in avatars
+ *
+ * /media/guest.svg and /media/user.svg are flat #1f1f1f glyphs, and an <img>
+ * takes no colour from the page around it, so the dark palette left them black
+ * on a dark button. They follow the mode here. An account's own picture is any
+ * URL in full colour and must not be touched, which is why this is keyed on
+ * the two sources the client ships rather than on the element.
+ */
+body.dark #btn-user[src$="/media/guest.svg"],
+body.dark #btn-user[src$="/media/user.svg"],
+body.dark #btn-user-switch-menu img[src$="/media/guest.svg"],
+body.dark #btn-user-switch-menu img[src$="/media/user.svg"] {
+    filter: invert(1);
+}

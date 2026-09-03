@@ -1,13 +1,13 @@
 <div class="hide center-align" id="screen-downloads">
-    <h3>Download Desktop Streamer</h3>
-    <h6 class="small">Get the Desktop Streamer client program for your computer to full remote control.</h6>
+    <h3 data-localization="downloads.title">Download Desktop Streamer</h3>
+    <h6 class="small" data-localization="downloads.subtitle">Get the Desktop Streamer client program for your computer to full remote control.</h6>
 
     <!-- the choice, in two steps: the operating system, then the architecture
          this server actually built a client for -->
     <div id="download-choice">
         <div class="large-space"></div>
 
-        <h6 class="small">1. Operating system</h6>
+        <h6 class="small" data-localization="downloads.os">1. Operating system</h6>
         <div class="row center-align wrap top-padding" id="download-os">
             <button class="small-round extra" id="download-win32">
                 <img class="responsive" src="/media/win32.svg">
@@ -25,7 +25,7 @@
 
         <div class="space"></div>
 
-        <h6 class="small">2. Architecture</h6>
+        <h6 class="small" data-localization="downloads.arch">2. Architecture</h6>
         <div class="row center-align wrap top-padding" id="download-arch">
             <button class="small-round extra" id="download-x64">
                 x64
@@ -46,7 +46,7 @@
         <div class="row center-align wrap top-padding">
             <button class="small-round extra primary" id="download-finish">
                 <i>download</i>
-                <span id="download-finish-label">Download</span>
+                <span id="download-finish-label" data-localization="downloads.btn">Download</span>
             </button>
         </div>
     </div>
@@ -55,6 +55,6 @@
     <div class="hide" id="download-empty">
         <div class="large-space"></div>
         <i class="extra">block</i>
-        <p>This server has no desktop client to download.</p>
+        <p data-localization="downloads.empty">This server has no desktop client to download.</p>
     </div>
 </div>

@@ -1,10 +1,6 @@
 /* the search dialog */
 
 /* Top search */
-.wide-search {
-    width: 30vw;
-}
-
 #dialog-search {
     overflow: visible;
 }

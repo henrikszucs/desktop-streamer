@@ -294,74 +294,114 @@ const writeZip = async function(stream, entries, level=9) {
     const write = streamWriter(stream);
 
     // start the first few, every write takes the next one on
+    //
+    // Each one is settled rather than left to reject on its own. They run up to
+    // CONCURRENCY ahead of the writer, so an entry that fails - a "path" that
+    // cannot be read - would reject with nothing awaiting it yet, and node ends
+    // the process for an unhandled rejection: the build died before writeZip
+    // could throw, which made the try/catch around it unreachable for exactly
+    // the failures it is there for. The failure is carried instead and thrown
+    // in the writer's own order, and the ones still in flight when that happens
+    // - or when the loop itself throws, over 4 GB or on a stream error - can no
+    // longer reject at all.
     const pending = new Array(entries.length).fill(null);
+    const settle = function(promise) {
+        return promise.then(function(value) {
+            return {"value": value};
+        }, function(error) {
+            return {"error": error};
+        });
+    };
     const start = function(index) {
         if (index >= entries.length) {
             return;
         }
         const entry = entries[index];
         if (typeof entry["raw"] !== "undefined") {
-            pending[index] = Promise.resolve(entry);
+            pending[index] = settle(Promise.resolve(entry));
         } else if (entry["isDir"] === true) {
-            pending[index] = Promise.resolve(Object.assign({}, entry, emptyEntry()));
+            pending[index] = settle(Promise.resolve(Object.assign({}, entry, emptyEntry())));
         } else {
-            pending[index] = compressEntry(entry, level).then(function(built) {
+            pending[index] = settle(compressEntry(entry, level).then(function(built) {
                 return Object.assign({}, entry, built);
-            });
+            }));
         }
     };
+
+    // whatever is still deflating when this returns or throws, waited on so the
+    // caller is never left with reads running behind its own failure
+    const drain = async function() {
+        for (let i = 0; i < pending.length; i++) {
+            if (pending[i] !== null) {
+                await pending[i];
+                pending[i] = null;
+            }
+        }
+    };
+
+    const writeEntries = async function() {
+        const central = [];
+        let offset = 0;
+        for (let i = 0; i < entries.length; i++) {
+            const settled = await pending[i];
+            pending[i] = null;      // let the bytes go as soon as they are written
+            start(i + CONCURRENCY);
+            if (typeof settled["error"] !== "undefined") {
+                throw settled["error"];
+            }
+            const entry = settled["value"];
+
+            if (typeof entry["versionMadeBy"] === "undefined") {
+                entry["versionMadeBy"] = VERSION_MADE_BY;
+            }
+            if (typeof entry["externalAttrs"] === "undefined") {
+                entry["externalAttrs"] = attributesOf(entry["mode"], entry["isDir"]);
+            }
+            if (typeof entry["time"] === "undefined") {
+                const stamp = dosDateTime(entry["date"] instanceof Date ? entry["date"] : new Date());
+                entry["time"] = stamp["time"];
+                entry["date"] = stamp["date"];
+            }
+            entry["offset"] = offset;
+
+            const nameBuffer = Buffer.from(entry["name"], "utf8");
+            if (nameBuffer.length !== entry["name"].length) {
+                entry["flags"] = entry["flags"] | FLAG_UTF8;
+            }
+            const header = localHeader(entry, nameBuffer);
+            await write(header);
+            await write(nameBuffer);
+            if (entry["raw"].length > 0) {
+                await write(entry["raw"]);
+            }
+            offset += header.length + nameBuffer.length + entry["raw"].length;
+            if (offset > MAX_UINT32) {
+                throw new Error("Zip is over 4 GB, which a plain zip cannot address");
+            }
+
+            central.push(centralHeader(entry, nameBuffer));
+            central.push(nameBuffer);
+        }
+
+        const centralOffset = offset;
+        let centralSize = 0;
+        for (const chunk of central) {
+            await write(chunk);
+            centralSize += chunk.length;
+        }
+        await write(endRecord(entries.length, centralSize, centralOffset));
+
+        return offset + centralSize + 22;
+    };
+
     for (let i = 0; i < CONCURRENCY; i++) {
         start(i);
     }
-
-    const central = [];
-    let offset = 0;
-    for (let i = 0; i < entries.length; i++) {
-        const entry = await pending[i];
-        pending[i] = null;      // let the bytes go as soon as they are written
-        start(i + CONCURRENCY);
-
-        if (typeof entry["versionMadeBy"] === "undefined") {
-            entry["versionMadeBy"] = VERSION_MADE_BY;
-        }
-        if (typeof entry["externalAttrs"] === "undefined") {
-            entry["externalAttrs"] = attributesOf(entry["mode"], entry["isDir"]);
-        }
-        if (typeof entry["time"] === "undefined") {
-            const stamp = dosDateTime(entry["date"] instanceof Date ? entry["date"] : new Date());
-            entry["time"] = stamp["time"];
-            entry["date"] = stamp["date"];
-        }
-        entry["offset"] = offset;
-
-        const nameBuffer = Buffer.from(entry["name"], "utf8");
-        if (nameBuffer.length !== entry["name"].length) {
-            entry["flags"] = entry["flags"] | FLAG_UTF8;
-        }
-        const header = localHeader(entry, nameBuffer);
-        await write(header);
-        await write(nameBuffer);
-        if (entry["raw"].length > 0) {
-            await write(entry["raw"]);
-        }
-        offset += header.length + nameBuffer.length + entry["raw"].length;
-        if (offset > MAX_UINT32) {
-            throw new Error("Zip is over 4 GB, which a plain zip cannot address");
-        }
-
-        central.push(centralHeader(entry, nameBuffer));
-        central.push(nameBuffer);
+    try {
+        return await writeEntries();
+    } finally {
+        await drain();
     }
-
-    const centralOffset = offset;
-    let centralSize = 0;
-    for (const chunk of central) {
-        await write(chunk);
-        centralSize += chunk.length;
-    }
-    await write(endRecord(entries.length, centralSize, centralOffset));
-
-    return offset + centralSize + 22;
 };
 
 export { readZip, writeZip, crc32, dosDateTime, METHOD_STORE, METHOD_DEFLATE };

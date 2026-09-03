@@ -16,6 +16,17 @@ import { binarySearch } from "./common.js";
 // the folders holding the client assets, everything else is an SPA route
 const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
 
+// a host name worth echoing back into a Location: a name or an IPv4, or an
+// IPv6 in the brackets the authority form puts it in
+const HOST_NAME = /^(?:[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*|\[[0-9A-Fa-f:.]{2,45}\])$/;
+
+// what the download folder is allowed to hand out - the built client zips and
+// nothing else. Both request handlers ask, so the cache and the streaming path
+// serve the same set of files rather than each having its own idea of it.
+const isDownloadable = function(filePath) {
+    return path.extname(filePath).toLowerCase() === ".zip";
+};
+
 const ServerHTTP = class {
     httpBasePath = "./tmp/web";
     httpDownloadPath = "./tmp/desktop";
@@ -29,6 +40,7 @@ const ServerHTTP = class {
     httpCacheUpdateId = -1;
     httpCacheReloadId = -1;
     httpRedirect = null;
+    httpDomain = "localhost";
 
     constructor() {
 
@@ -178,64 +190,98 @@ const ServerHTTP = class {
         };
     };
 
-    
-
-    async buildChache() {
-        // download path first, so the web files win on name collision
-        const basePaths = [this.httpDownloadPath, this.httpBasePath];
-        this.httpCache = new Map();
-        for (const basePath of basePaths) {
-            const files = await fs.readdir(basePath, {"recursive": true});
-            for (const file of files) {
-                if (basePath === this.httpDownloadPath && path.extname(file).toLowerCase() !== ".zip") {
-                    continue; // only the client zips are downloadable
-                }
-                const src = path.join(basePath, file);
-                const stats = await fs.stat(src);
-                if (stats.isFile() === false) {
-                    continue; // skip directories
-                }
-                const date = new Date(stats.mtimeMs);
-                this.httpCache.set(file.split(path.sep).join("/"), {
-                    "path": src,
-                    "lastModified": date.toUTCString(),
-                    "type": getMIMEType(path.extname(src)) || "text/plain",
-                    "size": stats.size,
-                    "mtimeMs": stats.mtimeMs,
-                    "etag": this.fileETag(src, stats),
-                    "accesses": new Array(this.httpCacheUpdateLength*2).fill(0),
-                    "accessed": 0,
-                });
-            }
-        }
+    // and what a 304 carries instead: the same freshness, no Content-Length
+    //
+    // A 304 has no body, and a length describing one the client will never
+    // receive is the kind of mismatch that leaves it waiting on the socket.
+    // The two used to share fileHeaders(), which is where the length came from.
+    notModifiedHeaders(fileData) {
+        return {
+            "Cache-Control": "no-cache",
+            "Last-Modified": fileData["lastModified"],
+            "ETag": fileData["etag"]
+        };
     };
 
-    // the metadata of an entry is as old as the boot that built it, and a
-    // buffer never expires on its own: a file that changed on disk since has to
-    // lose both, or the answer carries the old length and tag over new bytes -
-    // a Content-Length that does not match the body breaks the response itself,
-    // not just its freshness
-    async revalidateCache() {
-        for (const [key, fileData] of this.httpCache) {
-            let stats;
+    
+
+    // every file this server can hand out, as it is on disk right now
+    async scanFiles() {
+        const found = new Map();
+        // download path first, so the web files win on a name collision
+        for (const basePath of [this.httpDownloadPath, this.httpBasePath]) {
+            let names;
             try {
-                stats = await fs.stat(fileData["path"]);
+                names = await fs.readdir(basePath, {"recursive": true});
             } catch (error) {
-                continue;   // gone from disk, the request answers that on its own
+                continue;   // nothing has been built into this folder
             }
-            if (stats.size === fileData["size"] && stats.mtimeMs === fileData["mtimeMs"]) {
-                continue;
+            for (const name of names) {
+                if (basePath === this.httpDownloadPath && isDownloadable(name) === false) {
+                    continue;
+                }
+                const src = path.join(basePath, name);
+                let stats;
+                try {
+                    stats = await fs.stat(src);
+                } catch (error) {
+                    continue;   // gone between the listing and the stat
+                }
+                if (stats.isFile() === false) {
+                    continue;   // skip directories
+                }
+                found.set(name.split(path.sep).join("/"), {"path": src, "stats": stats});
             }
-            fileData["size"] = stats.size;
-            fileData["mtimeMs"] = stats.mtimeMs;
-            fileData["lastModified"] = new Date(stats.mtimeMs).toUTCString();
-            fileData["etag"] = this.fileETag(fileData["path"], stats);
-            delete fileData["buffer"];
         }
+        return found;
+    };
+
+    // what the index holds about one file, without its bytes
+    cacheEntry(src, stats) {
+        return {
+            "path": src,
+            "lastModified": new Date(stats.mtimeMs).toUTCString(),
+            "type": getMIMEType(path.extname(src)) || "text/plain",
+            "size": stats.size,
+            "mtimeMs": stats.mtimeMs,
+            "etag": this.fileETag(src, stats),
+            "accesses": new Array(this.httpCacheUpdateLength * 2).fill(0),
+            "accessed": 0
+        };
+    };
+
+    // the index, brought back in line with the disk
+    //
+    // It is rebuilt from a fresh listing rather than only revalidated. A file
+    // that *changed* has to lose its metadata and its buffer - an answer that
+    // carried the old length over new bytes would break the response itself,
+    // not only its freshness - but a file that was *created* since the boot
+    // would never enter an index built once and only walked afterwards, and
+    // would 404 for the life of the process however many times it was compiled;
+    // one that was deleted would go on being answered out of memory. What does
+    // survive a rebuild is the access history, because it belongs to the file
+    // rather than to this scan of it, and it is what the cache is scored on.
+    async buildCache() {
+        const found = await this.scanFiles();
+        const cache = new Map();
+        for (const [key, file] of found) {
+            const entry = this.cacheEntry(file["path"], file["stats"]);
+            const previous = this.httpCache.get(key);
+            if (typeof previous !== "undefined") {
+                entry["accesses"] = previous["accesses"];
+                entry["accessed"] = previous["accessed"];
+                const isSame = previous["size"] === entry["size"] && previous["mtimeMs"] === entry["mtimeMs"];
+                if (isSame === true && typeof previous["buffer"] !== "undefined") {
+                    entry["buffer"] = previous["buffer"];
+                }
+            }
+            cache.set(key, entry);
+        }
+        this.httpCache = cache;
     };
 
     async refreshCache() {
-        await this.revalidateCache();
+        await this.buildCache();
 
         // fill with priority order small -> high (smaller is better)
         const priorityOrder = [];
@@ -252,40 +298,49 @@ const ServerHTTP = class {
             priorityOrder.splice(i, 0, el);
         }
 
-        // search for last cached file
-        const length = priorityOrder.length;
+        // walk in priority order and admit what fits
+        //
+        // The budget is a limit rather than something to step over: the walk
+        // used to stop only once it was already past it, which put the whole of
+        // the last file admitted over the size the configuration asked for. A
+        // file too large for what is left is passed over instead, so a smaller
+        // one behind it still gets in.
+        const admitted = new Set();
         let currentSize = 0;
-        let currentIndex = 0;
-        while (currentIndex < length && currentSize < this.httpCacheSize && priorityOrder[currentIndex]["priority"] < 0) {
-            currentSize += this.httpCache.get(priorityOrder[currentIndex]["file"])["size"];
-            currentIndex++;
-        }
-        //console.log(currentSize);
-        //console.log(currentIndex);
-
-        // remove unused files
-        for (let i = currentIndex; i < length; i++) {
-            const fileData = this.httpCache.get(priorityOrder[i]["file"]);
-            delete fileData["buffer"]; // remove buffer to save memory
+        for (const el of priorityOrder) {
+            if (el["priority"] >= 0) {
+                break;      // never asked for, nothing to hold in memory for
+            }
+            const size = this.httpCache.get(el["file"])["size"];
+            if (currentSize + size > this.httpCacheSize) {
+                continue;
+            }
+            currentSize += size;
+            admitted.add(el["file"]);
         }
 
-        // add files to cache
-        for (let i = 0; i < currentIndex; i++) {
-            const fileData = this.httpCache.get(priorityOrder[i]["file"]);
-            if (typeof fileData["buffer"] === "undefined") {
-                const file = await this.getFileData(fileData["path"]);
-                if (typeof file === "undefined") {
-                    continue;
-                }
-                fileData["buffer"] = file["buffer"];
-                fileData["size"] = file["size"];
-                fileData["lastModified"] = file["lastModified"];
-                fileData["etag"] = file["etag"];
+        // let go of everything the budget no longer covers
+        for (const [key, fileData] of this.httpCache) {
+            if (admitted.has(key) === false) {
+                delete fileData["buffer"];
             }
         }
 
-        //console.log(priorityOrder);
-        //console.log(this.httpCache.get("index.html"));
+        // and read in what it does
+        for (const key of admitted) {
+            const fileData = this.httpCache.get(key);
+            if (typeof fileData["buffer"] !== "undefined") {
+                continue;
+            }
+            const file = await this.getFileData(fileData["path"]);
+            if (typeof file === "undefined") {
+                continue;
+            }
+            fileData["buffer"] = file["buffer"];
+            fileData["size"] = file["size"];
+            fileData["lastModified"] = file["lastModified"];
+            fileData["etag"] = file["etag"];
+        }
     };
 
     httpsRequestHandler = async (req, res) => {
@@ -295,6 +350,9 @@ const ServerHTTP = class {
         // get requested file
         let fileData;
         for (const basePath of basePaths) {
+            if (basePath === this.httpDownloadPath && isDownloadable(filePath) === false) {
+                continue; // the download folder hands out the client zips only
+            }
             const fullPath = this.resolveInBase(basePath, filePath);
             if (typeof fullPath === "undefined") {
                 continue; // outside of the served folder
@@ -315,7 +373,7 @@ const ServerHTTP = class {
         }
         if (this.isNotModified(req, fileData) === true) {
             fileData["stream"].destroy();
-            res.writeHead(304, this.fileHeaders(fileData));
+            res.writeHead(304, this.notModifiedHeaders(fileData));
             res.end();
             return;
         }
@@ -342,7 +400,7 @@ const ServerHTTP = class {
         fileData["accessed"] += 1;
 
         if (this.isNotModified(req, fileData) === true) {
-            res.writeHead(304, this.fileHeaders(fileData));
+            res.writeHead(304, this.notModifiedHeaders(fileData));
             res.end();
             return;
         }
@@ -366,7 +424,16 @@ const ServerHTTP = class {
     };
 
     httpRedirectHandler = (req, res) => {
-        const myURL = req.headers.host.split(":")[0];
+        // An HTTP/1.1 request with no Host is answered by node itself, but an
+        // HTTP/1.0 one reaches this handler, and reading .split of undefined
+        // here is an uncaught exception inside a request handler: the whole
+        // process goes down, from the one port that is open in plaintext. The
+        // header is also whatever the client typed, so a name that is not one
+        // would be echoed straight into a Location - the configured domain
+        // stands in for anything missing or malformed.
+        const host = typeof req.headers.host === "string" ? req.headers.host : "";
+        const name = host.split(":")[0];
+        const myURL = HOST_NAME.test(name) === true ? name : this.httpDomain;
         const myPort = this.httpPort !== 443 ? ":" + this.httpPort : "";
         res.writeHead(302, {
             "Location": "https://" + myURL + myPort + req.url
@@ -396,7 +463,7 @@ const ServerHTTP = class {
             // build cache
             this.httpCacheSize = conf["http"]["cache"]["size"];
             this.httpCacheSizeLimit = conf["http"]["cache"]["fileSizeLimit"];
-            await this.buildChache();
+            await this.buildCache();
 
             // update access stats periodically
             clearInterval(this.httpCacheUpdateId);
@@ -419,6 +486,7 @@ const ServerHTTP = class {
 
         // create HTTP server
         this.httpPort = conf["http"]["port"];
+        this.httpDomain = conf["http"]["domain"];
         this.httpServer = https.createServer({
             "key": conf["http"]["key"],
             "cert": conf["http"]["cert"]

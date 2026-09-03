@@ -28,6 +28,9 @@ const DESKTOP_DIR = "desktop";
 // squeeze the zips as hard as deflate allows, they are downloaded over the wire
 const ZIP_LEVEL = 9;
 
+// what a dist is called while it is still being written
+const PART_SUFFIX = ".part";
+
 // the client configuration the server generates for the built clients
 const CONF_FILE = "index.json";
 
@@ -360,15 +363,27 @@ const packDist = async function(dist) {
 };
 
 // stream one dist zip to disk, the whole thing never stands in memory at once
+//
+// It is written beside the target and moved onto it only once it is whole. The
+// caller catches a failed dist and carries on to the next target, so a stream
+// opened at the final name left a truncated zip exactly where http.js serves
+// the downloads from - offered to clients as a client.
 const writeDistZip = async function(destPath, entries) {
-    const stream = createWriteStream(destPath);
+    const partPath = destPath + PART_SUFFIX;
     try {
-        await writeZip(stream, entries, ZIP_LEVEL);
-    } finally {
-        await new Promise(function(resolve, reject) {
-            stream.once("error", reject);
-            stream.end(resolve);
-        });
+        const stream = createWriteStream(partPath);
+        try {
+            await writeZip(stream, entries, ZIP_LEVEL);
+        } finally {
+            await new Promise(function(resolve, reject) {
+                stream.once("error", reject);
+                stream.end(resolve);
+            });
+        }
+        await fs.rename(partPath, destPath);
+    } catch (error) {
+        await fs.rm(partPath, {"force": true});
+        throw error;
     }
 };
 

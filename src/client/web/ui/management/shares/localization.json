@@ -1,0 +1,12 @@
+{
+    "shares": {
+        "user": {
+            "en": "User Shares",
+            "hu": "Felhasználói megosztások"
+        },
+        "guest": {
+            "en": "Guest Shares",
+            "hu": "Vendég megosztások"
+        }
+    }
+}

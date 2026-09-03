@@ -11,7 +11,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { argGet, binarySearch, setAbsolute, generateId, isDirEmpty } from "../src/server/common.js";
+import { argGet, argCheck, binarySearch, setAbsolute, generateId, isDirEmpty } from "../src/server/common.js";
 
 //
 // argGet
@@ -21,25 +21,64 @@ test("argGet reads a flag as a boolean", () => {
     assert.equal(argGet(["node", "server.js"], "--compile", false), undefined);
 });
 
-test("argGet reads --name=value only in the inline form", () => {
+// the one rule of the CLI: the form follows the name, so a long option is
+// joined by an equals sign and a short one is followed by its value
+test("argGet reads a long option only as --name=value", () => {
     const args = ["node", "server.js", "--configuration=./conf/config.json"];
-    assert.equal(argGet(args, "--configuration", true, true), "./conf/config.json");
+    assert.equal(argGet(args, "--configuration", true), "./conf/config.json");
 
-    // the caller asks for the inline form, so the separated one does not match
     const separated = ["node", "server.js", "--configuration", "./conf/config.json"];
-    assert.equal(argGet(separated, "--configuration", true, true), undefined);
+    assert.equal(argGet(separated, "--configuration", true), undefined);
 });
 
-test("argGet reads -name value only in the separated form", () => {
+test("argGet reads a short option only as -name value", () => {
     const args = ["node", "server.js", "-c", "./conf/config.json"];
-    assert.equal(argGet(args, "-c", true, false), "./conf/config.json");
+    assert.equal(argGet(args, "-c", true), "./conf/config.json");
 
     const inline = ["node", "server.js", "-c=./conf/config.json"];
-    assert.equal(argGet(inline, "-c", true, false), undefined);
+    assert.equal(argGet(inline, "-c", true), undefined);
+});
+
+test("argGet keeps a value that only looks inline", () => {
+    // the equals sign is part of the path, not a separator, in the short form
+    const args = ["node", "server.js", "-c", "./conf/a=b.json"];
+    assert.equal(argGet(args, "-c", true), "./conf/a=b.json");
 });
 
 test("argGet returns undefined for a value flag with nothing behind it", () => {
-    assert.equal(argGet(["node", "server.js", "-c"], "-c", true, false), undefined);
+    assert.equal(argGet(["node", "server.js", "-c"], "-c", true), undefined);
+});
+
+test("argGet does not take the option behind a short one as its value", () => {
+    const args = ["node", "server.js", "-c", "--compile"];
+    assert.equal(argGet(args, "-c", true), undefined);
+    assert.equal(argGet(args, "--compile", false), true);
+});
+
+test("argGet reads an empty long value as the empty string it is", () => {
+    assert.equal(argGet(["node", "server.js", "--configuration="], "--configuration", true), "");
+});
+
+//
+// argCheck
+//
+test("argCheck names the form a long option wanted", () => {
+    const args = ["node", "server.js", "--configuration", "./conf/config.json"];
+    const message = argCheck(args, ["--configuration", "-c"]);
+    assert.match(message, /--configuration=<value>/);
+});
+
+test("argCheck names the form a short option wanted", () => {
+    const args = ["node", "server.js", "-c=./conf/config.json"];
+    const message = argCheck(args, ["--configuration", "-c"]);
+    assert.match(message, /-c <value>/);
+});
+
+test("argCheck passes the forms the rule accepts", () => {
+    const valueArgs = ["--configuration", "-c"];
+    assert.equal(argCheck(["node", "server.js", "--configuration=./x.json"], valueArgs), undefined);
+    assert.equal(argCheck(["node", "server.js", "-c", "./x.json"], valueArgs), undefined);
+    assert.equal(argCheck(["node", "server.js", "--compile", "--exit"], valueArgs), undefined);
 });
 
 //

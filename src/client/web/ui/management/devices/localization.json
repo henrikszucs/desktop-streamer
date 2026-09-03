@@ -1,0 +1,12 @@
+{
+    "devices": {
+        "user": {
+            "en": "User Clients",
+            "hu": "Felhasználói kliensek"
+        },
+        "guest": {
+            "en": "Guest Clients",
+            "hu": "Vendég kliensek"
+        }
+    }
+}
