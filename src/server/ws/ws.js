@@ -22,7 +22,8 @@ const ServerWS = class {
     wsHttpServer = null;
     version = "";
 
-    // the half of the configuration a client may see, answered to "conf-get"
+    // the half of the configuration a client may see, answered to "conf-get",
+    // the version of this process among it
     confPublic = {};
 
     // clients store memory variables
@@ -49,7 +50,7 @@ const ServerWS = class {
 
         // what a client is allowed to learn about this server, never key
         // material, SMTP credentials, OAuth secrets or database settings
-        this.confPublic = buildPublicConf(conf);
+        this.confPublic = buildPublicConf(conf, this.version);
 
         // the WS server is reachable on the HTTP domain when they share a host
         let domain = conf["ws"]["domain"];

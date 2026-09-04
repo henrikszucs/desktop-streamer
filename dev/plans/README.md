@@ -27,10 +27,9 @@ against an older configuration shape and never ran against the current schema
 
 | type | request | answer |
 | --- | --- | --- |
-| `conf-get` | - | the public half of the configuration |
+| `conf-get` | - | the public half of the configuration, the server version included |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
-| `version-check` | `{"version": string}` | `{"success": boolean, "version": string}` |
 
 Each of those is one function in a group file under `src/server/ws/handlers/`,
 reached through the dispatch table in `src/server/ws/api.js` - a new call is a

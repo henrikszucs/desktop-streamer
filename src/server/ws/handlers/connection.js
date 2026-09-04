@@ -30,28 +30,11 @@ const sessionGet = function(ctx) {
     });
 };
 
-// version check, a client that does not match the server has to update
-const versionCheck = function(ctx) {
-    /*{
-        "version": string
-    }*/
-    /*{
-        "success": boolean,
-        "version": string
-    }*/
-    const version = ctx["server"].version;
-    ctx["messageObj"].send({
-        "success": ctx["message"]["version"] === version,
-        "version": version
-    });
-};
-
 // the types this group answers
 const handlers = {
     "ping": ping,
-    "session-get": sessionGet,
-    "version-check": versionCheck
+    "session-get": sessionGet
 };
 
-export { handlers, ping, sessionGet, versionCheck };
+export { handlers, ping, sessionGet };
 export default handlers;

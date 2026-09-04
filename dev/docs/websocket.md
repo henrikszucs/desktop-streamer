@@ -278,15 +278,14 @@ groups are merged into the dispatch table in `api.js`.
 
 | type | request | answer |
 | --- | --- | --- |
-| `conf-get` | - | `{"webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isAuth": bool, "isGoogleAuth": bool}, "auth": {"google": {"clientId": string}}}` |
+| `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isAuth": bool, "isGoogleAuth": bool}, "auth": {"google": {"clientId": string}}}` |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
-| `version-check` | `{"version": string}` | `{"success": bool, "version": string}` |
 | anything else | - | `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
 
 `conf-get` is built once in `ServerWS.start` by `buildPublicConf` and is the
-**public half** of the configuration - ICE servers, the permissions, and the
-public client id of each configured sign-in provider. Never key material, SMTP
+**public half** of the configuration - the version of the process, ICE servers,
+the permissions, and the public client id of each configured sign-in provider. Never key material, SMTP
 credentials, OAuth secrets or database settings. `auth` is absent when no
 provider is configured, and so is anything the current config schema has no
 field for (`serviceSharing`, which the client uses to decide whether to show the
@@ -330,15 +329,17 @@ cannot know whether the account behind a credential exists yet), and
 `generateId(10)`, unique among the live `clients` Map. It is not an account
 session and does not survive a reconnect.
 
-`version-check` compares against the `version` of `package.json`, cached by
-`getVersion()`. `success: false` means the client is out of date, and the answer
-carries the version it should be on.
+The `version` of the `conf-get` answer is the `version` of `package.json`,
+cached by `getVersion()`. A client whose own build does not match it is out of
+date, and the answer carries the version it should be on. It rides on `conf-get`
+rather than on a call of its own, since that is the one call the client already
+waits for before it goes online.
 
 ### Static config over HTTP vs. the live version over WS
 
 These are two different versions and they are allowed to disagree.
 
-| | `index.json` over HTTP | `version-check` over WS |
+| | `index.json` over HTTP | `conf-get` over WS |
 | --- | --- | --- |
 | what it is | the **static** config the client was shipped with | the **live** version of the process answering right now |
 | written by | `buildConfFile`, at compile and nowhere else | `getVersion()`, read from `package.json` |
@@ -356,16 +357,16 @@ refreshes it. So it goes stale in two ways:
 The socket is the only thing that knows what the server actually is. Hence the
 intended behaviour:
 
-> After connecting, the client checks its own version against `version-check`.
-> On a mismatch the UI points the user at the download page so they can get the
-> new version.
+> After connecting, the client checks its own version against the one
+> `conf-get` answered. On a mismatch the UI points the user at the download page
+> so they can get the new version.
 
-**None of that is implemented.** Nothing in the client calls `version-check`
-today, and `conf["version"]` is only ever printed in Settings → About
-(`ui/settings/about/index.js`). The pieces that exist:
+**The check is implemented, the screen behind it is not.** The `open` handler of
+`src/client/web/src/server.js` compares `conf["version"]` against
+`conf["remote"]["version"]` right after `conf-get`, and on a mismatch marks the
+connection outdated (so it stops reconnecting) and raises `version-mismatch`,
+which `index.js` listens for. What is missing:
 
-- the check would go in the `open` handler of `src/client/web/src/server.js`,
-  right after `conf-get`, and would raise an event the shell listens for;
 - the download page already exists as the `downloads` screen
   (`ui/downloads/`, route `downloads`), but it has no list to build the
   OS/architecture choice from any more - `index.json` no longer carries one, so
@@ -392,7 +393,7 @@ Two things to settle before wiring it up:
 
    The bundled copy was as old as the installed client anyway, so a target the
    server added since went missing from it while a target it dropped was still
-   offered - exactly what `version-check` implies is stale. The list wants to
+   offered - exactly what the version mismatch implies is stale. The list wants to
    come over the socket with the version answer instead.
 
 ### Answering, not aborting

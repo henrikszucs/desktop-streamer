@@ -86,20 +86,13 @@ const Server = class extends EventTarget {
 
             // this build against the build of the server answering it: they may
             // differ, nothing past this point may, so a mismatch ends here
-            const versionMessage = this.communicator.invoke({"type": "version-check", "version": conf["version"]});
-            await versionMessage.wait();
-            if (versionMessage.error !== "" || typeof versionMessage.data !== "object") {
-                console.error("Failed to check the server version:", versionMessage.error);
-                this.ws.close();
-                return;
-            }
-            if (versionMessage.data["success"] !== true) {
-                console.error("Version mismatch, client:", conf["version"], "server:", versionMessage.data["version"]);
+            if (conf["remote"]["version"] !== conf["version"]) {
+                console.error("Version mismatch, client:", conf["version"], "server:", conf["remote"]["version"]);
                 this.isOutdated = true;
                 this.dispatchEvent(new CustomEvent("version-mismatch", {
                     "detail": {
                         "client": conf["version"],
-                        "server": versionMessage.data["version"]
+                        "server": conf["remote"]["version"]
                     }
                 }));
                 this.ws.close();

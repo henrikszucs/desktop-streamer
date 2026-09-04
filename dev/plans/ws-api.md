@@ -16,12 +16,11 @@ feature work that is missing on both ends.
 
 | type | group file | request | answer |
 | --- | --- | --- | --- |
-| `conf-get` | `handlers/conf.js` | – | the public half of the configuration |
+| `conf-get` | `handlers/conf.js` | – | the public half of the configuration, the server version included |
 | `ping` | `handlers/connection.js` | – | `{"success": true, "timestamp"}` |
 | `session-get` | `handlers/connection.js` | – | `{"success": true, "sessionId"}` |
-| `version-check` | `handlers/connection.js` | `{"version"}` | `{"success", "version"}` |
 
-`ping`, `session-get` and `version-check` are newer than the cut — they were
+`ping` and `session-get` are newer than the cut — they were
 never in `6c0d18a`. Everything below was.
 
 ## To implement

@@ -81,8 +81,9 @@ communicator syncs, and closes the socket when it fails or answers `undefined`,
 so the client cannot get past connecting until this exists. The answer is stored
 as `conf["remote"]` and read all over the UI.
 
-Worth doing at the same time: the client learns the server version from
-`index.json` over HTTP (`version`, written by `buildConfFile`), but the WS
-server now answers `version-check` too. Have the client check its version over
-the socket after connecting, and show a download list when the versions differ -
-`index.json` no longer carries one, so it has to come over the socket.
+The `conf-get` answer opens with `version`, the live version of the process, and
+the client compares it against the `version` of its own `index.json` right there
+- a mismatch marks the connection outdated and raises `version-mismatch`. What
+is still missing is the screen behind it: a download list when the versions
+differ, since `index.json` no longer carries one and it has to come over the
+socket.
