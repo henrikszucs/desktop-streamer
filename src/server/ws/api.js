@@ -6,12 +6,14 @@
 // first-party dependencies
 import confHandlers from "./handlers/conf.js";
 import connectionHandlers from "./handlers/connection.js";
+import pairingHandlers from "./handlers/pairing.js";
 
 // one group of calls per file under ./handlers - adding a call means a function
 // in the group it belongs to, its type in that group's table, and a line here
 const GROUPS = [
     confHandlers,
-    connectionHandlers
+    connectionHandlers,
+    pairingHandlers
 ];
 
 // the groups merged into one type -> handler table. Two groups claiming the same

@@ -9,8 +9,12 @@ import Communicator from "../libs/communicator/communicator.js";
 // first-party dependencies
 import { conf } from "./conf.js";
 
+// what the server may say on its own, each handed on as an event of that name
+const PUSH_EVENTS = new Set(["pair-request", "pair-accept", "pair-reject", "pair-cancel", "pair-code"]);
+
 // events:
-// online, offline, version-mismatch
+// online, offline, version-mismatch,
+// pair-request, pair-accept, pair-reject, pair-cancel, pair-code
 const Server = class extends EventTarget {
     address = "";
     ws = null;
@@ -132,11 +136,88 @@ const Server = class extends EventTarget {
         };
         this.ws.addEventListener("close", handleClose, { "once": true });
     };
-    // nothing the server pushes on its own is served yet - the message is read
-    // to its end so the communicator can close it, and logged
+    //
+    // pairing
+    //
+    // the connection code this device hands out. The server is what makes it, so
+    // there is one code for this socket, it stands while this socket offers it,
+    // and it is gone when the socket is.
+    //
+    // What is thrown carries the reason as its message - the server's own error
+    // name, or the transport's when the call never got an answer - because the
+    // caller is what turns a reason into something a user reads.
+    async createPairCode() {
+        const messageObj = this.communicator.invoke({"type": "pair-create"});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+        return messageObj.data["pairCode"];
+    };
+
+    // give the code back before the socket does. An offline client has none to
+    // give - the server dropped it with the connection.
+    async deletePairCode() {
+        if (this.isOnline === false) {
+            return;
+        }
+        const messageObj = this.communicator.invoke({"type": "pair-delete"});
+        await messageObj.wait();
+    };
+
+    // ask the host behind a code to let this device in. The answer only says
+    // that the host was asked and how long it has to answer - the answer itself
+    // arrives on its own, as a pair-accept or a pair-reject.
+    async pairRequest(pairCode) {
+        const messageObj = this.communicator.invoke({"type": "pair-request", "pairCode": pairCode});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+        return {"timeout": messageObj.data["timeout"]};
+    };
+
+    // the host's answer to the request it was asked
+    async pairAccept() {
+        const messageObj = this.communicator.invoke({"type": "pair-accept"});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+    };
+
+    // no, from either side: the host deciding against it, or the peer giving up
+    // the wait. Nothing to refuse is not an error, so this one only reports.
+    async pairReject() {
+        if (this.isOnline === false) {
+            return;
+        }
+        const messageObj = this.communicator.invoke({"type": "pair-reject"});
+        await messageObj.wait();
+    };
+
+    // what the server says on its own. The pairing flow is the whole of it
+    // today: the host hears that somebody wants in, both sides hear how it
+    // ended, and the host hears the code it was given in place of a refused
+    // one. Each becomes an event of the same name, with the message as detail.
     async handleIncoming(messageObj) {
         await messageObj.wait();
-        console.warn("Unhandled incoming message:", messageObj.data);
+        const message = messageObj.data;
+        const type = message?.["type"];
+        if (PUSH_EVENTS.has(type) === false) {
+            console.warn("Unhandled incoming message:", message);
+            return;
+        }
+        this.dispatchEvent(new CustomEvent(type, {"detail": message}));
     };
 };
 export { Server };

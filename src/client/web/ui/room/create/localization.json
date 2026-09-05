@@ -13,6 +13,14 @@
                 "en": "Join code",
                 "hu": "Csatlakozási kód"
             },
+            "code-error": {
+                "en": "Could not get a join code.",
+                "hu": "Nem sikerült csatlakozási kódot kérni."
+            },
+            "code-denied": {
+                "en": "Sharing this device is not available for guests.",
+                "hu": "Az eszköz megosztása vendégként nem érhető el."
+            },
             "dialog-info-2": {
                 "en": "A popup will appear when someone wants to join your device.",
                 "hu": "Egy felugró ablak jelenik meg, amikor valaki csatlakozni szeretne az eszközödhöz."
@@ -24,6 +32,14 @@
             "guest": {
                 "en": "Guest",
                 "hu": "Vendég"
+            },
+            "request-cancelled": {
+                "en": "The join request was withdrawn.",
+                "hu": "A csatlakozási kérelmet visszavonták."
+            },
+            "request-timeout": {
+                "en": "The join request was not answered, so it was rejected.",
+                "hu": "A csatlakozási kérelem válasz nélkül maradt, ezért elutasításra került."
             },
             "request-info": {
                 "en": "<span class=\"bold\">{fullName}</span> from <span class=\"bold\">{ipAddress}</span> IP address wants to join your device.",

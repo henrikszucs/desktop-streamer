@@ -3,6 +3,9 @@
 // the public half of the configuration: what goes into it, and the call that
 // hands it out
 
+// first-party dependencies
+import { PAIR_ANSWER_TIMEOUT } from "./pairing.js";
+
 // the public half of the configuration, answered to "conf-get": the schema
 // defaults are repeated here, Ajv runs without "useDefaults"
 const buildPublicConf = function(conf, version) {
@@ -22,6 +25,11 @@ const buildPublicConf = function(conf, version) {
             "guestAllowJoin": permissions["guestAllowJoin"] ?? true,
             "isAuth": isAuth,
             "isGoogleAuth": isGoogleAuth
+        },
+        // the one clock of the pairing flow, so neither side has to draw a
+        // spinner for a wait the server already knows the length of
+        "pairing": {
+            "answerTimeout": PAIR_ANSWER_TIMEOUT
         }
     };
 
@@ -49,6 +57,7 @@ const confGet = function(ctx) {
         "webrtc": {"iceServers": string[]},
         "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean,
                         "isAuth": boolean, "isGoogleAuth": boolean},
+        "pairing": {"answerTimeout": number},
         "auth": {"google": {"clientId": string}}   (only when configured)
     }*/
     ctx["messageObj"].send(ctx["server"].confPublic);

@@ -10,7 +10,7 @@ says otherwise.
 `index.js` is five stages and nothing else: the environment, the configuration,
 the shell, the UI, then the connection. Everything that touches the document
 lives in `ui/ui.js` — the appearance and language settings, the overlay, the
-loading layer, the `ctx["ui"]` namespace, and the build that mounts every
+loading layer, the snackbar, the `ctx["ui"]` namespace, and the build that mounts every
 module. Every screen and dialog is a module under `ui/`.
 
 `ctx` is built before either the `ui` namespace or the router exists, and both
@@ -89,6 +89,21 @@ that mounts into another's markup has to follow it, which is what the dot-depth
 ordering is for — `settings` carries the markup `settings.appearance` mounts
 into. A module that throws is logged and skipped rather than taking the boot
 down with it.
+
+## The snackbar
+
+`ctx["ui"].snackbar.show(message, isError)` is the one place a call that failed
+says so out loud. It is built in script rather than written into `index.html`,
+because unlike the loading layer nothing needs it before the first module, and
+beercss already puts a `.snackbar` at the bottom of the window — under the
+loading layer and over the dialogs, which is the order `index.css` writes down.
+The message is set as `textContent`: it is a string a module chose, and the
+reason inside it came from a server.
+
+It takes itself off screen after six seconds and on a click, and a second
+message restarts that clock rather than inheriting what is left of the first
+one's. The text belongs to the module that shows it — the shell slice carries no
+strings for it.
 
 ## The overlay and the loading layer
 
@@ -184,8 +199,64 @@ matching build. An outdated client does not reconnect: it would fail the same
 check every two seconds, and going offline would put the loading layer back over
 the mismatch the shell just showed.
 
-Nothing the server pushes on its own is served yet; `handleIncoming` reads the
-message to its end so the communicator can close it, and logs it.
+What the server says on its own arrives at `handleIncoming`, which reads the
+message to its end so the communicator can close it and hands it on as an event
+of the same name — `PUSH_EVENTS` is the list, and a type outside it is logged
+rather than dispatched. The pairing flow is the whole of that list today, and a
+module listens for the ones it is in the middle of rather than the transport
+holding state about them.
+
+`createPairCode`/`deletePairCode` are the connection code the share flow hands
+out, and `pairRequest`/`pairAccept`/`pairReject` are the join attempt it
+introduces. `createPairCode` hands back the code and nothing else: it has no
+lifetime to report. What they throw carries the *reason* as the message — the server's
+own error name (`not-allowed`, `busy`, `unknown-code`), or the transport's when
+the call never got an answer — because turning a reason into something a user
+reads is the caller's job, not the transport's.
+
+## The pairing flow
+
+Three dialogs and one code. `room/create` holds the code and steps aside;
+`room/joining` is the wait on the peer; `room/request` is the decision on the
+host. Each owns its own half of the conversation, and none of them holds state
+the server does not.
+
+The one clock is the server's, not the client's: `conf-get` carries
+`pairing.answerTimeout` and the answer to a request repeats it. That is what
+makes both bars mean something — a bar drawn against a number the client invented
+would be a spinner with extra steps. The code itself has no clock at all: it
+stands while the share dialog is offering it, so nothing on either side
+refreshes it, and only a refusal replaces one. Until the server has answered, `room/joining` shows the *indeterminate*
+bar (a `<progress>` with no `value`), because at that moment there is genuinely
+no length to draw.
+
+On the host, the bar runs across the reject button rather than beside the pair of
+them: rejecting is what happens if nothing is clicked, so the button that fills
+up is the button that will act, and the line under it says so. The dialog answers
+half a second before the server's own clock, so the other side hears the host's
+decision rather than a timeout the host was never told about.
+
+Two orderings are load-bearing, and both were bugs first:
+
+- **The accept has to leave before the flow is torn down.** Closing the share
+  dialog gives the code back (`pair-delete`), and a code given back while a
+  request is pending *is* a rejection — so `room/request` dispatches its `done`
+  event only once `pairAccept()` has returned, and `room/create` tears down on
+  that event rather than on the click.
+- **`close()` never talks to the server.** A dialog of this flow is also closed
+  *for* it — the request ended from the other side, or the shell dropped every
+  dialog when the socket did — so only the explicit paths (the close button, the
+  countdown, the two answers) send anything. Closing on an answer that already
+  arrived would answer it back.
+
+A rejected code is replaced by the server, and the new one arrives as a
+`pair-code` push into the field the old one was in. Nothing on the host asks for
+it: the dialog that shows a code takes whichever code it is given. The code is the server's to make - six digits, so it can be read out loud -
+and it belongs to the socket it was asked on: the server drops it when the
+connection goes, which is why the share dialog asks for one when it opens and
+gives it back when it closes. The answer says how long the code stands, and the
+dialog asks for the next one before then, so what is on screen is always a code
+the server still knows.
 
 ## The registry
 
@@ -237,8 +308,7 @@ types the server no longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |
-| `management/new` (both flows) | `dev/plans/ws-pairing-joins.md` |
-| `room/create`, `room/joining`, `room/request` | `dev/plans/ws-pairing-joins.md` |
+| `management/new`, `room/create`, `room/joining`, `room/request` — the pairing handshake is live; what an accepted request leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `management/devices`, `management/shares` (and their `*-box.js`) | `dev/plans/ws-pairing-joins.md` |
 | `management/account/*` (information, sessions, delete) | `dev/plans/ws-accounts.md` |
 | `nav-top` `setAccounts()` — the list is the guest alone | `dev/plans/ws-accounts.md` |

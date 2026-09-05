@@ -4,6 +4,50 @@
             "dialog-title": {
                 "en": "Joining room...",
                 "hu": "Szobához csatlakozás..."
+            },
+            "dialog-asking": {
+                "en": "Asking the host device to let you in...",
+                "hu": "Engedélykérés a kiszolgáló eszköztől..."
+            },
+            "dialog-waiting": {
+                "en": "Waiting for the host to accept the connection. Please wait...",
+                "hu": "Várakozás a kiszolgáló eszköz válaszára. Kérlek várj..."
+            },
+            "accepted": {
+                "en": "The host accepted the connection.",
+                "hu": "A kiszolgáló eszköz elfogadta a csatlakozást."
+            },
+            "rejected": {
+                "en": "The host rejected the connection.",
+                "hu": "A kiszolgáló eszköz elutasította a csatlakozást."
+            },
+            "no-answer": {
+                "en": "The host did not answer in time.",
+                "hu": "A kiszolgáló eszköz nem válaszolt időben."
+            },
+            "host-gone": {
+                "en": "The host device is not available.",
+                "hu": "A kiszolgáló eszköz nem érhető el."
+            },
+            "unknown-code": {
+                "en": "No device is shared with this code.",
+                "hu": "Nincs megosztott eszköz ezzel a kóddal."
+            },
+            "own-code": {
+                "en": "This is this device's own join code.",
+                "hu": "Ez az eszköz saját csatlakozási kódja."
+            },
+            "busy": {
+                "en": "The host device is answering another join request.",
+                "hu": "A kiszolgáló eszköz éppen egy másik kérelmet bírál el."
+            },
+            "denied": {
+                "en": "Joining is not available for guests.",
+                "hu": "A csatlakozás vendégként nem érhető el."
+            },
+            "failed": {
+                "en": "Could not ask the host device.",
+                "hu": "Nem sikerült megkérdezni a kiszolgáló eszközt."
             }
         }
     }

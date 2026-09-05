@@ -17,7 +17,7 @@ remembering one needs the `joins` table.
 ## State
 
 ```
-pairs     = Map<pairCode, {hostClientId, peerClientId, timeoutId}>
+pairs     = Map<pairCode, {hostSessionId, peerSessionId, answerTimeoutId}>
 joins     = Map<joinId, {peerCode, hostCode, peerUserId, hostUserId,
                          peerName, hostName, isRemember,
                          peerClientIds: Set, hostClientIds: Set}>
@@ -36,11 +36,11 @@ and both ends come out of it holding a join.
 
 | type | request | answer |
 | --- | --- | --- |
-| `pair-create` | - | `{"success", "pairCode"}` |
-| `pair-request` | `{"pairCode"}` | `{"success", ...}` |
-| `pair-accept` | `{"remember"}` | `{"success", ...}` |
-| `pair-reject` | - | `{"success"}` |
-| `pair-delete` | - | `{"success"}` |
+| `pair-create` | - | `{"success", "pairCode", "timeout"}` **(done)** |
+| `pair-request` | `{"pairCode"}` | `{"success", "timeout", "error"}` **(done)** |
+| `pair-accept` | `{"remember"}` | `{"success", "error"}` **(done, minus `remember`)** |
+| `pair-reject` | - | `{"success"}` **(done, from either side)** |
+| `pair-delete` | - | `{"success"}` **(done)** |
 
 Server-initiated on the host socket:
 
@@ -51,10 +51,37 @@ Server-initiated on the host socket:
 {"timestamp", "type": "pair-accept", "joinCode": string}
 ```
 
-A pair code is short-lived and single-use: `addPairCode` stored a timeout id
+A pair code was short-lived and single-use: `addPairCode` stored a timeout id
 alongside it, and `removePairCode` cleared the timeout and notified whichever
 side did not ask for the removal. Every exit path - accept, reject, delete,
 timeout, socket close - has to go through it or the code leaks.
+
+`src/server/ws/handlers/pairing.js` holds all of this now, gated on
+`guestAllowShare` and `guestAllowJoin` (every client is a guest until
+[ws-accounts.md](ws-accounts.md)), with the `pairs` Map on `ServerWS` and every
+exit going back through `removePairCode`/`releasePeer` - the delete call, either
+answer, the answer timeout, and either socket closing (`ws.js`
+calls `removePairCode` from its close handler and `releasePairCodes` from
+`stop()`, so no timeout outlives the server).
+
+Differences from the code that was removed, all deliberate:
+
+- A code has **no expiry**: the share dialog is what holds it open, so it stands
+  while the host is offering it, and a refusal is what replaces one. The window
+  to answer a request in is the only clock left.
+- The host is **told** about a request rather than asked: the push is not
+  awaited before the peer is answered, because a sharing host is a tab somebody
+  switched away from and a throttled acknowledgment must not hold the peer up.
+  A push that fails to arrive within the answer window ends the request.
+- A refused code is **replaced** (`renewHostCode`) and the host is told the new
+  one on a `pair-code` push, so a number somebody just tried is worth nothing to
+  them a second time. A peer that only gives up leaves the code alone.
+- The withdrawal of a request has its own push (`pair-cancel`) rather than
+  reusing `pair-reject` towards the host, so each side gets the word for what
+  happened to it.
+- `remember` is not read: it belongs to the join that remembers a pair, which is
+  what is left below. An accepted request today ends with both sides told and the
+  code used up, and carries no `joinId`.
 
 ## Joins
 
@@ -120,19 +147,21 @@ communicator timeout.
 
 ## Work
 
-1. Restore the three maps and the join bookkeeping helpers.
-2. Restore the pairing branches, with the timeout and the cleanup on socket close.
+1. Restore the two remaining maps (`pairs` is live) and the join bookkeeping
+   helpers.
+2. Give `pair-accept` the join it should make: the `remember` flag, the join id
+   and codes, and the `joinId` both sides need in the answer and the push.
 3. Restore the join branches and `broadcastJoin`.
 4. Restore the `join` signaling relay last; it is the only branch that holds two
    messages open at once.
 5. Extend the socket close handler to drop the socket from every join it is in
-   and notify the other side, and to release its pair code.
+   and notify the other side (releasing its pair code is already there).
 
 ## Notes
 
-- Nothing here checks the guest permissions (`guestAllowShare`, `guestAllowJoin`)
-  that `config.js` already validates. Wire them in while restoring rather than
-  after.
+- Nothing in the removed code checked the guest permissions (`guestAllowShare`,
+  `guestAllowJoin`) that `config.js` already validates. The pairing calls check
+  both today; wire `guestAllowRelay` in while restoring rather than after.
 - The relay is a per-message `while` loop with `await` on both sides. One slow or
   hostile client holds a server-side loop open for as long as the communicator
   timeouts allow; bound it.

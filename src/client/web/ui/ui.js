@@ -46,6 +46,50 @@ const applyLanguage = function(local) {
     return lang;
 };
 
+// how long a snackbar stands before it takes itself off screen
+const SNACKBAR_TIMEOUT = 6000;
+
+// the one place a call that failed says so. Its markup is built here rather
+// than written into index.html because nothing needs it before the first
+// module, and beercss puts it at the bottom of the window on its own - under
+// the loading layer and over everything else, which is the order index.css
+// writes down. A message comes from a module (or from a server), so it goes in
+// as text, never as markup.
+const createSnackbar = function() {
+    const snackbarEl = document.createElement("div");
+    snackbarEl.className = "snackbar";
+    snackbarEl.id = "snackbar";
+    document.body.appendChild(snackbarEl);
+
+    let timeoutId = -1;
+    const snackbar = {
+        "el": snackbarEl,
+        // the timeout is restarted by every message, so a second one is shown
+        // for its own time instead of the rest of the first one's
+        "show": function(message, isError = false) {
+            clearTimeout(timeoutId);
+            snackbarEl.textContent = message;
+            snackbarEl.classList.toggle("error", isError === true);
+            snackbarEl.classList.add("active");
+            timeoutId = setTimeout(function() {
+                snackbar.hide();
+            }, SNACKBAR_TIMEOUT);
+        },
+        "hide": function() {
+            clearTimeout(timeoutId);
+            timeoutId = -1;
+            snackbarEl.classList.remove("active");
+        }
+    };
+
+    // beercss draws it as something to click, so clicking it dismisses it
+    snackbarEl.addEventListener("click", function() {
+        snackbar.hide();
+    });
+
+    return snackbar;
+};
+
 // the ctx["ui"] namespace. ctx is handed in before its router is there, so
 // every call below reads ctx["router"] at the time of the call, not now.
 const createUI = function(ctx) {
@@ -78,6 +122,9 @@ const createUI = function(ctx) {
     // the loading layer, over both segments - see ./loading/loading.js
     const loading = createLoading(overlay);
 
+    // the message layer at the bottom of the window, over the dialogs
+    const snackbar = createSnackbar();
+
     // the "permissions" block of the conf-get answer, asked as a question rather
     // than read as a value - a missing flag has not arrived, it is not a default
     const permissions = {
@@ -99,6 +146,7 @@ const createUI = function(ctx) {
     return {
         "overlay": overlay,
         "loading": loading,
+        "snackbar": snackbar,
         "permissions": permissions,
         "env": {"browser": browser, "width": width, "sizeS": sizeS, "sizeM": sizeM},
         "navigate": function(path) { return ctx["router"].navigate(path); },
@@ -132,5 +180,5 @@ const buildUI = async function(router) {
     }
 };
 
-export { applyScale, applyTheme, applyLanguage, createUI, buildUI };
-export default { applyScale, applyTheme, applyLanguage, createUI, buildUI };
+export { applyScale, applyTheme, applyLanguage, createSnackbar, createUI, buildUI };
+export default { applyScale, applyTheme, applyLanguage, createSnackbar, createUI, buildUI };

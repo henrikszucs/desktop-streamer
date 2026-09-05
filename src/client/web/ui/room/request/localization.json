@@ -9,6 +9,10 @@
                 "en": "Share for long term",
                 "hu": "Hosszú távú megosztás"
             },
+            "request-default": {
+                "en": "If you do not answer, the request is rejected.",
+                "hu": "Ha nem válaszolsz, a kérelem elutasításra kerül."
+            },
             "accept": {
                 "en": "Accept",
                 "hu": "Elfogadás"
@@ -16,6 +20,18 @@
             "reject": {
                 "en": "Reject",
                 "hu": "Elutasítás"
+            },
+            "accepted": {
+                "en": "Connection accepted.",
+                "hu": "A csatlakozás elfogadva."
+            },
+            "rejected": {
+                "en": "Connection rejected, a new join code was created.",
+                "hu": "A csatlakozás elutasítva, új csatlakozási kód készült."
+            },
+            "answer-failed": {
+                "en": "Could not answer the join request.",
+                "hu": "Nem sikerült válaszolni a csatlakozási kérelemre."
             }
         }
     }

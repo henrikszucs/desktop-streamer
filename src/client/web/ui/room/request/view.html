@@ -9,6 +9,11 @@
     </label>
     <div class="space"></div>
     <div class="dialog-room-request-buttons">
+        <!--
+            The bar runs across the reject button, not beside the pair of them,
+            because rejecting is what happens if nothing is clicked: the button
+            that fills up is the one that will act on its own.
+        -->
         <button class="tertiary round" id="btn-request-reject">
             <progress class="max" value="0" max="10000" id="room-request-reject-bar"></progress>
             <i>close</i>
@@ -19,4 +24,6 @@
             <span data-localization="new.share.accept">Accept</span>
         </button>
     </div>
+    <div class="space"></div>
+    <p class="small-text center-align" data-localization="new.share.request-default">If you do not answer, the request is rejected.</p>
 </dialog>

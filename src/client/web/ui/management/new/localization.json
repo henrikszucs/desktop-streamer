@@ -34,8 +34,8 @@
                 "hu": "Érvénytelen kód."
             },
             "code-rejected": {
-                "en": "Connenction rejected.",
-                "hu": "A csatlakozási elutasítva."
+                "en": "Connection rejected.",
+                "hu": "A csatlakozás elutasítva."
             },
             "full-name": {
                 "en": "{firstName} {lastName}",

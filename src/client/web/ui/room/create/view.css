@@ -16,3 +16,28 @@
 #btn-room-create-copy {
     flex-shrink: 0;
 }
+
+/* The code itself is what the dialog is for: it is read off the screen and
+ * typed on another device, so the digits are spaced apart and centered rather
+ * than sitting in the field like ordinary input. The value stays the six bare
+ * digits - the spacing is drawn, not typed - so what the copy button writes is
+ * what the other side can paste.
+ */
+#input-room-create-code {
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: bold;
+    letter-spacing: 0.5rem;
+    text-indent: 0.5rem;
+}
+
+/* The wait for the code
+ *
+ * The spinner is left exactly where beercss puts a progress in a field - at the
+ * trailing end, the place a field's own icon goes - and there is nothing here
+ * to move it. Its keyframes animate its transform, so a translate written here
+ * is the one that loses, and the position that came out of that fight was
+ * neither the middle nor the end. It is shown over an empty input rather than
+ * in place of one: the input is what the field takes its width from, so the
+ * dialog is the same size before and after the answer lands.
+ */

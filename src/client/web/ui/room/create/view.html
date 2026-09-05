@@ -12,9 +12,18 @@
         <div class="room-create-fields">
             <div class="field label border round">
                 <input type="text" id="input-room-create-code" readonly/>
+                <!--
+                    The label follows the input immediately: beercss floats it
+                    out of the way with "[placeholder]:not(:placeholder-shown) +
+                    label", an adjacent sibling, so anything between the two
+                    leaves the label sitting over the code. The spinner goes
+                    after it.
+                -->
                 <label data-localization="new.share.join-code">Join code</label>
+                <progress class="circle hide" id="progress-room-create-code"></progress>
+                <output class="invalid error-text hide" id="output-room-create-error">Error text</output>
             </div>
-            <button class="primary circle transparent suffix" id="btn-room-create-copy">
+            <button class="primary circle transparent suffix" id="btn-room-create-copy" disabled>
                 <i>content_copy</i>
             </button>
         </div>

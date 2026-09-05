@@ -15,6 +15,7 @@ import { generateId, getVersion } from "../common.js";
 import serverHTTP from "../http.js";
 import { handleAPI } from "./api.js";
 import { buildPublicConf } from "./handlers/conf.js";
+import { removePairCode, releasePairCodes } from "./handlers/pairing.js";
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
@@ -28,6 +29,7 @@ const ServerWS = class {
 
     // clients store memory variables
     clients = new Map();            // key-sessionId, value-state object of the client
+    pairs = new Map();              // key-pairCode, value-state object of the pair (see ./handlers/pairing.js)
 
     // utility things
     isClosing = false;
@@ -165,6 +167,7 @@ const ServerWS = class {
             if (client === undefined) {
                 return;     // a second close event after the cleanup
             }
+            removePairCode(this, sessionId);
             client.get("com").release();
             this.clients.delete(sessionId);
 
@@ -264,7 +267,8 @@ const ServerWS = class {
         }
         process.stdout.write(wasRunning === true ? "done\n" : "skipped\n");
 
-        // drop the connection state
+        // drop the connection state, the pair codes with their timeouts among it
+        releasePairCodes(this);
         this.clients.clear();
     };
 };

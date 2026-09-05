@@ -6,6 +6,9 @@
 // first-party dependencies
 import { Screen } from "../../../src/view.js";
 
+// the shape of a join code, the same six digits the server hands out
+const CODE_PATTERN = /^[0-9]{6}$/;
+
 const NewScreen = class extends Screen {
     static id = "new";
     static rootId = "screen-new";
@@ -76,10 +79,18 @@ const NewScreen = class extends Screen {
     };
 
     // ask the host behind a join code to let this device in, then wait for the
-    // answer in the joining dialog
-    async join(code) {
+    // answer in the joining dialog - which owns the request from here on
+    join(code) {
         this.displayJoinError("");
-        console.warn("Joining is not wired to the server yet");
+
+        // what was read off another screen and typed back in: the digits are
+        // what matters, whatever was put between them
+        const pairCode = code.replace(/[^0-9]/g, "");
+        if (CODE_PATTERN.test(pairCode) === false) {
+            this.displayJoinError(this.ctx["localization"].get("new.join.code-invalid"));
+            return;
+        }
+        this.ctx["ui"].openDialog("room-joining", {"pairCode": pairCode});
     };
 };
 
