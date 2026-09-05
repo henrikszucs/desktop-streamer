@@ -19,3 +19,5 @@ model/*/data
 model/*/checkpoints
 model/*/benchmark/www/models
 __pycache__/
+
+.playwright-mcp
