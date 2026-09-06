@@ -7,6 +7,10 @@
         "guest": {
             "en": "Guest Clients",
             "hu": "Vendég kliensek"
+        },
+        "unnamed": {
+            "en": "Shared device",
+            "hu": "Megosztott eszköz"
         }
     }
 }

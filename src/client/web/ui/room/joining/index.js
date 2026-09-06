@@ -3,6 +3,11 @@
 // the wait for the host's answer. It owns the request from the click that opened
 // it: it asks, it draws how long there is left, and it hears the answer. Closing
 // it gives the wait up, which is not a rejection - hence "cancel".
+//
+// Two things are waited for here and they end the same way: a pair code typed in
+// on the new screen, and a remembered device asked for again from the devices
+// screen. An unsupervised join is answered by the server itself, so that one is
+// over before the bar has moved.
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";
@@ -27,7 +32,9 @@ const ERROR_TEXTS = new Map([
     ["invalid-code", "new.join.code-invalid"],
     ["own-code", "new.join.own-code"],
     ["busy", "new.join.busy"],
-    ["not-allowed", "new.join.denied"]
+    ["not-allowed", "new.join.denied"],
+    ["unknown-join", "new.join.unknown-join"],
+    ["offline", "new.join.host-gone"]
 ]);
 
 const RoomJoiningDialog = class extends Dialog {
@@ -43,6 +50,10 @@ const RoomJoiningDialog = class extends Dialog {
     // one that was already given up on must not start a countdown.
     requestId = 0;
 
+    // which flow is being waited on, and the join it is about when it is one
+    mode = "pair";
+    joinId = "";
+
     async mount(ctx) {
         this.progressBar = document.getElementById("room-joining-progress");
         this.info = document.getElementById("dialog-room-joining-info");
@@ -57,15 +68,26 @@ const RoomJoiningDialog = class extends Dialog {
     //
     // the host is asked, and only then is there a length to draw: until the
     // server answers, the bar says "something is happening" and no more
-    async request(pairCode) {
+    async request(params) {
         const requestId = ++this.requestId;
         const localization = this.ctx["localization"];
         this.displayWait(localization.get("new.join.dialog-asking"), 0);
         try {
-            const request = await this.ctx["server"].pairRequest(pairCode);
+            const server = this.ctx["server"];
+            const request = (this.mode === "join"
+                ? await server.joinRequest(this.joinId)
+                : await server.pairRequest(params["pairCode"]));
             if (requestId !== this.requestId) {
                 return;     // this dialog was closed, or asked again, meanwhile
             }
+
+            // nobody was asked: the host agreed to this device once, for every
+            // time, and the server let it straight through
+            if (request["isAccepted"] === true) {
+                this.onPairAccept(new CustomEvent("join-accept"));
+                return;
+            }
+
             const timeout = request["timeout"] ?? this.ctx["conf"]["remote"]?.["pairing"]?.["answerTimeout"];
             this.displayWait(localization.get("new.join.dialog-waiting"), timeout);
         } catch (error) {
@@ -108,9 +130,15 @@ const RoomJoiningDialog = class extends Dialog {
     //
     // the answer, which arrives on its own
     //
-    onPairAccept = () => {
+    onPairAccept = async (event) => {
         this.requestId++;
-        this.ctx["ui"].snackbar.show(this.ctx["localization"].get("new.join.accepted"));
+
+        // a pairing the host asked to remember comes back with the join this
+        // side is now on, and its own code for it - the one thing that lets this
+        // device come back without being paired again
+        const record = await this.ctx["joins"].remember(event.detail, false);
+        const localization = this.ctx["localization"];
+        this.ctx["ui"].snackbar.show(localization.get(record === undefined ? "new.join.accepted" : "new.join.accepted-remembered"));
         this.ctx["ui"].closeDialog(this.constructor.id);
         // the room this leads into is still ahead: dev/plans/ws-pairing-joins.md
     };
@@ -123,16 +151,25 @@ const RoomJoiningDialog = class extends Dialog {
     // is looking at a dialog that should come down with it
     requestClose() {
         this.requestId++;
-        this.ctx["server"].pairReject();
+        if (this.mode === "join") {
+            this.ctx["server"].joinReject(this.joinId);
+        } else {
+            this.ctx["server"].pairReject();
+        }
         super.requestClose();
     };
 
     open(params) {
+        this.mode = params["mode"] ?? "pair";
+        this.joinId = params["joinId"] ?? "";
+
         super.open(params);
         const server = this.ctx["server"];
         server.addEventListener("pair-accept", this.onPairAccept);
         server.addEventListener("pair-reject", this.onPairReject);
-        this.request(params["pairCode"]);
+        server.addEventListener("join-accept", this.onPairAccept);
+        server.addEventListener("join-reject", this.onPairReject);
+        this.request(params);
     };
     close() {
         // nothing is sent from here: close() is also how the flow ends itself,
@@ -144,6 +181,8 @@ const RoomJoiningDialog = class extends Dialog {
         const server = this.ctx["server"];
         server.removeEventListener("pair-accept", this.onPairAccept);
         server.removeEventListener("pair-reject", this.onPairReject);
+        server.removeEventListener("join-accept", this.onPairAccept);
+        server.removeEventListener("join-reject", this.onPairReject);
 
         super.close();
     };

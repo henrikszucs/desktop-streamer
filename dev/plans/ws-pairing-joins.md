@@ -87,13 +87,34 @@ Differences from the code that was removed, all deliberate:
 
 | type | request | answer |
 | --- | --- | --- |
-| `join-connect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success", "name", "isRemember", "isOnline"}` |
+| `join-connect` | `{"joinCode"}` | `{"success", "joinId", "isHost", "isUnsupervised", "name", "isOnline"}` **(done)** |
+| `join-list` | - | `{"success", "joins"}` **(done, not in the original)** |
+| `join-request` | `{"joinId"}` | `{"success", "isAccepted", "timeout"}` **(done, not in the original)** |
+| `join-accept` / `join-reject` | `{"joinId"}` | `{"success"}` **(done)** |
+| `join-delete` | `{"joinId"}` | `{"success"}` **(done)** |
 | `join-disconnect` | `{"joinId", ...}` | `{"success"}` |
 | `join` | `{"joinId"}` | signaling, below |
 | `join-rename` | `{"joinId", "name", "peerCode"\|"hostCode"}` | `{"success"}` |
 | `join-remember` | `{"joinId", "remember", ...}` | `{"success"}` |
 | `join-rehost` | `{"joinId", ...}` | `{"success", "hostCode"}` |
-| `join-delete` | `{"joinId", ...}` | `{"success"}` |
+
+`src/server/ws/handlers/joins.js` holds the done half. It departs from the shape
+above in three places, all deliberate:
+
+- **A join is asked for, not just connected to.** `join-connect` only makes a
+  device reachable; `join-request` is the accept-or-reject that follows, and it
+  is the same conversation as the pairing one because it is the same dialog on
+  both sides. `is_unsupervised` on the row is what lets the server answer it
+  itself, which is the whole point of the second checkbox on the host.
+- **One code, not a join id and a code.** Which of the two a socket presents is
+  what decides its side, so the id adds nothing to the lookup.
+- **`join-list` is new**, because the two screens need who is online and nothing
+  else does. The `broadcastJoin` fan-out below is not built: a list that is only
+  read when somebody opens the tab does not need one, and the pushes that do
+  exist (`join-cancel`, `join-remove`) go to the sockets of one join.
+
+`is_remember` is still not a column - a row existing is the remembered flag - and
+`remember`/`unsupervised` reach the server as the two flags on `pair-accept`.
 
 `peerCode` and `hostCode` are the two capabilities of a join - which one a socket
 presents decides which side it is and what it may change. They are ten characters
@@ -147,10 +168,12 @@ communicator timeout.
 
 ## Work
 
-1. Restore the two remaining maps (`pairs` is live) and the join bookkeeping
-   helpers.
-2. Give `pair-accept` the join it should make: the `remember` flag, the join id
-   and codes, and the `joinId` both sides need in the answer and the push.
+1. Restore `joinsUser` (`pairs` and `joins` are live) when accounts land - the
+   device list of a signed-in user cannot be found by walking sockets.
+2. ~~Give `pair-accept` the join it should make~~ - done, with `unsupervised`
+   beside `remember`. What is missing from it is the naming: `peer_name` and
+   `host_name` are written empty and `join-rename` does not exist, so both
+   screens fall back to a localized label.
 3. Restore the join branches and `broadcastJoin`.
 4. Restore the `join` signaling relay last; it is the only branch that holds two
    messages open at once.

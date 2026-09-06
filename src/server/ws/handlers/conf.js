@@ -4,7 +4,7 @@
 // hands it out
 
 // first-party dependencies
-import { PAIR_ANSWER_TIMEOUT } from "./pairing.js";
+import { ANSWER_TIMEOUT } from "../notify.js";
 
 // the public half of the configuration, answered to "conf-get": the schema
 // defaults are repeated here, Ajv runs without "useDefaults"
@@ -29,7 +29,7 @@ const buildPublicConf = function(conf, version) {
         // the one clock of the pairing flow, so neither side has to draw a
         // spinner for a wait the server already knows the length of
         "pairing": {
-            "answerTimeout": PAIR_ANSWER_TIMEOUT
+            "answerTimeout": ANSWER_TIMEOUT
         }
     };
 

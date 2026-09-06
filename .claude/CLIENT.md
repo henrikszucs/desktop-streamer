@@ -251,7 +251,43 @@ Two orderings are load-bearing, and both were bugs first:
 
 A rejected code is replaced by the server, and the new one arrives as a
 `pair-code` push into the field the old one was in. Nothing on the host asks for
-it: the dialog that shows a code takes whichever code it is given. The code is the server's to make - six digits, so it can be read out loud -
+it: the dialog that shows a code takes whichever code it is given.
+
+## Remembered devices
+
+The host may add two things to a yes, and `room/request` is where both live.
+**Remember** writes a join: a row on the server and a record on each side of it,
+each holding its own code. **Unattended** appears only once remember is ticked,
+because it says something about a device you are keeping - that it may come back
+without anybody being asked - and means nothing about one you are not.
+
+`src/joins.js` (`ctx["joins"]`) is this client's half of that, and the local
+record is the whole of it: there is no account behind a join, so **the code is
+the credential** and a client that loses its records has lost the devices. They
+live in the guest row of the local database (`getJoins`/`setJoin`/`removeJoin` in
+`src/conf.js`), which is why signing the guest out drops them with everything
+else.
+
+`connectAll()` runs on every `online`, before the screen is even up: a host is
+only reachable on the joins it has connected, and nothing on screen asks for
+that. A code the server does not know is dropped locally on the spot - the other
+side deleted it while this one was away. The devices and shares screens then read
+the local records and ask the server only for who is online, which is the one
+thing a local record cannot know.
+
+**A device that comes back is answered wherever the shell happens to be.** That
+is the difference between a join request and a pair request: the pairing dialog
+is open by definition, a returning device arrives at a client that may be
+anywhere. So `room/request` listens for `join-request` from `mount()` and opens
+itself, rather than being opened by something that has to be open already. One
+request is answered at a time - a second is refused rather than queued behind the
+dialog - and an unsupervised join never arrives at all, which is exactly what the
+host agreed to.
+
+Asking to come back in is the same wait as a first pairing, so it is the same
+dialog: `room/joining` takes a `mode` and sends either `pair-request` or
+`join-request` itself. An unsupervised join is answered by the server in that
+first call, so that one is over before the bar has moved. The code is the server's to make - six digits, so it can be read out loud -
 and it belongs to the socket it was asked on: the server drops it when the
 connection goes, which is why the share dialog asks for one when it opens and
 gives it back when it closes. The answer says how long the code stands, and the
@@ -308,8 +344,8 @@ types the server no longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |
-| `management/new`, `room/create`, `room/joining`, `room/request` — the pairing handshake is live; what an accepted request leads *into* is not | `dev/plans/ws-pairing-joins.md` |
-| `management/devices`, `management/shares` (and their `*-box.js`) | `dev/plans/ws-pairing-joins.md` |
+| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live; what an accepted request leads *into* (the room, the stream) is not | `dev/plans/ws-pairing-joins.md` |
+| renaming a device, and the *settings* entry on both kinds of card | `dev/plans/ws-pairing-joins.md` |
 | `management/account/*` (information, sessions, delete) | `dev/plans/ws-accounts.md` |
 | `nav-top` `setAccounts()` — the list is the guest alone | `dev/plans/ws-accounts.md` |
 

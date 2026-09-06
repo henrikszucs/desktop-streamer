@@ -130,8 +130,8 @@ const RoomCreateDialog = class extends Dialog {
 
         this.hide();
         const view = await ctx["ui"].openDialog("room-request", {
+            "mode": "pair",
             "info": infoText,
-            "showRemember": false,
             "timeout": event.detail?.["timeout"] ?? ctx["conf"]["remote"]?.["pairing"]?.["answerTimeout"]
         }, true);
         view?.addEventListener("done", this.onRequestDone, {"once": true});
@@ -140,12 +140,18 @@ const RoomCreateDialog = class extends Dialog {
     // the host answered it. Accepting uses the code up - the pairing it was for
     // is made - so the flow ends here; rejecting leaves the code behind, and the
     // server sends the new one that replaces it.
-    onRequestDone = (event) => {
-        if (event.detail?.["isAccepted"] === true) {
-            this.ctx["ui"].closeDialogs();
+    //
+    // A yes the host asked to be remembered comes back with the join both sides
+    // are now on, and this side stores its own half of it: the code in that
+    // answer is what this device will be reached by, and nothing on the server
+    // can give it back once this dialog is gone.
+    onRequestDone = async (event) => {
+        if (event.detail?.["isAccepted"] !== true) {
+            this.show();
             return;
         }
-        this.show();
+        await this.ctx["joins"].remember(event.detail?.["answer"], true);
+        this.ctx["ui"].closeDialogs();
     };
 
     // the request went away without this side answering: the one waiting gave

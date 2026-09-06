@@ -8,6 +8,7 @@ import { domReady } from "./src/env.js";
 import { conf, confLoad, setLocal, resetUser } from "./src/conf.js";
 import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
+import { createJoins } from "./src/joins.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
 import { applyScale, applyTheme, applyLanguage, createUI, buildUI } from "./ui/ui.js";
@@ -45,6 +46,7 @@ const main = async function() {
     const ctx = {
         "server": server,
         "conf": conf,
+        "joins": null,
         "localization": localization,
         "desktop": desktop,
         "setLocal": setLocal,
@@ -52,6 +54,7 @@ const main = async function() {
         "router": null,
         "ui": null
     };
+    ctx["joins"] = createJoins(ctx);
     ctx["ui"] = createUI(ctx);
     const router = new Router(ctx);
     ctx["router"] = router;
@@ -76,6 +79,12 @@ const main = async function() {
     // the route is opened under the loading layer, which lifts once it is there
     const switchOnline = async function() {
         router.closeDialogs();
+
+        // the remembered devices are presented before the screen is: a host is
+        // only reachable on the joins it has connected, and nothing on screen
+        // asks for that - it is what being remembered means
+        ctx["joins"].connectAll();
+
         await router.loadPath();
         loading.close();
     };

@@ -10,11 +10,15 @@ import Communicator from "../libs/communicator/communicator.js";
 import { conf } from "./conf.js";
 
 // what the server may say on its own, each handed on as an event of that name
-const PUSH_EVENTS = new Set(["pair-request", "pair-accept", "pair-reject", "pair-cancel", "pair-code"]);
+const PUSH_EVENTS = new Set([
+    "pair-request", "pair-accept", "pair-reject", "pair-cancel", "pair-code",
+    "join-request", "join-accept", "join-reject", "join-cancel", "join-remove"
+]);
 
 // events:
 // online, offline, version-mismatch,
-// pair-request, pair-accept, pair-reject, pair-cancel, pair-code
+// pair-request, pair-accept, pair-reject, pair-cancel, pair-code,
+// join-request, join-accept, join-reject, join-cancel, join-remove
 const Server = class extends EventTarget {
     address = "";
     ws = null;
@@ -183,9 +187,15 @@ const Server = class extends EventTarget {
         return {"timeout": messageObj.data["timeout"]};
     };
 
-    // the host's answer to the request it was asked
-    async pairAccept() {
-        const messageObj = this.communicator.invoke({"type": "pair-accept"});
+    // the host's answer to the request it was asked. Remembering it is the host's
+    // to decide, and what comes back is the join both sides are then on - the
+    // code in it is this side's own.
+    async pairAccept(isRemember=false, isUnsupervised=false) {
+        const messageObj = this.communicator.invoke({
+            "type": "pair-accept",
+            "remember": isRemember === true,
+            "unsupervised": isUnsupervised === true
+        });
         await messageObj.wait();
         if (messageObj.error !== "") {
             throw new Error(messageObj.error);
@@ -193,6 +203,7 @@ const Server = class extends EventTarget {
         if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
             throw new Error(messageObj.data?.["error"] ?? "failed");
         }
+        return messageObj.data;
     };
 
     // no, from either side: the host deciding against it, or the peer giving up
@@ -203,6 +214,77 @@ const Server = class extends EventTarget {
         }
         const messageObj = this.communicator.invoke({"type": "pair-reject"});
         await messageObj.wait();
+    };
+
+    //
+    // joins
+    //
+    // a remembered pairing, presented by the code this side kept. Both sides do
+    // it for every join they hold: a host that is not on its own joins cannot be
+    // asked about them, and neither side knows who is online without it.
+    async joinConnect(joinCode) {
+        const messageObj = this.communicator.invoke({"type": "join-connect", "joinCode": joinCode});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+        return messageObj.data;
+    };
+
+    // who is online, of the joins this connection is on
+    async joinList() {
+        const messageObj = this.communicator.invoke({"type": "join-list"});
+        await messageObj.wait();
+        if (messageObj.error !== "" || messageObj.data?.["success"] !== true) {
+            return [];
+        }
+        return messageObj.data["joins"] ?? [];
+    };
+
+    // the peer asks to come back in. An unsupervised join answers it here and
+    // now; a supervised one answers with the window the host has, and the
+    // decision arrives on its own as a join-accept or a join-reject.
+    async joinRequest(joinId) {
+        const messageObj = this.communicator.invoke({"type": "join-request", "joinId": joinId});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+        return messageObj.data;
+    };
+
+    async joinAccept(joinId) {
+        const messageObj = this.communicator.invoke({"type": "join-accept", "joinId": joinId});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+    };
+
+    // no, from either side of a join: the host deciding against it, or the peer
+    // giving up the wait
+    async joinReject(joinId) {
+        if (this.isOnline === false) {
+            return;
+        }
+        const messageObj = this.communicator.invoke({"type": "join-reject", "joinId": joinId});
+        await messageObj.wait();
+    };
+
+    // either side forgets the other for good - the row goes with it
+    async joinDelete(joinId) {
+        const messageObj = this.communicator.invoke({"type": "join-delete", "joinId": joinId});
+        await messageObj.wait();
+        return messageObj.error === "" && messageObj.data?.["success"] === true;
     };
 
     // what the server says on its own. The pairing flow is the whole of it

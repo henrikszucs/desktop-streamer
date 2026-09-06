@@ -3,11 +3,24 @@
     <div class="space"></div>
     <p id="dialog-room-request-info"></p>
     <div class="space"></div>
-    <label class="checkbox" id="btn-request-remember-label">
-        <input type="checkbox" id="btn-request-remember">
-        <span data-localization="new.share.request-long">Share for long term.</span>
-    </label>
-    <div class="space"></div>
+    <!--
+        What the host may add to a yes, and only while pairing: a join is made
+        once, so a device that is already remembered shows neither box. The
+        second only means anything with the first, so it appears with it - see
+        ./index.js.
+    -->
+    <div id="room-request-options">
+        <label class="checkbox" id="btn-request-remember-label">
+            <input type="checkbox" id="btn-request-remember">
+            <span data-localization="new.share.request-remember">Remember this device</span>
+        </label>
+        <div class="space"></div>
+        <label class="checkbox hide" id="btn-request-unsupervised-label">
+            <input type="checkbox" id="btn-request-unsupervised">
+            <span data-localization="new.share.request-unsupervised">Let it connect without asking me</span>
+        </label>
+        <div class="space"></div>
+    </div>
     <div class="dialog-room-request-buttons">
         <!--
             The bar runs across the reject button, not beside the pair of them,

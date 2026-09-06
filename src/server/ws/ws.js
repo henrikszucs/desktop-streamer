@@ -16,6 +16,8 @@ import serverHTTP from "../http.js";
 import { handleAPI } from "./api.js";
 import { buildPublicConf } from "./handlers/conf.js";
 import { removePairCode, releasePairCodes } from "./handlers/pairing.js";
+import { detachJoins, releaseJoins } from "./handlers/joins.js";
+import { startDatabase, stopDatabase } from "./database.js";
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
@@ -30,6 +32,11 @@ const ServerWS = class {
     // clients store memory variables
     clients = new Map();            // key-sessionId, value-state object of the client
     pairs = new Map();              // key-pairCode, value-state object of the pair (see ./handlers/pairing.js)
+    joins = new Map();              // key-joinId, value-state of a join a socket holds open (see ./handlers/joins.js)
+
+    // the rows behind the joins, and the only thing here that outlives the
+    // process - see ./database.js
+    db = null;
 
     // utility things
     isClosing = false;
@@ -46,6 +53,17 @@ const ServerWS = class {
             return;
         }
         this.isClosing = false;
+
+        // the persistence first: a remembered join outlives every socket, so
+        // nothing that hands one out may start before the table that holds it
+        process.stdout.write("\n    Starting database...    ");
+        try {
+            this.db = await startDatabase(conf);
+        } catch (error) {
+            process.stdout.write("failed\n");
+            throw error;
+        }
+        process.stdout.write("done");
 
         // the version every client is checked against
         this.version = await getVersion();
@@ -168,6 +186,7 @@ const ServerWS = class {
                 return;     // a second close event after the cleanup
             }
             removePairCode(this, sessionId);
+            detachJoins(this, sessionId);
             client.get("com").release();
             this.clients.delete(sessionId);
 
@@ -269,7 +288,13 @@ const ServerWS = class {
 
         // drop the connection state, the pair codes with their timeouts among it
         releasePairCodes(this);
+        releaseJoins(this);
         this.clients.clear();
+
+        // the rows stay, the pool does not: an open one keeps the process alive
+        // long after the last socket is gone
+        await stopDatabase(this.db);
+        this.db = null;
     };
 };
 

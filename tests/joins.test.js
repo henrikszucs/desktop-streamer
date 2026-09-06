@@ -1,0 +1,267 @@
+"use strict";
+
+//
+// Import dependencies
+//
+// internal dependencies
+import test from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs/promises";
+
+// first-party dependencies
+import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
+import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, joinConnect, joinList, joinRequest, joinAccept, joinReject, joinDelete } from "../src/server/ws/handlers/joins.js";
+
+// a remembered join is a row, so these run against a real SQLite file - which
+// makes them the only cover database.js has as well
+const buildDatabase = async function() {
+    const file = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ds-joins-")), "database.db");
+    const db = await startDatabase({"ws": {"database": {"type": "sqlite", "host": file}}});
+    return {"db": db, "file": file};
+};
+
+const dropDatabase = async function(db, file) {
+    await stopDatabase(db);
+    await fs.rm(path.dirname(file), {"recursive": true, "force": true});
+};
+
+// a client whose communicator keeps what the server said to it on its own
+const buildClient = function() {
+    const pushed = [];
+    return new Map([
+        ["pushed", pushed],
+        ["ws", {"_socket": {"remoteAddress": "127.0.0.1"}}],
+        ["com", {
+            "send": function(message) {
+                pushed.push(message);
+                return {
+                    "error": "",
+                    "wait": async function() {
+                        return this;
+                    }
+                };
+            }
+        }]
+    ]);
+};
+
+const buildServer = function(db, sessionIds = ["host", "peer", "other"]) {
+    const clients = new Map();
+    for (const sessionId of sessionIds) {
+        clients.set(sessionId, buildClient());
+    }
+    return {"clients": clients, "pairs": new Map(), "joins": new Map(), "db": db};
+};
+
+const buildCtx = function(server, sessionId, message = {}) {
+    const answers = [];
+    return {
+        "message": message,
+        "messageObj": {
+            "send": function(data) {
+                answers.push(data);
+            }
+        },
+        "sessionId": sessionId,
+        "server": server,
+        "answers": answers
+    };
+};
+
+const pushesOf = function(server, sessionId, type) {
+    return server.clients.get(sessionId).get("pushed").filter(function(message) {
+        return message["type"] === type;
+    });
+};
+
+// a join both sides are on, which is where pair-accept leaves them
+const buildJoin = async function(db, isUnsupervised = false) {
+    const server = buildServer(db);
+    const join = await createJoin(server, isUnsupervised);
+    attachJoin(server, "host", join, true);
+    attachJoin(server, "peer", join, false);
+    return {"server": server, "join": join};
+};
+
+//
+// the row
+//
+test("createJoin writes a row with two codes that differ", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+
+    const join = await createJoin(server, false);
+    assert.notEqual(join["peerCode"], join["hostCode"]);
+    assert.equal(join["isUnsupervised"], false);
+
+    const row = await db("joins").where("join_id", join["joinId"]).first();
+    assert.equal(row["peer_code"], join["peerCode"]);
+    assert.equal(row["host_code"], join["hostCode"]);
+
+    await dropDatabase(db, file);
+});
+
+test("a join with no database behind it is not made", async () => {
+    const server = buildServer(null);
+    assert.equal(await createJoin(server, false), undefined);
+});
+
+//
+// coming back
+//
+test("join-connect opens the row from either code and says which side it is", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+    const join = await createJoin(server, true);
+
+    const hostCtx = buildCtx(server, "host", {"joinCode": join["hostCode"]});
+    await joinConnect(hostCtx);
+    assert.equal(hostCtx.answers[0]["isHost"], true);
+    assert.equal(hostCtx.answers[0]["isUnsupervised"], true);
+    assert.equal(hostCtx.answers[0]["isOnline"], false);      // nobody on the other side yet
+
+    const peerCtx = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(peerCtx);
+    assert.equal(peerCtx.answers[0]["isHost"], false);
+    assert.equal(peerCtx.answers[0]["isOnline"], true);       // the host is there now
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("join-connect refuses a code no row holds", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+
+    const ctx = buildCtx(server, "peer", {"joinCode": "0000000000"});
+    await joinConnect(ctx);
+    assert.deepEqual(ctx.answers[0], {"success": false, "error": "unknown-join"});
+
+    await dropDatabase(db, file);
+});
+
+test("join-list answers the joins this connection is on", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    const ctx = buildCtx(server, "host");
+    joinList(ctx);
+    assert.deepEqual(ctx.answers[0]["joins"], [{
+        "joinId": join["joinId"],
+        "isHost": true,
+        "isUnsupervised": false,
+        "isOnline": true
+    }]);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+//
+// the ask
+//
+test("a supervised join asks the host again", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    const ctx = buildCtx(server, "peer", {"joinId": join["joinId"]});
+    await joinRequest(ctx);
+
+    assert.equal(ctx.answers[0]["success"], true);
+    assert.equal(ctx.answers[0]["isAccepted"], false);
+    assert.ok(ctx.answers[0]["timeout"] > 0);
+    assert.equal(pushesOf(server, "host", "join-request").length, 1);
+
+    // and the host saying yes reaches the one that asked
+    const answerCtx = buildCtx(server, "host", {"joinId": join["joinId"]});
+    joinAccept(answerCtx);
+    assert.equal(answerCtx.answers[0]["success"], true);
+    assert.equal(pushesOf(server, "peer", "join-accept").length, 1);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("an unsupervised join disturbs nobody", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db, true);
+
+    const ctx = buildCtx(server, "peer", {"joinId": join["joinId"]});
+    await joinRequest(ctx);
+
+    assert.deepEqual(ctx.answers[0], {"success": true, "isAccepted": true});
+    assert.equal(pushesOf(server, "host", "join-request").length, 0);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("a refused join stands, unlike a refused pair code", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    await joinRequest(buildCtx(server, "peer", {"joinId": join["joinId"]}));
+    joinReject(buildCtx(server, "host", {"joinId": join["joinId"]}));
+
+    const heard = pushesOf(server, "peer", "join-reject");
+    assert.equal(heard.length, 1);
+    assert.equal(heard[0]["reason"], "rejected");
+
+    // the same device may ask again a moment later
+    const againCtx = buildCtx(server, "peer", {"joinId": join["joinId"]});
+    await joinRequest(againCtx);
+    assert.equal(againCtx.answers[0]["success"], true);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("a host that is away cannot be asked", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    detachJoins(server, "host");
+    const ctx = buildCtx(server, "peer", {"joinId": join["joinId"]});
+    await joinRequest(ctx);
+    assert.deepEqual(ctx.answers[0], {"success": false, "error": "offline"});
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("a peer that goes away withdraws what it asked", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    await joinRequest(buildCtx(server, "peer", {"joinId": join["joinId"]}));
+    detachJoins(server, "peer");
+
+    assert.equal(pushesOf(server, "host", "join-cancel").length, 1);
+    assert.equal(heldJoin(server, "peer", join["joinId"]), undefined);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+//
+// forgetting it
+//
+test("join-delete drops the row and tells the other side", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    await joinDelete(buildCtx(server, "host", {"joinId": join["joinId"]}));
+
+    assert.equal(pushesOf(server, "peer", "join-remove").length, 1);
+    assert.equal(await db("joins").where("join_id", join["joinId"]).first(), undefined);
+    assert.equal(server.joins.has(join["joinId"]), false);
+
+    // and the code opens nothing now
+    const ctx = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(ctx);
+    assert.equal(ctx.answers[0]["error"], "unknown-join");
+
+    await dropDatabase(db, file);
+});

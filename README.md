@@ -104,7 +104,7 @@ servers may share a port only when it is `http.port`.
         },
         "database": {                   //or a local SQLite file instead of a server
             "type": "sqlite",
-            "file": "database.sqlite"   //path relative to this configuration file, it is created on the first boot
+            "host": "database.sqlite"   //path relative to this configuration file, it is created on the first boot
         },
         "webrtc": {
             "iceServers": [

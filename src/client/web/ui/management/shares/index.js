@@ -1,10 +1,13 @@
 "use strict";
 
-// what this client shares out, as a guest or as the account - no joins are
-// served today (dev/plans/ws-pairing-joins.md), so both areas open empty
+// what this client shares out: the joins it holds the host side of. The host
+// answers nothing here - a device that comes back is answered by the request
+// dialog wherever the shell happens to be - so this screen only lists them, says
+// which are online, and lets one be forgotten for good.
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";
+import { ShareBox } from "./share-box.js";
 
 const SharesScreen = class extends Screen {
     static id = "shares";
@@ -17,6 +20,36 @@ const SharesScreen = class extends Screen {
         this.area2 = document.getElementById("shares-area-2");
     };
 
+    async build() {
+        const ctx = this.ctx;
+        this.area2.innerHTML = "";
+
+        let records = [];
+        try {
+            records = await ctx["joins"].list(true);
+        } catch (error) {
+            console.error(error);
+            return;
+        }
+
+        for (const record of records) {
+            const box = new ShareBox(record["joinId"], record["joinCode"]);
+            box.setName((record["name"] ?? "") !== "" ? record["name"] : ctx["localization"].get("shares.unnamed"));
+            box.setTag("online", record["isOnline"] === true);
+            box.setTag("offline", record["isOnline"] !== true);
+
+            // a device that may come and go without anybody being asked is worth
+            // saying so on the card, since nothing else will ever mention it
+            box.setUnattended(record["isUnsupervised"] === true, ctx["localization"].get("shares.unattended"));
+
+            box.addEventListener("delete", async function(event) {
+                await ctx["joins"].remove(event.detail["joinId"]);
+                box.el.remove();
+            });
+            this.area2.appendChild(box.el);
+        }
+    };
+
     open(params) {
         this.area.innerHTML = "";
         this.area2.innerHTML = "";
@@ -27,6 +60,8 @@ const SharesScreen = class extends Screen {
         // out of the way
         this.areaUser.classList.add("hide");
         this.areaGuest.classList.remove("hide");
+
+        this.build();
     };
     close() {
         this.area.innerHTML = "";

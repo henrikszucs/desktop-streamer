@@ -150,14 +150,15 @@ const wsSchema = {
                     }
                 },
                 {
-                    "required": ["file"],
+                    "required": ["host"],
                     "additionalProperties": false,
                     "properties": {
                         "type": {
                             "const": "sqlite"
                         },
-                        // database file path, relative to the configuration file
-                        "file": {
+                        // where the database is: a file path relative to the
+                        // configuration file, where a server has an address
+                        "host": {
                             "$ref": "#/definitions/text"
                         }
                     }
@@ -369,7 +370,7 @@ const checkConstraints = (config) => {
 // the configuration file and the servers need the contents, not the paths
 const loadPaths = (config, confDir) => {
     if (typeof config["ws"] === "object" && config["ws"]["database"]["type"] === "sqlite") {
-        config["ws"]["database"]["file"] = setAbsolute(config["ws"]["database"]["file"], confDir);
+        config["ws"]["database"]["host"] = setAbsolute(config["ws"]["database"]["host"], confDir);
     }
 };
 

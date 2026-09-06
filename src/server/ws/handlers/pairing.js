@@ -8,6 +8,8 @@
 
 // first-party dependencies
 import { generateId } from "../../common.js";
+import { push, notify, ANSWER_TIMEOUT } from "../notify.js";
+import { createJoin, attachJoin } from "./joins.js";
 
 // the code is read out loud, typed on a phone keypad and copied by hand, so it
 // is six digits and nothing else - no letter that can be misread as a digit and
@@ -15,12 +17,6 @@ import { generateId } from "../../common.js";
 const PAIR_CODE_LENGTH = 6;
 const PAIR_CODE_CHARS = "0123456789";
 const PAIR_CODE_PATTERN = /^[0-9]{6}$/;
-
-// how long the host has to accept or reject. Both clients are told this number -
-// the one waiting draws a bar that runs out, the one deciding draws the same bar
-// on the button that happens by itself - so neither side is watching a spinner
-// that means nothing. Silence is a rejection.
-const PAIR_ANSWER_TIMEOUT = 5000;
 
 // the search gives up instead of spinning: it only fails when the whole space is
 // live - a million codes - and failing the call says so, where a loop would just
@@ -36,30 +32,6 @@ const generatePairCode = function(pairs) {
         }
     }
     return undefined;
-};
-
-// what the server says on its own, to a socket that is not waiting for an
-// answer. A client that is already gone is not an error worth failing a call
-// over, so this reports rather than throws.
-const push = async function(server, sessionId, message, timeout) {
-    const client = server.clients.get(sessionId);
-    if (client === undefined) {
-        return false;
-    }
-    try {
-        message["timestamp"] = Date.now();
-        const messageObj = client.get("com").send(message, [], timeout);
-        await messageObj.wait();
-        return messageObj.error === "";
-    } catch (error) {
-        console.log("Cannot notify client (" + sessionId + "):", error);
-        return false;
-    }
-};
-
-// the same, for a caller that is not waiting to hear whether it arrived
-const notify = function(server, sessionId, message) {
-    push(server, sessionId, message).catch(function() {});
 };
 
 // the code of one connection, remembered on both sides: the pair by its code,
@@ -312,7 +284,7 @@ const pairRequest = function(ctx) {
     // the host has this long, and saying nothing is saying no
     pair.set("answerTimeoutId", setTimeout(function() {
         rejectRequest(server, pairCode, "timeout");
-    }, PAIR_ANSWER_TIMEOUT));
+    }, ANSWER_TIMEOUT));
 
     // the host is told, not asked: it is a browser tab somebody has switched
     // away from - the very thing sharing is for - so its acknowledgment can be
@@ -325,8 +297,8 @@ const pairRequest = function(ctx) {
             "ipAddress": client.get("ws")?._socket?.remoteAddress ?? "",
             "isUser": false
         },
-        "timeout": PAIR_ANSWER_TIMEOUT
-    }, PAIR_ANSWER_TIMEOUT).then(function(isDelivered) {
+        "timeout": ANSWER_TIMEOUT
+    }, ANSWER_TIMEOUT).then(function(isDelivered) {
         if (isDelivered === true) {
             return;
         }
@@ -336,20 +308,32 @@ const pairRequest = function(ctx) {
         rejectRequest(server, pairCode, "gone");
     });
 
-    messageObj.send({"success": true, "timeout": PAIR_ANSWER_TIMEOUT});
+    messageObj.send({"success": true, "timeout": ANSWER_TIMEOUT});
 };
 
 // the host said yes. The code is used up by it - introducing the two sides is
 // all it is for - so nothing is left for a second caller to find.
-const pairAccept = function(ctx) {
+//
+// What the host may add to that yes is memory: `remember` writes the join both
+// sides are then holding a code to, and `unsupervised` says that the peer coming
+// back on that code is not worth asking about again. The second only means
+// anything with the first, and the client only offers it that way.
+const pairAccept = async function(ctx) {
     /*{
+        "remember": boolean,
+        "unsupervised": boolean
     }*/
     /*{
         "success": boolean,
+        "isRemember": boolean,
+        "isUnsupervised": boolean,
+        "joinId": string,
+        "joinCode": string,
         "error": string
     }*/
     const server = ctx["server"];
     const sessionId = ctx["sessionId"];
+    const message = ctx["message"];
 
     const pairCode = server.clients.get(sessionId)?.get("pairCode");
     const pair = (pairCode === undefined ? undefined : server.pairs.get(pairCode));
@@ -362,8 +346,43 @@ const pairAccept = function(ctx) {
     server.pairs.delete(pairCode);
     server.clients.get(sessionId).delete("pairCode");
 
-    notify(server, peerSessionId, {"type": "pair-accept"});
-    ctx["messageObj"].send({"success": true});
+    // a join is written before either side is told, so neither is handed a code
+    // that is not in the table yet. Failing to remember does not fail the
+    // pairing: the two are connected either way, just not next time.
+    let join = undefined;
+    if (message["remember"] === true) {
+        try {
+            join = await createJoin(server, message["unsupervised"] === true);
+        } catch (error) {
+            console.log("Cannot remember the pairing:", error);
+        }
+    }
+
+    const peerAnswer = {"type": "pair-accept", "isRemember": false};
+    const hostAnswer = {"success": true, "isRemember": false};
+    if (join !== undefined) {
+        // both sides go on it at once: the peer may come back at any time, and
+        // the host has to be reachable when it does
+        attachJoin(server, sessionId, join, true);
+        attachJoin(server, peerSessionId, join, false);
+
+        // each side is told its own code and nothing of the other's
+        Object.assign(peerAnswer, {
+            "isRemember": true,
+            "isUnsupervised": join["isUnsupervised"],
+            "joinId": join["joinId"],
+            "joinCode": join["peerCode"]
+        });
+        Object.assign(hostAnswer, {
+            "isRemember": true,
+            "isUnsupervised": join["isUnsupervised"],
+            "joinId": join["joinId"],
+            "joinCode": join["hostCode"]
+        });
+    }
+
+    notify(server, peerSessionId, peerAnswer);
+    ctx["messageObj"].send(hostAnswer);
 };
 
 // no, from either side of it. From the host it is a decision and the code is
@@ -400,5 +419,5 @@ const handlers = {
     "pair-reject": pairReject
 };
 
-export { handlers, generatePairCode, addPairCode, removePairCode, releasePairCodes, releasePeer, renewHostCode, rejectRequest, push, notify, pairCreate, pairDelete, pairRequest, pairAccept, pairReject, PAIR_CODE_LENGTH, PAIR_CODE_CHARS, PAIR_CODE_PATTERN, PAIR_ANSWER_TIMEOUT };
+export { handlers, generatePairCode, addPairCode, removePairCode, releasePairCodes, releasePeer, renewHostCode, rejectRequest, pairCreate, pairDelete, pairRequest, pairAccept, pairReject, PAIR_CODE_LENGTH, PAIR_CODE_CHARS, PAIR_CODE_PATTERN };
 export default handlers;

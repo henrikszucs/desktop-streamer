@@ -5,13 +5,25 @@
                 "en": "Join request",
                 "hu": "Csatlakozási kérelem"
             },
-            "request-long": {
-                "en": "Share for long term",
-                "hu": "Hosszú távú megosztás"
+            "request-remember": {
+                "en": "Remember this device",
+                "hu": "Eszköz megjegyzése"
+            },
+            "request-unsupervised": {
+                "en": "Let it connect without asking me",
+                "hu": "Csatlakozhat kérdés nélkül"
             },
             "request-default": {
                 "en": "If you do not answer, the request is rejected.",
                 "hu": "Ha nem válaszolsz, a kérelem elutasításra kerül."
+            },
+            "join-info": {
+                "en": "<span class=\"bold\">{name}</span> from <span class=\"bold\">{ipAddress}</span> IP address wants to connect to your device again.",
+                "hu": "<span class=\"bold\">{name}</span> a(z) <span class=\"bold\">{ipAddress}</span> IP címről újra csatlakozni szeretne az eszközödhöz."
+            },
+            "join-unnamed": {
+                "en": "A remembered device",
+                "hu": "Egy megjegyzett eszköz"
             },
             "accept": {
                 "en": "Accept",
@@ -25,9 +37,17 @@
                 "en": "Connection accepted.",
                 "hu": "A csatlakozás elfogadva."
             },
+            "accepted-remembered": {
+                "en": "Connection accepted, the device was remembered.",
+                "hu": "A csatlakozás elfogadva, az eszköz megjegyezve."
+            },
             "rejected": {
                 "en": "Connection rejected, a new join code was created.",
                 "hu": "A csatlakozás elutasítva, új csatlakozási kód készült."
+            },
+            "rejected-join": {
+                "en": "Connection rejected.",
+                "hu": "A csatlakozás elutasítva."
             },
             "answer-failed": {
                 "en": "Could not answer the join request.",

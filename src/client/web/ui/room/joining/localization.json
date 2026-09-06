@@ -17,6 +17,14 @@
                 "en": "The host accepted the connection.",
                 "hu": "A kiszolgáló eszköz elfogadta a csatlakozást."
             },
+            "accepted-remembered": {
+                "en": "Connected. This device is remembered, so it can connect again from the devices screen.",
+                "hu": "Csatlakozva. Az eszköz megjegyezve, legközelebb az Eszközök képernyőről csatlakozhatsz."
+            },
+            "unknown-join": {
+                "en": "This device is not shared with you any more.",
+                "hu": "Ez az eszköz már nincs megosztva veled."
+            },
             "rejected": {
                 "en": "The host rejected the connection.",
                 "hu": "A kiszolgáló eszköz elutasította a csatlakozást."

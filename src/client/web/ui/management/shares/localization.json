@@ -7,6 +7,14 @@
         "guest": {
             "en": "Guest Shares",
             "hu": "Vendég megosztások"
+        },
+        "unnamed": {
+            "en": "Remembered device",
+            "hu": "Megjegyzett eszköz"
+        },
+        "unattended": {
+            "en": "Unattended",
+            "hu": "Felügyelet nélkül"
         }
     }
 }

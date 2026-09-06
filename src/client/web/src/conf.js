@@ -84,11 +84,40 @@ const setUser = async function(id, data) {
     await IDB.RowSet(table(USER_TABLE), [[id, data]]);
 };
 
+// the joins one user holds, kept in that user record: the code is the whole of
+// what this client is - there is no account behind it - so losing the record is
+// losing the device, and a guest reset drops every one of them.
+/*{
+    <joinId>: {"joinCode", "isHost", "name", "isUnsupervised"}
+}*/
+const getJoins = async function(id=GUEST_ID) {
+    const user = await getUser(id);
+    return user["joins"] ?? {};
+};
+
+const setJoin = async function(joinId, record, id=GUEST_ID) {
+    const user = await getUser(id);
+    const joins = user["joins"] ?? {};
+    joins[joinId] = {...joins[joinId], ...record};
+    user["joins"] = joins;
+    await setUser(id, user);
+    return joins[joinId];
+};
+
+const removeJoin = async function(joinId, id=GUEST_ID) {
+    const user = await getUser(id);
+    if (typeof user["joins"] !== "object") {
+        return;
+    }
+    delete user["joins"][joinId];
+    await setUser(id, user);
+};
+
 // forget everything this client keeps for one user - the guest is no session, so
 // this is its sign out; the local configuration is its own table and survives
 const resetUser = async function(id=GUEST_ID) {
     await IDB.RowDel(table(USER_TABLE), [id]);
 };
 
-export { conf, confLoad, table, setLocal, getUser, setUser, resetUser, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
-export default { conf, confLoad, table, setLocal, getUser, setUser, resetUser, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
+export { conf, confLoad, table, setLocal, getUser, setUser, resetUser, getJoins, setJoin, removeJoin, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
+export default { conf, confLoad, table, setLocal, getUser, setUser, resetUser, getJoins, setJoin, removeJoin, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };

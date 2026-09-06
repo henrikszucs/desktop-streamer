@@ -67,6 +67,23 @@ const ShareBox = class extends EventTarget {
         this.tagOnline = this.el.querySelector(".share-tag-online");
         this.tagTemporary = this.el.querySelector(".share-tag-temporary");
         this.tagOffline = this.el.querySelector(".share-tag-offline");
+
+        this.settingsBtn.addEventListener("click", () => {
+            this.dispatchEvent(new CustomEvent("settings", {"detail": {"joinId": this.joinId, "hostCode": this.hostCode}}));
+        });
+        this.deleteBtn.addEventListener("click", () => {
+            this.dispatchEvent(new CustomEvent("delete", {"detail": {"joinId": this.joinId}}));
+        });
+    };
+
+    // the chip that says this one may come back without anybody being asked.
+    // The label is handed in: a component built in script is not in the document
+    // when the module it belongs to is translated, so nothing translates it.
+    setUnattended(isUnattended=false, label="") {
+        this.tagTemporary.classList.toggle("hide", isUnattended === false);
+        if (label !== "") {
+            this.tagTemporary.querySelector("span").innerText = label;
+        }
     };
     setName(name="") {
         this.nameEl.textContent = name;

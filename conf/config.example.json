@@ -21,7 +21,7 @@
         "cert": "server.crt",
         "database": {
             "type": "sqlite",
-            "file": "database.db"
+            "host": "database.db"
         },
         "webrtc": {
             "iceServers": [

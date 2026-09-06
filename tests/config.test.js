@@ -50,7 +50,7 @@ const wsSection = function() {
         "cert": "server.crt",
         "database": {
             "type": "sqlite",
-            "file": "database.db"
+            "host": "database.db"
         },
         "webrtc": {
             "iceServers": ["stun:stun.l.google.com:19302"]
@@ -115,10 +115,12 @@ test("loadConfig accepts an http and ws pair and reads the certificates", async 
     assert.equal(config["ws"]["cert"], CERT_CONTENTS);
 });
 
-test("loadConfig resolves the sqlite file against the configuration folder", async (t) => {
+test("loadConfig resolves the sqlite host against the configuration folder", async (t) => {
+    // for SQLite the host is where the file is, and it is written relative to
+    // the configuration that names it
     const conf = await writeConf(t, {"http": httpSection(), "ws": wsSection()});
     const config = await loadConfig(conf["path"]);
-    assert.equal(config["ws"]["database"]["file"], path.resolve(conf["dir"], "database.db"));
+    assert.equal(config["ws"]["database"]["host"], path.resolve(conf["dir"], "database.db"));
 });
 
 test("loadConfig accepts a mysql database", async (t) => {
@@ -183,16 +185,21 @@ test("loadConfig rejects a port outside the valid range", async (t) => {
 test("loadConfig rejects a database mixing the mysql and sqlite branches", async (t) => {
     const ws = wsSection();
 
-    // sqlite fields on a mysql database
+    // the key sqlite used to be given, on a mysql database
     ws["database"] = Object.assign(mysqlDatabase(), {"file": "database.db"});
     assert.match(await loadError(t, {"ws": ws}), /oneOf|additional properties/);
 
-    // a mysql host on a sqlite database, the shape the example file used to have
+    // mysql fields on a sqlite database: both name a host, and nothing else
+    // crosses over
     ws["database"] = {"type": "sqlite", "host": "database.db", "db": "desktop_streamer"};
-    assert.match(await loadError(t, {"ws": ws}), /oneOf|additional properties|required property 'file'/);
+    assert.match(await loadError(t, {"ws": ws}), /oneOf|additional properties/);
+
+    // a sqlite database with nowhere to be
+    ws["database"] = {"type": "sqlite"};
+    assert.match(await loadError(t, {"ws": ws}), /oneOf|required property 'host'/);
 
     // a database type that does not exist
-    ws["database"] = {"type": "sqlite3", "file": "database.db"};
+    ws["database"] = {"type": "sqlite3", "host": "database.db"};
     assert.match(await loadError(t, {"ws": ws}), /oneOf|equal to constant/);
 });
 

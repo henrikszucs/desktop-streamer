@@ -3,6 +3,23 @@
 Restore the persistence layer of the WS server: the knex connection and the
 schema it creates on first boot.
 
+**Half of this is done.** `src/server/ws/database.js` holds `startDatabase` /
+`stopDatabase` and creates the `joins` table, because the remembered devices in
+[ws-pairing-joins.md](ws-pairing-joins.md) needed a row that outlives both
+sockets. What is left is the accounts half of the schema - `users`,
+`users_google`, `sessions`, `delete` - and the foreign keys the `joins` table
+will grow when there is a `users` table to point at. Two deviations from the
+table below, both because there are no accounts yet: `peer_user_id` and
+`host_user_id` are plain columns defaulting to `""` with no key, and `joins`
+carries an `is_unsupervised` boolean and a `created` timestamp. Both branches
+have been run: SQLite against a file, MySQL against 8.4, where the table comes
+out as `varchar` for the indexed columns and `text` for the free ones (which is
+what the create-then-alter is for), `tinyint(1)` for the boolean - so a flag
+comes back as a 1 and `recordOf` in `handlers/joins.js` is what turns it into a
+boolean again - and `bigint unsigned` for `created`. `stop()` was checked the
+way the note below means it: the process exits on its own afterwards rather than
+being held open by the pool.
+
 Source of the removed code: `git show 6c0d18a:src/server/ws.js`, lines 53-178
 (`startDatabase`).
 
@@ -15,7 +32,9 @@ section, so only the WS server lost its half.
 `async startDatabase(conf)`, called from `start()` before anything else:
 
 - **SQLite** (`database.type === "sqlite"`): client `better-sqlite3`, file
-  `database.file` (already resolved to an absolute path by `loadConfig`). It
+  `database.host` - both kinds say where the database is under the one key, and
+  for SQLite that is a path (already resolved to an absolute one by
+  `loadConfig`). It
   created the containing folder first, and used a `pool.afterCreate` hook to run
   `PRAGMA foreign_keys = ON` - SQLite ignores the foreign keys in the schema
   without it.
@@ -42,10 +61,16 @@ has no row with that value.
 
 ## Work
 
-1. Re-add `startDatabase(conf)` and a `db` field on `ServerWS`; call it from
-   `start()` and only when `conf["ws"]["database"]` is configured.
-2. Close the pool in `stop()` (`await this.db.destroy()`) - the removed code never
-   did, which kept the process alive after SIGINT with a MySQL pool open.
+1. ~~Re-add `startDatabase(conf)` and a `db` field on `ServerWS`~~ - done, and it
+   is called from `start()` before anything else, since a call that hands out a
+   join must not be answerable before the table holding one exists. Note that
+   `config.js` *requires* `ws.database`, so there is no unconfigured case: a
+   database that cannot be reached fails the boot rather than starting a server
+   that forgets everything.
+2. ~~Close the pool in `stop()`~~ - done (`stopDatabase`), which is what the
+   removed code never did.
+3. Add the accounts tables and the `joins` foreign keys with
+   [ws-accounts.md](ws-accounts.md).
 3. `dev/mysql_docker/` brings up a MySQL server for testing the non-SQLite path.
 
 ## Notes
