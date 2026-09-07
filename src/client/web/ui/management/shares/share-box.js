@@ -1,7 +1,10 @@
 "use strict";
 
 // one card in the shares grid, and the four tags that say what kind of share it
-// is. A repeated component, so its markup is a template literal.
+// is. A repeated component, so its markup is a template literal - which is also
+// why its strings carry data-localization but nothing translates them on their
+// own: the card is built long after the module it belongs to was translated, so
+// the screen hands each one to translate() as it builds it.
 
 const ShareBox = class extends EventTarget {
     constructor(joinId="", hostCode="") {
@@ -17,11 +20,11 @@ const ShareBox = class extends EventTarget {
                             <menu class="left no-wrap">
                                 <li class="btn-share-settings">
                                     <i>settings</i>
-                                    Settings
+                                    <span data-localization="shares.settings">Settings</span>
                                 </li>
                                 <li class="btn-share-delete">
                                     <i>delete</i>
-                                    Delete
+                                    <span data-localization="shares.delete">Delete</span>
                                 </li>
                             </menu>
                         </button>
@@ -34,19 +37,19 @@ const ShareBox = class extends EventTarget {
                             <div>
                                 <button class="chip small-elevate error-text share-tag-local hide">
                                     <i>screen_record</i>
-                                    <span>Local</span>
+                                    <span data-localization="shares.local">Local</span>
                                 </button>
                                 <button class="chip small-elevate primary-text share-tag-online hide">
                                     <i>done</i>
-                                    <span>Online</span>
+                                    <span data-localization="shares.online">Online</span>
                                 </button>
-                                <button class="chip small-elevate share-tag-temporary hide">
+                                <button class="chip small-elevate share-tag-unattended hide">
                                     <i>today</i>
-                                    <span>Temporary</span>
+                                    <span data-localization="shares.unattended">Unattended</span>
                                 </button>
                                 <button class="chip small-elevate secondary-text share-tag-offline hide">
                                     <i>close</i>
-                                    <span>Offline</span>
+                                    <span data-localization="shares.offline">Offline</span>
                                 </button>
                             </div>
                         </nav>
@@ -65,7 +68,7 @@ const ShareBox = class extends EventTarget {
         this.deleteBtn = this.el.querySelector(".btn-share-delete");
         this.tagLocal = this.el.querySelector(".share-tag-local");
         this.tagOnline = this.el.querySelector(".share-tag-online");
-        this.tagTemporary = this.el.querySelector(".share-tag-temporary");
+        this.tagUnattended = this.el.querySelector(".share-tag-unattended");
         this.tagOffline = this.el.querySelector(".share-tag-offline");
 
         this.settingsBtn.addEventListener("click", () => {
@@ -76,14 +79,9 @@ const ShareBox = class extends EventTarget {
         });
     };
 
-    // the chip that says this one may come back without anybody being asked.
-    // The label is handed in: a component built in script is not in the document
-    // when the module it belongs to is translated, so nothing translates it.
-    setUnattended(isUnattended=false, label="") {
-        this.tagTemporary.classList.toggle("hide", isUnattended === false);
-        if (label !== "") {
-            this.tagTemporary.querySelector("span").innerText = label;
-        }
+    // the chip that says this one may come back without anybody being asked
+    setUnattended(isUnattended=false) {
+        this.tagUnattended.classList.toggle("hide", isUnattended === false);
     };
     setName(name="") {
         this.nameEl.textContent = name;
@@ -94,8 +92,8 @@ const ShareBox = class extends EventTarget {
             interactEl = this.tagLocal;
         } else if (tag === "online") {
             interactEl = this.tagOnline;
-        } else if (tag === "temporary") {
-            interactEl = this.tagTemporary;
+        } else if (tag === "unattended") {
+            interactEl = this.tagUnattended;
         } else if (tag === "offline") {
             interactEl = this.tagOffline;
         }

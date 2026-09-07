@@ -95,17 +95,6 @@ const Router = class extends EventTarget {
         this.dispatchEvent(new CustomEvent("segment", {"detail": {"id": id, "previous": previous}}));
     };
 
-    // the segment a route opens in, without loading it - the module knows for
-    // certain, this is what the shell can say before it arrives
-    segmentOf(id) {
-        for (const [segmentId, segment] of SEGMENTS) {
-            if (segment["screens"].includes(id) === true || segment["deep"].includes(id) === true) {
-                return segmentId;
-            }
-        }
-        return DEFAULT_SEGMENT;
-    };
-
     //
     // screens
     //
@@ -189,22 +178,6 @@ const Router = class extends EventTarget {
         return this.dialogs.some(function(entry) {
             return entry["id"] === id;
         });
-    };
-
-    // the dialog of a flow steps aside for the next one and comes back after
-    showDialog(id) {
-        for (const entry of this.dialogs) {
-            if (entry["id"] === id) {
-                entry["view"].show();
-            }
-        }
-    };
-    hideDialog(id) {
-        for (const entry of this.dialogs) {
-            if (entry["id"] === id) {
-                entry["view"].hide();
-            }
-        }
     };
 
     //

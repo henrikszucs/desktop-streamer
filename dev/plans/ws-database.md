@@ -70,8 +70,8 @@ has no row with that value.
 2. ~~Close the pool in `stop()`~~ - done (`stopDatabase`), which is what the
    removed code never did.
 3. Add the accounts tables and the `joins` foreign keys with
-   [ws-accounts.md](ws-accounts.md).
-3. `dev/mysql_docker/` brings up a MySQL server for testing the non-SQLite path.
+   [ws-accounts.md](ws-accounts.md). `dev/mysql_docker/` brings up a MySQL
+   server for testing the non-SQLite path.
 
 ## Notes
 

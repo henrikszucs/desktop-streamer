@@ -118,7 +118,10 @@ const attachJoin = function(server, sessionId, record, isHost) {
     }
     const client = server.clients.get(sessionId);
     if (client === undefined) {
-        return join;        // the socket went while the row was being read
+        // the socket went while the row was being read. Nothing will detach it,
+        // so an entry created for it here would be held for the process life
+        dropIfEmpty(server, join);
+        return join;
     }
     join.get(isHost === true ? "hostSessionIds" : "peerSessionIds").add(sessionId);
     if (client.has("joinIds") === false) {

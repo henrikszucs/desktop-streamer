@@ -57,7 +57,10 @@ const handleAPI = async function(messageObj, sessionId, server) {
     // check basic structure
     await messageObj.wait();
     const message = messageObj.data;
-    if (typeof message !== "object" || typeof message["type"] !== "string") {
+    // null is an object to typeof, and reading a type off it would throw here -
+    // which ws.js answers by terminating the socket, where the whole point of
+    // this check is to answer "invalid-format" and leave the connection alone
+    if (typeof message !== "object" || message === null || typeof message["type"] !== "string") {
         console.log("Invalid message format", message);
         reject(messageObj, "invalid-format");
         return;

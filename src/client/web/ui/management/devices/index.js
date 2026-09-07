@@ -31,9 +31,14 @@ const DeviceScreen = class extends Screen {
             return;
         }
 
+        const localization = ctx["localization"];
         for (const record of records) {
             const box = new DeviceBox(record["joinId"], record["joinCode"]);
-            box.setName((record["name"] ?? "") !== "" ? record["name"] : ctx["localization"].get("devices.unnamed"));
+
+            // a card is built long after this module was translated, so it is
+            // handed over on its own - the labels in it are markup like any other
+            localization.translate(localization.getLang(), box.el);
+            box.setName((record["name"] ?? "") !== "" ? record["name"] : localization.get("devices.unnamed"));
             box.setOnline(record["isOnline"] === true);
 
             // asking to come back in is the same wait as a first pairing, so it

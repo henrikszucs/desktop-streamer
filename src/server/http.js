@@ -194,6 +194,24 @@ const ServerHTTP = class {
         };
     };
 
+    // the body, on a stream that may fail after the head is out. pipe() does not
+    // forward an "error" of the readable, and a stream with no error listener is
+    // an uncaught exception - from a read that fails halfway, or from a client
+    // that hung up - which ends the process the same way a throwing handler does
+    pipeStream(stream, res) {
+        stream.on("error", function() {
+            stream.destroy();
+            res.destroy();      // the head is already out, there is no status left to send
+        });
+        res.on("error", function() {
+            stream.destroy();
+        });
+        res.on("close", function() {
+            stream.destroy();   // the client hung up, the file handle goes with it
+        });
+        stream.pipe(res);
+    };
+
     
 
     // every file this server can hand out, as it is on disk right now
@@ -355,7 +373,7 @@ const ServerHTTP = class {
             return;
         }
         res.writeHead(200, this.fileHeaders(fileData));
-        fileData["stream"].pipe(res);
+        this.pipeStream(fileData["stream"], res);
     };
 
     httpsRequestHandlerWithCache = async (req, res) => {
@@ -392,7 +410,7 @@ const ServerHTTP = class {
                 return;
             }
             res.writeHead(200, this.fileHeaders(file));
-            file["stream"].pipe(res);
+            this.pipeStream(file["stream"], res);
         } else {
             res.writeHead(200, this.fileHeaders(fileData));
             res.write(fileData["buffer"]);
@@ -474,21 +492,23 @@ const ServerHTTP = class {
 
     async stop() {
         process.stdout.write("\n    Closing HTTP server....    ");
-        if (this.httpServer !== null) {
-            // close redirect server if exists
-            if (this.httpRedirect !== null) {
-                await new Promise((resolve) => {
-                    const timeOut = setTimeout(function() {
-                        resolve(false);
-                    }, 5000);
-                    this.httpRedirect.close(function() {
-                        clearTimeout(timeOut);
-                        resolve(true);
-                    });
+        // outside the branch below, as in ws.js: a start() that failed between
+        // the two listeners would otherwise leave the redirect port bound for
+        // the life of the process
+        if (this.httpRedirect !== null) {
+            await new Promise((resolve) => {
+                const timeOut = setTimeout(function() {
+                    resolve(false);
+                }, 5000);
+                this.httpRedirect.close(function() {
+                    clearTimeout(timeOut);
+                    resolve(true);
                 });
-                this.httpRedirect = null;
-            }
+            });
+            this.httpRedirect = null;
+        }
 
+        if (this.httpServer !== null) {
             // close HTTP server
             await new Promise((resolve) => {
                 const timeOut = setTimeout(function() {

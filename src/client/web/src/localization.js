@@ -139,7 +139,6 @@ const translate = (lang=curLang, root=document) => {
 // the module slices arrive after boot, so the list comes from the shell slice -
 // every slice carries the same languages
 const getSupportedLanguages = () => {
-    const langs = [];
     const getFirstKey = (obj) => {
         if (typeof obj !== "object") {
             return null;
@@ -164,6 +163,19 @@ const escapeRegex = (str) => {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
+// a few dictionary strings carry markup of their own (the bold run in the two
+// request lines), so what is substituted into one reaches the document as
+// markup. A name or an address is neither this client's text nor the
+// dictionary's - it came from a server - so it is escaped before it goes in.
+const escapeHTML = (str) => {
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+};
+
 const putParameters = (str, params=new Map(), charStart="{", charEnd="}", charStartEscape="\\{", charEndEscape="\\}") => {
     // First, replace escaped characters with temporary placeholders
     const startPlaceholder = "\x00START\x00";
@@ -175,7 +187,8 @@ const putParameters = (str, params=new Map(), charStart="{", charEnd="}", charSt
     // Replace parameters
     params.forEach((value, key) => {
         const pattern = new RegExp(escapeRegex(charStart) + escapeRegex(key) + escapeRegex(charEnd), 'g');
-        result = result.replace(pattern, value);
+        // a function replacer, so a "$&" or a "$1" inside a value stays literal
+        result = result.replace(pattern, function() { return value; });
     });
     
     // Restore escaped characters to their literal form (without the backslash)
@@ -187,7 +200,7 @@ const putParameters = (str, params=new Map(), charStart="{", charEnd="}", charSt
 
 const supportedLanguages = getSupportedLanguages();
 
-export { getLang, setLang, dict, add, get, translate, supportedLanguages, putParameters };
+export { getLang, setLang, dict, add, get, translate, supportedLanguages, putParameters, escapeHTML };
 export default {
     "getLang": getLang,
     "setLang": setLang,
@@ -196,5 +209,6 @@ export default {
     "get": get,
     "translate": translate,
     "supportedLanguages": supportedLanguages,
-    "putParameters": putParameters
+    "putParameters": putParameters,
+    "escapeHTML": escapeHTML
 };

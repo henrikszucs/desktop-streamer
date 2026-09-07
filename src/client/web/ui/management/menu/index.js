@@ -18,8 +18,8 @@ const MenuDialog = class extends Dialog {
             this.requestClose();
         });
 
-        // the shares badge follows the joins, which the server does not carry
-        // today (dev/plans/ws-pairing-joins.md) - the markup starts it hidden
+        // the shares badge would follow the joins this client holds; nothing
+        // counts them for it yet, so the markup starts it hidden
 
         // the same two entries the shell hides for itself
         ctx["server"].addEventListener("online", this.onOnline);

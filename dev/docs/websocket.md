@@ -231,9 +231,10 @@ flag was set - answering a one-way send is not possible.
 
 Incoming messages the peer started arrive at the handler registered with
 `com.onIncoming(...)`: `handleAPI` on the server, `handleIncoming` on the
-client. Both directions work - the server pushing to the client is what the
-removed account and pairing features used - but the server sends nothing
-unprompted today.
+client. Both directions are in use: the pairing and join flows are the first
+calls this server answers by talking to a *third* socket, which it does through
+`push`/`notify` in `ws/notify.js`. The client turns each of those into an event
+of the same name (`PUSH_EVENTS` in its `server.js`).
 
 ### Packets, acks and splitting
 
@@ -272,24 +273,37 @@ Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
 ## The application API
 
 Everything above carries plain objects with a `"type"` key. `handleAPI` in
-`handleAPI` in `ws/api.js` dispatches on it and every handler answers the caller.
-A type is served by one function in one group file under `ws/handlers/`; the
-groups are merged into the dispatch table in `api.js`.
+`ws/api.js` dispatches on it and every handler answers the caller. A type is
+served by one function in one group file under `ws/handlers/`; the groups are
+merged into the dispatch table in `api.js`.
+
+| group | types |
+| --- | --- |
+| `handlers/conf.js` | `conf-get` |
+| `handlers/connection.js` | `ping`, `session-get` |
+| `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
+| `handlers/joins.js` | `join-connect`, `join-list`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
+| anything else | answered `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
+
+The three below are the whole of what a connection can ask *about itself*; the
+pairing and join calls are the flow that connects two people, and their requests,
+answers and server-initiated pushes are written out in
+[../plans/ws-pairing-joins.md](../plans/ws-pairing-joins.md).
 
 | type | request | answer |
 | --- | --- | --- |
-| `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isAuth": bool, "isGoogleAuth": bool}, "auth": {"google": {"clientId": string}}}` |
+| `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isAuth": bool, "isGoogleAuth": bool}, "pairing": {"answerTimeout": number}, "auth": {"google": {"clientId": string}}}` |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
-| anything else | - | `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
 
 `conf-get` is built once in `ServerWS.start` by `buildPublicConf` and is the
 **public half** of the configuration - the version of the process, ICE servers,
 the permissions, and the public client id of each configured sign-in provider. Never key material, SMTP
 credentials, OAuth secrets or database settings. `auth` is absent when no
 provider is configured, and so is anything the current config schema has no
-field for (`serviceSharing`, which the client uses to decide whether to show the
-services route - so that route stays hidden).
+field for - `serviceSharing`, which the client uses to decide whether to show the
+services route, so that route stays hidden (see
+[../plans/ws-client-config.md](../plans/ws-client-config.md)).
 
 `permissions` is what this server would let the caller do, so the client can
 leave a feature it is going to refuse off the screen rather than fail it at the
@@ -463,13 +477,13 @@ ws.addEventListener("open", async function() {
 
 ## Not implemented yet
 
-Sign-in and account sessions, user data subscriptions, pair codes, joins and the
-WebRTC signaling relay were cut out of the WS server and are planned in
-[../plans/](../plans/). The client's `Server` class was cut back to match, so
-nothing in the browser sends a type the server does not answer: what is left of
-it is the socket lifecycle and `conf-get`. The UI modules those methods fed -
-the account windows, the pairing dialogs, the device and share lists - are still
-there and still mount, on empty lists and dead buttons, each one pointing at the
-plan that fills it again. The previous implementation is at commit `6c0d18a` on
-the server side and `da3921d` on the client side; both were written against an
-older config shape and should be read, not pasted back.
+Sign-in and account sessions, user data subscriptions and the WebRTC signaling
+relay are still cut out of the WS server and planned in [../plans/](../plans/).
+The client's `Server` class matches what the server answers, so nothing in the
+browser sends a type the server does not serve. The UI modules those methods fed
+- the account windows, renaming a device, the room and the stream behind an
+accepted request - are still there and still mount, on empty lists and dead
+buttons, each one pointing at the plan that fills it again. The previous
+implementation is at commit `6c0d18a` on the server side and `da3921d` on the
+client side; both were written against an older config shape and should be read,
+not pasted back.

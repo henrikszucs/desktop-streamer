@@ -122,10 +122,12 @@ const RoomCreateDialog = class extends Dialog {
         const localization = ctx["localization"];
         const details = event.detail?.["details"] ?? {};
 
+        // the line carries a bold run of its own, so it reaches the document as
+        // markup - the address in it came from the server, so it goes in escaped
         const fullName = localization.get("new.share.guest");
         const infoText = localization.putParameters(localization.get("new.share.request-info"), new Map([
-            ["fullName", fullName],
-            ["ipAddress", details["ipAddress"] ?? ""]
+            ["fullName", localization.escapeHTML(fullName)],
+            ["ipAddress", localization.escapeHTML(details["ipAddress"] ?? "")]
         ]));
 
         this.hide();

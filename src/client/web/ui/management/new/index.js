@@ -1,7 +1,8 @@
 "use strict";
 
 // the default screen: join a room with a code, or share this device. It owns
-// both flows; neither goes through yet (dev/plans/ws-pairing-joins.md).
+// both flows up to the accepted request; the room behind one is still ahead
+// (dev/plans/ws-pairing-joins.md).
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";

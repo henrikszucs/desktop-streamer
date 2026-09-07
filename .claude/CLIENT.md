@@ -182,7 +182,13 @@ for an entry of the switch-account submenu inside it.
 
 Rows built in script rather than written in `view.html` (the account rows, the
 device and share boxes) are built because there is one per record, and a name
-that comes from the server goes in as `textContent`, never as markup.
+that comes from the server goes in as `textContent`, never as markup. Their own
+labels carry `data-localization` like any other markup, but nothing translates
+them on their own — a card is built long after the module it belongs to was
+translated — so the screen hands each one to `translate(lang, box.el)` as it
+builds it. A label that changes with the record's state (a card's *Connect* and
+*Offline*) is two spans and a `hide`, not a string set from script, so the card
+is translated once and never again.
 
 ## The transport
 
@@ -287,12 +293,13 @@ host agreed to.
 Asking to come back in is the same wait as a first pairing, so it is the same
 dialog: `room/joining` takes a `mode` and sends either `pair-request` or
 `join-request` itself. An unsupervised join is answered by the server in that
-first call, so that one is over before the bar has moved. The code is the server's to make - six digits, so it can be read out loud -
-and it belongs to the socket it was asked on: the server drops it when the
-connection goes, which is why the share dialog asks for one when it opens and
-gives it back when it closes. The answer says how long the code stands, and the
-dialog asks for the next one before then, so what is on screen is always a code
-the server still knows.
+first call, so that one is over before the bar has moved.
+
+The code is the server's to make - six digits, so it can be read out loud - and
+it belongs to the socket it was asked on: the server drops it when the connection
+goes, which is why the share dialog asks for one when it opens and gives it back
+when it closes. `createPairCode` hands back the code and nothing else, so nothing
+on either side refreshes it.
 
 ## The registry
 
@@ -337,10 +344,11 @@ share with the menu dialog), and the registry hands each module's
 
 ## What is not wired yet
 
-The server was cut back to the socket lifecycle and `conf-get`; the UI for what
-went with it is present but inert, and each piece is planned under `dev/plans/`.
-The previous client implementation is at commit `da3921d`, and it read message
-types the server no longer serves — do not paste it back untouched.
+The pairing and join flows are live; what is still cut out of the server is the
+accounts half and the WebRTC signaling relay, and the UI for those is present but
+inert. Each piece is planned under `dev/plans/`. The previous client
+implementation is at commit `da3921d`, and it read message types the server no
+longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |

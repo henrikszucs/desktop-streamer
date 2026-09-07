@@ -11,6 +11,22 @@
         "unnamed": {
             "en": "Shared device",
             "hu": "Megosztott eszköz"
+        },
+        "settings": {
+            "en": "Settings",
+            "hu": "Beállítások"
+        },
+        "delete": {
+            "en": "Delete",
+            "hu": "Törlés"
+        },
+        "connect": {
+            "en": "Connect",
+            "hu": "Csatlakozás"
+        },
+        "offline": {
+            "en": "Offline",
+            "hu": "Nem elérhető"
         }
     }
 }

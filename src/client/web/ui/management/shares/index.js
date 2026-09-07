@@ -32,15 +32,20 @@ const SharesScreen = class extends Screen {
             return;
         }
 
+        const localization = ctx["localization"];
         for (const record of records) {
             const box = new ShareBox(record["joinId"], record["joinCode"]);
-            box.setName((record["name"] ?? "") !== "" ? record["name"] : ctx["localization"].get("shares.unnamed"));
+
+            // a card is built long after this module was translated, so it is
+            // handed over on its own - the labels in it are markup like any other
+            localization.translate(localization.getLang(), box.el);
+            box.setName((record["name"] ?? "") !== "" ? record["name"] : localization.get("shares.unnamed"));
             box.setTag("online", record["isOnline"] === true);
             box.setTag("offline", record["isOnline"] !== true);
 
             // a device that may come and go without anybody being asked is worth
             // saying so on the card, since nothing else will ever mention it
-            box.setUnattended(record["isUnsupervised"] === true, ctx["localization"].get("shares.unattended"));
+            box.setUnattended(record["isUnsupervised"] === true);
 
             box.addEventListener("delete", async function(event) {
                 await ctx["joins"].remove(event.detail["joinId"]);

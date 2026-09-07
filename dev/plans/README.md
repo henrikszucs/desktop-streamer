@@ -5,12 +5,13 @@ one written so it can be picked up on its own.
 
 ## WS server
 
-Most of what is here was cut out of the WS server (a single `src/server/ws.js`
-at the time, `src/server/ws/` today) when it was
-wired into `src/server/server.js`. That file was reduced to the parts that make
-a connection usable at all - the socket lifecycle, the session id of a
-connection, the connection test and the version check - so the server can boot
-end to end. Everything else was removed rather than left half-wired.
+Everything here was cut out of the WS server (a single `src/server/ws.js` at the
+time, `src/server/ws/` today) when it was wired into `src/server/server.js`.
+That file was reduced to the parts that make a connection usable at all - the
+socket lifecycle, the session id of a connection, the connection test and the
+version check - so the server could boot end to end, and everything else was
+removed rather than left half-wired. The config call, the database and the
+pairing and join flows have since been written back; what is left is below.
 
 **The removed code is not lost.** It lives in git at commit `6c0d18a`, and every
 WS plan below names the line range it came from:
@@ -25,15 +26,16 @@ against an older configuration shape and never ran against the current schema
 
 ### What the WS server answers today
 
-| type | request | answer |
-| --- | --- | --- |
-| `conf-get` | - | the public half of the configuration, the server version included |
-| `ping` | - | `{"success": true, "timestamp": number}` |
-| `session-get` | - | `{"success": true, "sessionId": string}` |
+| group | types |
+| --- | --- |
+| `handlers/conf.js` | `conf-get` |
+| `handlers/connection.js` | `ping`, `session-get` |
+| `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
+| `handlers/joins.js` | `join-connect`, `join-list`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
 
-Each of those is one function in a group file under `src/server/ws/handlers/`,
-reached through the dispatch table in `src/server/ws/api.js` - a new call is a
-function in the group it belongs to, not another branch in one growing file.
+Each is one function in a group file under `src/server/ws/handlers/`, reached
+through the dispatch table in `src/server/ws/api.js` - a new call is a function
+in the group it belongs to, not another branch in one growing file.
 
 Anything else is logged and answered `{"success": false, "error": "unknown-type"}`.
 It is *answered* rather than aborted on purpose - see
@@ -47,23 +49,18 @@ be written, its request and answer as the removed code actually had them, and th
 handler group it belongs to. Read it before picking up any plan below - it also
 lists where these plan files disagree with that code.
 
-| plan | what it restores | depends on |
+| plan | what it restores | state |
 | --- | --- | --- |
-| [ws-client-config.md](ws-client-config.md) | `conf-get` and the config shape the whole WS server reads | - |
-| [ws-database.md](ws-database.md) | knex connection and the schema created on first boot | - |
-| [ws-accounts.md](ws-accounts.md) | e-mail, Google sign-in, persistent sessions, user data | database, client config |
-| [ws-pairing-joins.md](ws-pairing-joins.md) | pair codes, joins and the WebRTC signaling relay | accounts |
+| [ws-client-config.md](ws-client-config.md) | `conf-get` and the config shape the whole WS server reads | the call is done; the shape questions in it are open |
+| [ws-database.md](ws-database.md) | knex connection and the schema created on first boot | the connection and the `joins` table are done; the accounts tables are not |
+| [ws-pairing-joins.md](ws-pairing-joins.md) | pair codes, joins and the WebRTC signaling relay | pairing and joins are done; the signaling relay is not |
+| [ws-accounts.md](ws-accounts.md) | e-mail, Google sign-in, persistent sessions, user data | open, and what the three above are still waiting on |
 
-Suggested order: client config, database, accounts, pairing/joins. The
-configuration shape has to be settled first because every later plan reads from
-it, and nothing else can be tested while the server refuses to start.
+What is left is one order: accounts, then the relay. Everything a connection can
+ask about *itself* or about the two devices at either end of a pairing is
+answered; nothing that needs a user behind it is, and nothing carries media yet.
 
 ## Client
 
-| plan | what it changes | depends on |
-| --- | --- | --- |
-| [client-ui-modules.md](client-ui-modules.md) | splits the 3805-line `src/client/web/src/index.js` into modules that load when the UI needs them | - |
-
-Independent of the WS plans, and staged in four phases so it can be done a piece
-at a time. Phase 3 wants the SPA fallback in `src/server/http.js` narrowed first,
-which is described in that plan.
+[client-ui-modules.md](client-ui-modules.md) is done - kept as a record of what
+the restructuring landed as and what it planned and dropped, not as work.

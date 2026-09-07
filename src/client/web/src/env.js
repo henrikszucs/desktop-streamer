@@ -41,50 +41,6 @@ const checkBrowser = function() {
     };
 };
 
-const checkBrowser2 = () => {
-    const ua = navigator.userAgent;
-    let tem; 
-    let M = ua.match(/(opera|chrome|safari|firefox|msie|trident(?=\/))\/?\s*(\d+)/i) || [];
-    if (/trident/i.test(M[1])) {
-        tem = /\brv[ :]+(\d+)/g.exec(ua) || [];
-        return "IE " + (tem[1] || "");
-    }
-    if (M[1] === "Chrome") {
-        tem = ua.match(/\b(OPR|Edge)\/(\d+)/);
-        if (tem != null) {
-            return tem.slice(1).join(" ").replace("OPR", "Opera");
-        }
-    }
-    M = M[2]? [M[1], M[2]]: [navigator.appName, navigator.appVersion, "-?"];
-    if ((tem = ua.match(/version\/(\d+)/i))!= null) { 
-        M.splice(1, 1, tem[1]);
-    }
-    return M;
-};
-
-const getOS = function() {
-    const userAgent = window.navigator.userAgent,
-        platform = window.navigator?.userAgentData?.platform || window.navigator.platform,
-        macosPlatforms = ['macOS', 'Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'],
-        windowsPlatforms = ['Win32', 'Win64', 'Windows', 'WinCE'],
-        iosPlatforms = ['iPhone', 'iPad', 'iPod'];
-    let os = null;
-
-    if (macosPlatforms.indexOf(platform) !== -1) {
-        os = "darwin";
-    } else if (iosPlatforms.indexOf(platform) !== -1) {
-        os = 'ios';
-    } else if (windowsPlatforms.indexOf(platform) !== -1) {
-        os = 'win32';
-    } else if (/Android/.test(userAgent)) {
-        os = 'android';
-    } else if (/Linux/.test(platform)) {
-        os = 'linux';
-    }
-
-    return os;
-};
-
 const browser = checkBrowser();
 const width = window.innerWidth;
 const sizeS = 600;
@@ -175,5 +131,5 @@ const domReady = new Promise(function (resolve) {
     }, { "once": true });
 });
 
-export { checkBrowser, checkBrowser2, getOS, browser, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
-export default { checkBrowser, checkBrowser2, getOS, browser, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
+export { checkBrowser, browser, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
+export default { checkBrowser, browser, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };

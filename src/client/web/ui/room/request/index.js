@@ -95,9 +95,12 @@ const RoomRequestDialog = class extends Dialog {
         const localization = ctx["localization"];
         const record = ctx["joins"].get(detail["joinId"]);
         const name = (record?.["name"] ?? "") !== "" ? record["name"] : localization.get("new.share.join-unnamed");
+        // the line carries a bold run of its own, so it reaches the document as
+        // markup - the name and the address in it came from the server, so they
+        // go in escaped
         const infoText = localization.putParameters(localization.get("new.share.join-info"), new Map([
-            ["name", name],
-            ["ipAddress", detail["details"]?.["ipAddress"] ?? ""]
+            ["name", localization.escapeHTML(name)],
+            ["ipAddress", localization.escapeHTML(detail["details"]?.["ipAddress"] ?? "")]
         ]));
 
         ctx["ui"].openDialog("room-request", {

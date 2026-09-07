@@ -15,6 +15,26 @@
         "unattended": {
             "en": "Unattended",
             "hu": "Felügyelet nélkül"
+        },
+        "settings": {
+            "en": "Settings",
+            "hu": "Beállítások"
+        },
+        "delete": {
+            "en": "Delete",
+            "hu": "Törlés"
+        },
+        "local": {
+            "en": "Local",
+            "hu": "Helyi"
+        },
+        "online": {
+            "en": "Online",
+            "hu": "Elérhető"
+        },
+        "offline": {
+            "en": "Offline",
+            "hu": "Nem elérhető"
         }
     }
 }
