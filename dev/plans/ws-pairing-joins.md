@@ -141,7 +141,81 @@ notified once. The caller is excluded; it already has its answer.
 getText("room", lang)`. **`getText` was never imported** - see the same note in
 [ws-accounts.md](ws-accounts.md).
 
-## Signaling relay
+## Signaling relay **(done, in a different shape)**
+
+`src/server/ws/handlers/rooms.js` holds it, and it is **not** the held-open loop
+below. What landed:
+
+| type | request | answer |
+| --- | --- | --- |
+| `room-signal` | `{"roomId", "signal"}` | `{"success", "error"}` |
+| `room-data` | `{"roomId", "data"}` | `{"success", "error"}` |
+| `room-leave` | `{"roomId"}` | `{"success"}` |
+
+Server-initiated, on both sockets:
+
+```
+{"timestamp", "type": "room-open", "roomId": string, "joinId": string, "isHost": boolean}
+{"timestamp", "type": "room-signal", "roomId": string, "signal": object}
+{"timestamp", "type": "room-data", "roomId": string, "data": any}
+{"timestamp", "type": "room-close", "roomId": string, "reason": "left"|"gone"}
+```
+
+Differences from the plan below, all deliberate:
+
+- **A room, not a `join` branch.** A pairing that was not remembered leaves no
+  join behind, so a relay keyed on one could not carry the connection it just
+  made. `rooms` is `Map<roomId, {hostSessionId, peerSessionId, joinId}>`, made by
+  `pair-accept`, by `join-accept` and by the unsupervised `join-request`, and it
+  dies with either socket: there is nothing in a half-negotiated connection worth
+  keeping.
+- **One message per call, not a loop.** The note at the bottom of this file asks
+  for the loop to be bounded; a per-message relay has nothing to bound. The
+  server holds no state between two signals and a slow client holds nothing open.
+- **Both sides are told, rather than the answer carrying it.** The host of an
+  unsupervised join is never asked anything, so there is no answer to put a room
+  id in - `room-open` is the one path, and it also says which side each socket
+  is, which is what decides who offers (the peer does).
+- **The signal is opaque but the envelope is not**: an object, at most 16 KB, to
+  one other socket. The server never parses SDP.
+- **The relay permission is cached on the connection.** `clientConnect` answers
+  it once (`isRelayAllowed` in the client state) and the relay reads it from
+  there for every message it carries. It is deliberately not re-read: a
+  permission is not expected to change under a live socket, and the relay is the
+  one call in this protocol that runs per message rather than per flow. When
+  `ws-accounts.md` lands, sign-in fills that slot from the user's row - one read
+  for the session, not one per message.
+- **`guestAllowRelay` gates `room-data` alone.** The schema calls it *use server
+  for media data transfer*, which is what the fallback is: two devices that
+  cannot reach each other, and the server carrying what would have gone between
+  them. The negotiation every connection needs (`room-signal`) is never gated -
+  on a flag that defaults to `false`, that would mean no guest could ever
+  connect. The flag is also answered to the client in `permissions`, because a
+  fallback that is not there must not be waited for.
+- **The fallback is this server, not a TURN server.** That is the decision, not
+  a step towards one: `room-data` is `room-signal` with a different cap (64 KB)
+  and a permission in front of it, and the client takes it after
+  `DIRECT_TIMEOUT` or an ICE failure. The `iceServers` in the configuration are
+  STUN - they help the two ends *find* each other - and nothing in this project
+  asks for a TURN credential, which is why the schema takes URL strings and no
+  username or password. What is relayed goes over the socket both ends already
+  hold, so it needs no second address, no second port and no second thing to run.
+- **It carries bytes, and there is no size to stay under.** The communicator
+  splits an ArrayBuffer into packets and reassembles it at the far end, and does
+  none of that for JSON - so a binary frame (`[kind][roomId][payload]`) is the
+  relay's own path and `room-data` is left as the small answered one. 16 MB
+  crosses it intact in about 600 ms through the real stack
+  (`tests/relay.test.js`), and the direct leg carries the same sizes because its
+  data channel is wrapped in a `Communicator` too. What the media work still
+  owns: a sequence of some kind, since frames of very different sizes can finish
+  out of order on either leg.
+
+The client half is `src/client/web/src/room.js` (`ctx["room"]`): one
+`RTCPeerConnection`, one `control` data channel, and `connecting`/`connected`/
+`closed` events. It carries **no media** - the open channel is what says the two
+ends can reach each other, and the room screen lifts its own wait on it.
+
+What was planned instead, kept for the record:
 
 The `join` branch is the one that matters and the one to get right. The server
 never sees media; it carries SDP and ICE between the peer that asked and the
@@ -175,10 +249,12 @@ communicator timeout.
    `host_name` are written empty and `join-rename` does not exist, so both
    screens fall back to a localized label.
 3. Restore the join branches and `broadcastJoin`.
-4. Restore the `join` signaling relay last; it is the only branch that holds two
-   messages open at once.
-5. Extend the socket close handler to drop the socket from every join it is in
-   and notify the other side (releasing its pair code is already there).
+4. ~~Restore the `join` signaling relay last; it is the only branch that holds
+   two messages open at once.~~ - done as `handlers/rooms.js`, which holds none.
+   The data relay beside it (`room-data`) is the fallback for two devices that
+   cannot reach each other, end to end in `tests/relay.test.js`.
+5. ~~Extend the socket close handler to drop the socket from every join it is in
+   and notify the other side~~ - done, and the rooms with it (`detachRooms`).
 
 ## Notes
 

@@ -8,6 +8,7 @@ import confHandlers from "./handlers/conf.js";
 import connectionHandlers from "./handlers/connection.js";
 import pairingHandlers from "./handlers/pairing.js";
 import joinHandlers from "./handlers/joins.js";
+import roomHandlers, { roomFrame } from "./handlers/rooms.js";
 
 // one group of calls per file under ./handlers - adding a call means a function
 // in the group it belongs to, its type in that group's table, and a line here
@@ -15,7 +16,8 @@ const GROUPS = [
     confHandlers,
     connectionHandlers,
     pairingHandlers,
-    joinHandlers
+    joinHandlers,
+    roomHandlers
 ];
 
 // the groups merged into one type -> handler table. Two groups claiming the same
@@ -57,6 +59,21 @@ const handleAPI = async function(messageObj, sessionId, server) {
     // check basic structure
     await messageObj.wait();
     const message = messageObj.data;
+
+    // A binary message is not a call. It is a frame the relay carries, and it
+    // has no "type" to dispatch on: a payload the communicator splits into
+    // packets cannot also be a JSON object, so the frame says what it is in its
+    // own first bytes (see handlers/rooms.js). One route, no answer - the
+    // sender is not waiting for one.
+    if (message instanceof ArrayBuffer) {
+        roomFrame({
+            "message": message,
+            "messageObj": messageObj,
+            "sessionId": sessionId,
+            "server": server
+        });
+        return;
+    }
     // null is an object to typeof, and reading a type off it would throw here -
     // which ws.js answers by terminating the socket, where the whole point of
     // this check is to answer "invalid-format" and leave the connection alone

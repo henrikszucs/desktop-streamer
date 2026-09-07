@@ -152,8 +152,19 @@ const RoomCreateDialog = class extends Dialog {
             this.show();
             return;
         }
-        await this.ctx["joins"].remember(event.detail?.["answer"], true);
+        const record = await this.ctx["joins"].remember(event.detail?.["answer"], true);
         this.ctx["ui"].closeDialogs();
+
+        // A yes that was not remembered leaves nothing behind to show, so this
+        // side stays where it is. One that was is a connection this host now
+        // keeps, and the screen that lists them is where it belongs - with its
+        // settings open on it, since naming it is the one thing that is worth
+        // doing to a connection the moment it is made.
+        if (typeof record === "undefined") {
+            return;
+        }
+        await this.ctx["ui"].navigate("shares");
+        this.ctx["ui"].openDialog("connection", {"joinId": record["joinId"]});
     };
 
     // the request went away without this side answering: the one waiting gave

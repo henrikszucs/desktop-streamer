@@ -9,6 +9,7 @@ import { conf, confLoad, setLocal, resetUser } from "./src/conf.js";
 import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
 import { createJoins } from "./src/joins.js";
+import { createRoom } from "./src/room.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
 import { applyScale, applyTheme, applyLanguage, createUI, buildUI } from "./ui/ui.js";
@@ -47,6 +48,7 @@ const main = async function() {
         "server": server,
         "conf": conf,
         "joins": null,
+        "room": null,
         "localization": localization,
         "desktop": desktop,
         "setLocal": setLocal,
@@ -55,6 +57,11 @@ const main = async function() {
         "ui": null
     };
     ctx["joins"] = createJoins(ctx);
+
+    // the live connection between this device and the other one. It is built
+    // here rather than by the room screen because it outlives one: the host that
+    // accepted a request is on its own screens while it holds one.
+    ctx["room"] = createRoom(ctx);
     ctx["ui"] = createUI(ctx);
     const router = new Router(ctx);
     ctx["router"] = router;
@@ -65,6 +72,7 @@ const main = async function() {
     globalThis.conf = conf;
     globalThis.localization = localization;
     globalThis.server = server;
+    globalThis.room = ctx["room"];
     globalThis.desktop = desktop;
     globalThis.router = router;
 

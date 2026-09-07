@@ -1,0 +1,36 @@
+{
+    "connection": {
+        "title": {
+            "en": "Connection settings",
+            "hu": "Kapcsolat beállításai"
+        },
+        "name": {
+            "en": "Name",
+            "hu": "Név"
+        },
+        "nameHint": {
+            "en": "This name is only stored on this device.",
+            "hu": "Ez a név csak ezen az eszközön tárolódik."
+        },
+        "delete": {
+            "en": "Delete",
+            "hu": "Törlés"
+        },
+        "save": {
+            "en": "Save",
+            "hu": "Mentés"
+        },
+        "saved": {
+            "en": "The connection was saved.",
+            "hu": "A kapcsolat mentve."
+        },
+        "deleted": {
+            "en": "The connection was deleted.",
+            "hu": "A kapcsolat törölve."
+        },
+        "unknown": {
+            "en": "This connection is not held by this device any more.",
+            "hu": "Ezt a kapcsolatot már nem tárolja ez az eszköz."
+        }
+    }
+}

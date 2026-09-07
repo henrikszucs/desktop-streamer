@@ -12,6 +12,7 @@
 // first-party dependencies
 import { generateId } from "../../common.js";
 import { push, notify, notifyAll, ANSWER_TIMEOUT } from "../notify.js";
+import { createRoom } from "./rooms.js";
 
 // a join code is a capability, not something anybody reads out: it is ten
 // characters of the full alphabet, where a pair code is six digits
@@ -123,11 +124,18 @@ const attachJoin = function(server, sessionId, record, isHost) {
         dropIfEmpty(server, join);
         return join;
     }
-    join.get(isHost === true ? "hostSessionIds" : "peerSessionIds").add(sessionId);
+    const sessionIds = join.get(isHost === true ? "hostSessionIds" : "peerSessionIds");
+    const wasOnline = (sessionIds.size > 0);
+    sessionIds.add(sessionId);
     if (client.has("joinIds") === false) {
         client.set("joinIds", new Set());
     }
     client.get("joinIds").add(joinId);
+
+    // the first socket of a side is that side coming online
+    if (wasOnline === false) {
+        notifyPresence(server, join, isHost);
+    }
     return join;
 };
 
@@ -149,6 +157,18 @@ const otherSide = function(join, isHost) {
 
 const isOnline = function(join, isHost) {
     return otherSide(join, isHost).size > 0;
+};
+
+// one side arrived or left, and the other is told rather than left to ask again:
+// a client that draws presence anywhere but on a screen it has just opened has
+// nothing to poll with. Only the edges are pushed - a second window of a device
+// that is already there changes nothing about whether it is there.
+const notifyPresence = function(server, join, isHost) {
+    notifyAll(server, otherSide(join, isHost), {
+        "type": "join-online",
+        "joinId": join.get("joinId"),
+        "isOnline": join.get(isHost === true ? "hostSessionIds" : "peerSessionIds").size > 0
+    });
 };
 
 // a pending request is over: the clock is cleared and the peer that was waiting
@@ -190,7 +210,7 @@ const detachJoins = function(server, sessionId) {
             continue;
         }
         const isHost = join.get("hostSessionIds").delete(sessionId);
-        join.get("peerSessionIds").delete(sessionId);
+        const isPeer = join.get("peerSessionIds").delete(sessionId);
 
         // whoever was in the middle of asking, or being asked, is told
         if (join.get("requestSessionId") === sessionId) {
@@ -209,6 +229,11 @@ const detachJoins = function(server, sessionId) {
                     "reason": "gone"
                 });
             }
+        }
+
+        // and the last socket of a side is that side going away
+        if ((isHost === true || isPeer === true) && join.get(isHost === true ? "hostSessionIds" : "peerSessionIds").size === 0) {
+            notifyPresence(server, join, isHost);
         }
         dropIfEmpty(server, join);
     }
@@ -353,8 +378,11 @@ const joinRequest = async function(ctx) {
         return;
     }
 
-    // the host agreed once, for every time: nobody is asked again
+    // the host agreed once, for every time: nobody is asked again. It is still
+    // put in the room with this peer - it has a connection to negotiate either
+    // way, and the room-open push is the only thing that tells it so.
     if (join.get("isUnsupervised") === true) {
+        createRoom(server, [...hostSessionIds][0], sessionId, join.get("joinId"));
         messageObj.send({"success": true, "isAccepted": true});
         return;
     }
@@ -429,6 +457,9 @@ const joinAccept = function(ctx) {
         "joinId": held["join"].get("joinId")
     });
     ctx["messageObj"].send({"success": true});
+
+    // the two of them are in a room now, exactly as an accepted pairing is
+    createRoom(server, ctx["sessionId"], requestSessionId, held["join"].get("joinId"));
 };
 
 // no, from either side of it: the host deciding against it, or the peer giving
@@ -503,5 +534,5 @@ const handlers = {
     "join-delete": joinDelete
 };
 
-export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, generateJoinCodes, joinConnect, joinList, joinRequest, joinAccept, joinReject, joinDelete, JOIN_CODE_LENGTH };
+export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, joinConnect, joinList, joinRequest, joinAccept, joinReject, joinDelete, JOIN_CODE_LENGTH };
 export default handlers;

@@ -52,7 +52,9 @@ const buildServer = function(db, sessionIds = ["host", "peer", "other"]) {
     for (const sessionId of sessionIds) {
         clients.set(sessionId, buildClient());
     }
-    return {"clients": clients, "pairs": new Map(), "joins": new Map(), "db": db};
+    // the same shape ServerWS carries: an accept puts two sockets in a room, so
+    // a server built without that Map is not one these handlers can run against
+    return {"clients": clients, "pairs": new Map(), "joins": new Map(), "rooms": new Map(), "db": db};
 };
 
 const buildCtx = function(server, sessionId, message = {}) {
@@ -263,5 +265,51 @@ test("join-delete drops the row and tells the other side", async () => {
     await joinConnect(ctx);
     assert.equal(ctx.answers[0]["error"], "unknown-join");
 
+    await dropDatabase(db, file);
+});
+
+//
+// who is there
+//
+test("a side coming online is pushed to the other one", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+    const join = await createJoin(server, false);
+
+    // the host is first, and there is nobody to tell yet
+    attachJoin(server, "host", join, true);
+    assert.equal(pushesOf(server, "peer", "join-online").length, 0);
+
+    attachJoin(server, "peer", join, false);
+    const pushes = pushesOf(server, "host", "join-online");
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0]["joinId"], join["joinId"]);
+    assert.equal(pushes[0]["isOnline"], true);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("only the edges are pushed, and the last socket leaving is one", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db, ["host", "peer", "peer-2"]);
+    const join = await createJoin(server, false);
+    attachJoin(server, "host", join, true);
+    attachJoin(server, "peer", join, false);
+
+    // a second window of the same device is not a second arrival
+    attachJoin(server, "peer-2", join, false);
+    assert.equal(pushesOf(server, "host", "join-online").length, 1);
+
+    // nor is the first of them leaving a departure
+    detachJoins(server, "peer");
+    assert.equal(pushesOf(server, "host", "join-online").length, 1);
+
+    detachJoins(server, "peer-2");
+    const pushes = pushesOf(server, "host", "join-online");
+    assert.equal(pushes.length, 2);
+    assert.equal(pushes[1]["isOnline"], false);
+
+    releaseJoins(server);
     await dropDatabase(db, file);
 });

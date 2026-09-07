@@ -1,0 +1,32 @@
+<!--
+    One remembered connection: what this client calls it, and the way to forget
+    it. Minimal on purpose - the rest of what a connection could carry needs
+    calls the server does not answer yet (dev/plans/ws-pairing-joins.md).
+-->
+<dialog id="dialog-connection">
+    <nav>
+        <h5 class="max" data-localization="connection.title">Connection settings</h5>
+        <button class="circle transparent" id="btn-connection-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <div class="field label border round">
+        <input type="text" id="input-connection-name" maxlength="64"/>
+        <label data-localization="connection.name">Name</label>
+    </div>
+    <!--
+        The name is this client's own: there is no call that carries one to the
+        other side, so it is said here rather than left to be discovered.
+    -->
+    <div class="small-text" id="connection-name-hint" data-localization="connection.nameHint">This name is only stored on this device.</div>
+    <nav class="right-align">
+        <button class="border error-text" id="btn-connection-delete">
+            <i>delete</i>
+            <span data-localization="connection.delete">Delete</span>
+        </button>
+        <button id="btn-connection-save">
+            <i>check</i>
+            <span data-localization="connection.save">Save</span>
+        </button>
+    </nav>
+</dialog>

@@ -31,7 +31,7 @@
         "permissions": {
             "guestAllowShare": true,
             "guestAllowJoin": true,
-            "guestAllowRelay": false,
+            "guestAllowRelay": true,
             "userRegister": true,
             "userRegisterRelay": true
         }

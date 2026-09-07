@@ -10,7 +10,8 @@ const {
     session,
     screen,
     desktopCapturer,
-    shell
+    shell,
+    dialog
 } = require("electron");
 const path = require("node:path");
 const url = require("node:url");
@@ -24,6 +25,50 @@ const partition = "persist:remote_desktop";
 //
 const main = async function() {
     let winMain = null;
+
+    // The question the window is closed through, or null while there is none.
+    //
+    // A renderer cannot ask it: Electron cancels a close silently when
+    // beforeunload holds one, so a room would make the window unclosable and
+    // nobody would be asked anything. The renderer hands the strings over
+    // instead - it is the side that has the dictionary - and the close is asked
+    // about here, natively, the way the system close button is answered
+    // everywhere else. See setCloseGuard() in ui/room/index.js.
+    let closeGuard = null;
+    let isAsking = false;
+
+    const askClose = async function(win) {
+        if (isAsking === true) {
+            return;         // the button pressed twice is still one question
+        }
+        isAsking = true;
+        const guard = closeGuard;
+        let answer = null;
+        try {
+            answer = await dialog.showMessageBox(win, {
+                "type": "question",
+                "buttons": [guard["confirm"], guard["cancel"]],
+                "defaultId": 1,
+                "cancelId": 1,
+                "title": guard["title"],
+                "message": guard["message"]
+            });
+        } catch (error) {
+            console.log("Cannot ask about the close:", error);
+            return;
+        } finally {
+            isAsking = false;
+        }
+        if (answer.response !== 0) {
+            return;
+        }
+
+        // the question has been answered, so the close it was asked for goes
+        // through the handler below unguarded - to the tray or to the end,
+        // whichever this window does
+        closeGuard = null;
+        win.close();
+    };
     
     // Lock
     const isGotLock = app.requestSingleInstanceLock();
@@ -93,6 +138,11 @@ const main = async function() {
         win.loadURL(url);
         win.setMenu(null);
         win.on("close", function(event) {
+            if (closeGuard !== null) {
+                event.preventDefault();
+                askClose(win);
+                return;
+            }
             if (tray !== null) {
                 event.preventDefault();
                 win.hide();
@@ -179,6 +229,22 @@ const main = async function() {
                 tray = null;
             }
                 
+        } else if (handle === "set-close-guard") {
+            // the strings of the question, or null to stop asking it. A window
+            // that is closed while a room is open loses the room with it, which
+            // is the whole reason there is anything to ask.
+            const guard = args[0];
+            if (guard === null || typeof guard !== "object") {
+                closeGuard = null;
+                return true;
+            }
+            closeGuard = {
+                "title": String(guard["title"] ?? ""),
+                "message": String(guard["message"] ?? ""),
+                "confirm": String(guard["confirm"] ?? "OK"),
+                "cancel": String(guard["cancel"] ?? "Cancel")
+            };
+            return true;
         } else if (handle === "open-external") {
             // the one link that leaves the app: the window is on local://, the
             // zip is on the server, and a browser downloads it

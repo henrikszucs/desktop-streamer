@@ -205,16 +205,22 @@ const Router = class extends EventTarget {
     };
 
     // both hand back the promise of the screen being open, so boot can wait for
-    // the route before it lifts the loading layer off it
-    loadPath() {
+    // the route before it lifts the loading layer off it.
+    //
+    // `params` is what the flow that navigates knows and the path does not - a
+    // room being entered for a pairing that was never remembered has no id to
+    // put in a URL, and the screen still has to know it is connecting. It is
+    // not in the history: a reload is the path alone, which is the only thing
+    // that survives one.
+    loadPath(params) {
         const path = this.routeOf(window.location.pathname);
         window.history.replaceState({}, "", "/" + path.join("/"));
-        return this.openScreen(path[0], {"path": path.slice(1)});
+        return this.openScreen(path[0], {...params, "path": path.slice(1)});
     };
 
-    navigate(path) {
+    navigate(path, params) {
         window.history.pushState({}, "", "/" + path);
-        return this.loadPath();
+        return this.loadPath(params);
     };
 
     // one delegated handler for every [data-route] and [data-dialog] in the shell

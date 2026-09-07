@@ -283,12 +283,30 @@ merged into the dispatch table in `api.js`.
 | `handlers/connection.js` | `ping`, `session-get` |
 | `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
 | `handlers/joins.js` | `join-connect`, `join-list`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
+| `handlers/rooms.js` | `room-signal`, `room-data`, `room-leave`, and every **binary** message (see below) |
 | anything else | answered `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
 
 The three below are the whole of what a connection can ask *about itself*; the
-pairing and join calls are the flow that connects two people, and their requests,
-answers and server-initiated pushes are written out in
+pairing and join calls are the flow that connects two people, the room calls are
+the connection that flow leads to, and their requests, answers and
+server-initiated pushes are written out in
 [../plans/ws-pairing-joins.md](../plans/ws-pairing-joins.md).
+
+**A binary message is not a call.** `handleAPI` routes every `ArrayBuffer` to one
+place - the room relay - because a payload the communicator splits into packets
+cannot also be a JSON object with a `"type"` in it. The frame says what it is
+itself:
+
+```
+[0]      kind: 1 = bytes, 2 = a JSON payload
+[1..10]  the room id
+[11..]   the payload, which the server never looks at
+```
+
+It is forwarded to the other socket of that room exactly as it arrived, one way
+and unanswered. This is the path with **no size limit**: the communicator splits
+an ArrayBuffer into `packetSize` packets and reassembles it, so what a JSON call
+could not carry (one message, one frame) a binary frame can.
 
 | type | request | answer |
 | --- | --- | --- |
@@ -315,6 +333,7 @@ client never carries a default of its own.
 | --- | --- | --- |
 | `guestAllowShare` | `true` | a guest may share this device |
 | `guestAllowJoin` | `true` | a guest may join someone else's room |
+| `guestAllowRelay` | `false` | this server will carry the data of two devices that cannot reach each other (`room-data`), which is its own bandwidth - so it is the one guest flag that is off until it is asked for. The client is told because a fallback that is not there must not be waited for; the negotiation itself (`room-signal`) is never gated. It is answered **once per connection**, into the client state at `clientConnect`, and read from there by every relayed message - never re-read from the configuration or a row while the socket is live |
 | `isAuth` | - | this server has some way to sign in, so an account is worth offering |
 | `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |
 

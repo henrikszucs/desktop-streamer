@@ -105,6 +105,11 @@ const routes = new Map([
         "css": "/ui/management/settings/about/view.css",
         "localization": "/ui/management/settings/about/localization.json"
     }],
+    ["connection", {
+        "load": () => import("../ui/management/connection/index.js"),
+        "html": "/ui/management/connection/view.html",
+        "localization": "/ui/management/connection/localization.json"
+    }],
     ["account", {
         "load": () => import("../ui/management/account/index.js"),
         "html": "/ui/management/account/view.html",
@@ -133,7 +138,18 @@ const routes = new Map([
     ["room", {
         "load": () => import("../ui/room/index.js"),
         "html": "/ui/room/view.html",
-        "css": "/ui/room/view.css"
+        "css": "/ui/room/view.css",
+        "localization": "/ui/room/localization.json"
+    }],
+    ["room-loading", {
+        "load": () => import("../ui/room/loading/index.js"),
+        "html": "/ui/room/loading/view.html",
+        "localization": "/ui/room/loading/localization.json"
+    }],
+    ["room-exit", {
+        "load": () => import("../ui/room/exit/index.js"),
+        "html": "/ui/room/exit/view.html",
+        "localization": "/ui/room/exit/localization.json"
     }],
     ["room-create", {
         "load": () => import("../ui/room/create/index.js"),

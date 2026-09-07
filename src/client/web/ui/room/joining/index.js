@@ -140,7 +140,17 @@ const RoomJoiningDialog = class extends Dialog {
         const localization = this.ctx["localization"];
         this.ctx["ui"].snackbar.show(localization.get(record === undefined ? "new.join.accepted" : "new.join.accepted-remembered"));
         this.ctx["ui"].closeDialog(this.constructor.id);
-        // the room this leads into is still ahead: dev/plans/ws-pairing-joins.md
+
+        // and into the room, which is what was being asked for. It opens on its
+        // own wait: the host said yes, the picture is the next thing to arrive
+        // and nothing sends one yet (dev/plans/ws-pairing-joins.md).
+        //
+        // A remembered join is a room this device can be sent back to, so it is
+        // in the path; a pairing that was not remembered is gone with the
+        // dialog, so there is nothing to put in one.
+        const joinId = event.detail?.["joinId"] ?? this.joinId;
+        const path = (typeof joinId === "string" && joinId !== "") ? ("room/" + joinId) : "room";
+        this.ctx["ui"].navigate(path, {"isConnecting": true});
     };
     onPairReject = (event) => {
         const reason = event.detail?.["reason"];

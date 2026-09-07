@@ -42,5 +42,31 @@ const notifyAll = function(server, sessionIds, message) {
     }
 };
 
-export { push, notify, notifyAll, ANSWER_TIMEOUT };
-export default { push, notify, notifyAll, ANSWER_TIMEOUT };
+// How long one relayed frame is given to cross. It is not the interaction
+// timeout of a call: a frame is split into packets and a big one is a lot of
+// them, so the clock has to fit the whole of it rather than the pause between
+// two packets - which the communicator polices on its own.
+const DATA_TIMEOUT = 60000;
+
+// A frame the server carries rather than a message it composed: it arrived as an
+// ArrayBuffer, it leaves as the same one, and the communicator splits it into
+// packets at both ends - which is the whole reason the relay has a binary path.
+//
+// It is *sent*, not invoked: what would be waited for is an answer nobody needs,
+// and a stream cannot stop for one per frame.
+const pushData = function(server, sessionId, buffer) {
+    const client = server.clients.get(sessionId);
+    if (client === undefined) {
+        return false;
+    }
+    try {
+        client.get("com").send(buffer, [], DATA_TIMEOUT);
+        return true;
+    } catch (error) {
+        console.log("Cannot relay a frame to (" + sessionId + "):", error);
+        return false;
+    }
+};
+
+export { push, notify, notifyAll, pushData, ANSWER_TIMEOUT, DATA_TIMEOUT };
+export default { push, notify, notifyAll, pushData, ANSWER_TIMEOUT, DATA_TIMEOUT };

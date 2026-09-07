@@ -15,8 +15,31 @@ const createJoins = function(ctx) {
     // joinId -> {joinCode, isHost, name, isUnsupervised, isOnline}
     const records = new Map();
 
+    // what changed here is drawn elsewhere - the shares badge of the two bars is
+    // not a screen anybody opened, so it is told rather than left to ask
+    const events = new EventTarget();
+    const emitChange = function() {
+        events.dispatchEvent(new CustomEvent("change"));
+    };
+
     const joins = {
         "records": records,
+
+        // events: change
+        "addEventListener": events.addEventListener.bind(events),
+        "removeEventListener": events.removeEventListener.bind(events),
+
+        // how many of the devices on one side of this client are there right
+        // now. Presence is pushed, so this is an answer rather than an age.
+        countOnline(isHost) {
+            let count = 0;
+            for (const record of records.values()) {
+                if (record["isHost"] === isHost && record["isOnline"] === true) {
+                    count++;
+                }
+            }
+            return count;
+        },
 
         // what the two screens list. The records are local; only who is online
         // comes from the server, and only when somebody is looking.
@@ -42,6 +65,7 @@ const createJoins = function(ctx) {
                 }
             }
 
+            emitChange();
             return [...records.values()].filter(function(record) {
                 return record["isHost"] === isHost;
             });
@@ -72,6 +96,7 @@ const createJoins = function(ctx) {
                     console.error("Cannot connect join " + joinId + ":", error);
                 }
             }
+            emitChange();
         },
 
         // what a pair-accept hands back, on either side of it
@@ -87,13 +112,29 @@ const createJoins = function(ctx) {
             };
             await setJoin(detail["joinId"], record);
             records.set(detail["joinId"], {...record, "joinId": detail["joinId"], "isOnline": true});
+            emitChange();
             return records.get(detail["joinId"]);
+        },
+
+        // what the connection is called on this client. There is no call that
+        // carries a name to the server yet (dev/plans/ws-pairing-joins.md), so
+        // this is local: the other side goes on seeing whatever it named it.
+        async rename(joinId, name) {
+            const record = records.get(joinId);
+            if (record === undefined) {
+                return undefined;
+            }
+            await setJoin(joinId, {"name": name});
+            records.set(joinId, {...record, "name": name});
+            emitChange();
+            return records.get(joinId);
         },
 
         // drop it here only - for a join the server has already forgotten
         async forget(joinId) {
             records.delete(joinId);
             await removeJoin(joinId);
+            emitChange();
         },
 
         // and drop it on both sides, which is what the delete on a card means
@@ -108,6 +149,26 @@ const createJoins = function(ctx) {
             return records.get(joinId);
         }
     };
+
+    // the other side arrived, or went. Only the edges are sent, and a record
+    // this client no longer holds is nothing to draw.
+    ctx["server"].addEventListener("join-online", function(event) {
+        const record = records.get(event.detail?.["joinId"]);
+        if (record === undefined) {
+            return;
+        }
+        record["isOnline"] = (event.detail?.["isOnline"] === true);
+        emitChange();
+    });
+
+    // the socket that knew who was there is gone, and nobody is reachable again
+    // until connectAll() has presented the codes on the next one
+    ctx["server"].addEventListener("offline", function() {
+        for (const record of records.values()) {
+            record["isOnline"] = false;
+        }
+        emitChange();
+    });
 
     // the other side deleted it: this client keeps no card for a device that
     // will not answer again

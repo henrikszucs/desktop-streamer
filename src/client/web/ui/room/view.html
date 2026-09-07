@@ -1,78 +1,65 @@
+<!--
+    The room as the peer sees it: the stream, and one bar under it. The bar is
+    built here as far as its shape goes - what each entry offers is data in
+    ./index.js, so the two menus are filled at mount rather than written out
+    twice. See .claude/CLIENT.md.
+-->
 <div class="room-layout hide" id="screen-room">
     <div>
-        <video id="video" playsinline></video>
+        <video id="room-video" playsinline></video>
     </div>
-    <nav class="center-align tiny-space">
-        <button class="extra round circle error">
-                <i>close</i>
-            </button>
+
+    <!--
+        Three columns rather than one row: the tools stay in the middle of the
+        window whatever the leaving button beside them is worth in pixels.
+    -->
+    <nav class="room-bar tiny-space">
+        <div class="room-bar-side">
+            <!--
+                Only there when it is true: a connection that goes through the
+                server is slower than one that does not, and the room is the one
+                place where that is worth knowing without being asked.
+            -->
+            <div class="chip small-elevate hide" id="room-relay">
+                <i>cloud</i>
+                <span data-localization="room.relay.label">Relay</span>
+                <div class="tooltip right" data-localization="room.relay.tooltip">The two devices could not reach each other, so the connection goes through the server.</div>
+            </div>
+        </div>
         <nav class="toolbar">
-            <a>
-                <i>videocam_off</i>
-                <menu class="top">
-                    <li>
-                        Resoulution
-                        <menu>
-                            <li>360p</li>
-                            <li>480p</li>
-                            <li>720p</li>
-                            <li>1080p</li>
-                        </menu>
-                    </li>
-                    <li>
-                        Framerate
-                        <menu>
-                            <li>25</li>
-                            <li>30</li>
-                            <li>60</li>
-                        </menu>
-                    </li>
-                    <li>
-                        Enchanting
-                        <menu>
-                            <li>No enchante</li>
-                            <li>AI upscale</li>
-                        </menu>
-                    </li>
-                </menu>
+            <a tabindex="0" id="btn-room-audio">
+                <i id="btn-room-audio-icon">volume_up</i>
+                <div class="tooltip" id="btn-room-audio-tooltip" data-localization="room.audio.mute">Mute the sound</div>
             </a>
-            <a>
-                <i>volume_off</i>
+            <a tabindex="0" id="btn-room-control">
+                <i id="btn-room-control-icon">hand_gesture_off</i>
+                <div class="tooltip" id="btn-room-control-tooltip" data-localization="room.control.take">Take the keyboard and the mouse</div>
             </a>
-            <a>
-                <i>hand_gesture_off</i>
+            <!--
+                The line first and the picture after it: the bandwidth is what
+                the resolutions are priced against, so what it is set to is what
+                the menu below can offer at all - see the cap in ./index.js.
+            -->
+            <a tabindex="0" id="btn-room-bandwidth">
+                <i>speed</i>
+                <span id="room-bandwidth-label">8 Mbps</span>
+                <menu class="border top no-wrap" id="room-bandwidth-menu"></menu>
             </a>
-            <a>
-                <i>fullscreen</i>
+            <a tabindex="0" id="btn-room-resolution">
+                <i>aspect_ratio</i>
+                <span id="room-resolution-label">Auto</span>
+                <menu class="border top no-wrap" id="room-resolution-menu"></menu>
+            </a>
+            <a tabindex="0" id="btn-room-fullscreen">
+                <i id="btn-room-fullscreen-icon">fullscreen</i>
+                <div class="tooltip" id="btn-room-fullscreen-tooltip" data-localization="room.fullscreen.enter">Fullscreen</div>
             </a>
         </nav>
-    </nav>
-</div>
-
-<dialog class="" id="dialog-room-exit">
-    <nav>
-        <h5>Exit from room</h5>
-        <div class="max"></div>
-        <button class="circle transparent" id="btn-room-exit-close">
-            <i>close</i>
-        </button>
-    </nav>
-    <div class="no-border">
-        <p>Do you want to close from this room?</p>
-        <div class="space"></div>
-        <div class="dialog-room-exit-buttons">
-            <button class="tertiary round" id="btn-room-exit-cancel">
+        <div class="room-bar-side room-bar-end">
+            <button class="circle extra error" id="btn-room-leave">
                 <i>close</i>
-                <span>Cancel</span>
-            </button>
-            <button class="tertiary round" id="btn-room-exit-exit">
-                <i>close</i>
-                <span>Exit</span>
-            </button>
-            <button class="primary round" id="btn-room-exit-terminate">
-                <i>check</i>
-                <span>Exit and close</span>
+                <div class="tooltip left" data-localization="room.leave.tooltip">Leave the room</div>
             </button>
         </div>
-    </div>
-</dialog>
+    </nav>
+</div>

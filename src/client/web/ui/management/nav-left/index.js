@@ -16,12 +16,14 @@ const NavLeft = class extends View {
     btnDownload = null;
     btnShares = null;
     btnServices = null;
+    badgeShares = null;
 
     async mount(ctx) {
         this.menuBtn = document.getElementById("btn-menu-left");
         this.btnDownload = document.getElementById("btn-download");
         this.btnShares = document.getElementById("btn-shares");
         this.btnServices = document.getElementById("btn-services");
+        this.badgeShares = document.getElementById("badge-shares");
 
         // the rail opens wide on a window with the room for it, and stays as the
         // markup has it on one too small to carry the rail at all
@@ -50,6 +52,17 @@ const NavLeft = class extends View {
 
         ctx["server"].addEventListener("online", this.onOnline);
         this.onOnline();
+
+        ctx["joins"].addEventListener("change", this.onJoinsChange);
+        this.onJoinsChange();
+    };
+
+    // somebody is on a share this device hands out, and the machine sharing its
+    // screen is the one whose user is not looking at this bar. The badge is a
+    // dot rather than a count: what it has to say is that the device is not
+    // alone, and the screen behind the entry is where who is.
+    onJoinsChange = () => {
+        this.badgeShares.classList.toggle("hide", this.ctx["joins"].countOnline(true) === 0);
     };
 
     // services are a server feature, so the entry is only there once the

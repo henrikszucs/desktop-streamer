@@ -93,8 +93,13 @@ test("the answer carries these sections and no others", () => {
 });
 
 test("the server-side permissions stay server-side", () => {
+    // guestAllowRelay is answered: it is the fallback the client takes when the
+    // two devices cannot reach each other, and a fallback that is not there must
+    // not be waited for. What is still not answered is everything about *users* -
+    // userRegister and userRegisterRelay decide what the server does, not what
+    // this client may try.
     const answer = buildPublicConf(buildConf(), "0.0.4");
-    assert.deepEqual(Object.keys(answer["permissions"]).sort(), ["guestAllowJoin", "guestAllowShare", "isAuth", "isGoogleAuth"]);
+    assert.deepEqual(Object.keys(answer["permissions"]).sort(), ["guestAllowJoin", "guestAllowRelay", "guestAllowShare", "isAuth", "isGoogleAuth"]);
 });
 
 //
@@ -113,6 +118,9 @@ test("every guest permission is answered whether the configuration sets it or no
     assert.deepEqual(answer["permissions"], {
         "guestAllowShare": true,
         "guestAllowJoin": true,
+        // the one guest flag that is off unless it is asked for: it spends the
+        // server's own bandwidth
+        "guestAllowRelay": false,
         "isAuth": true,
         "isGoogleAuth": true
     });

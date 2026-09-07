@@ -124,6 +124,10 @@ loading while the socket is down must not hand the layer back. `dismiss()` is th
 exception — the version mismatch is terminal, so it clears every holder and
 leaves the overlay to the dialog that replaces it.
 
+The room's own wait (`room-loading`) is **not** a holder of this layer and never
+takes it: it waits for the other device rather than for the server, and it is a
+dialog *under* the layer, so a socket that drops replaces it — see The room.
+
 ## Permissions
 
 `ctx["ui"].permissions` is the `permissions` block of the `conf-get` answer,
@@ -281,6 +285,22 @@ side deleted it while this one was away. The devices and shares screens then rea
 the local records and ask the server only for who is online, which is the one
 thing a local record cannot know.
 
+Who is on the other side of a join arrives the same way: `join-online` is pushed
+to each side as the other's first socket appears and its last one goes, so
+presence is the server's answer rather than the age of the last screen that
+looked. `ctx["joins"]` keeps it on the record, drops all of it on `offline` -
+nobody is reachable until `connectAll()` has presented the codes on the next
+socket - and fires `change` for whatever draws it.
+
+**The shares entry of the two bars is what draws it today.** `countOnline(true)`
+is the devices on the host side of this client that are there right now, and the
+badge is shown while that is not zero: a machine sharing its screen is one whose
+user is looking at something else, so the bar says it is not alone and the screen
+behind the entry says who. It is a dot rather than a count - a beercss badge is
+`var(--error)` and `min` clips it to one - which is also why `nav-left` and the
+`menu` dialog of the small layout carry the same two lines against their own
+badge.
+
 **A device that comes back is answered wherever the shell happens to be.** That
 is the difference between a join request and a pair request: the pairing dialog
 is open by definition, a returning device arrives at a client that may be
@@ -300,6 +320,201 @@ it belongs to the socket it was asked on: the server drops it when the connectio
 goes, which is why the share dialog asks for one when it opens and gives it back
 when it closes. `createPairCode` hands back the code and nothing else, so nothing
 on either side refreshes it.
+
+## The connection
+
+`ctx["room"]` (`src/room.js`) is the live connection between this device and the
+other one, and it is the shell's rather than the room screen's: **the host holds
+one while it is on its own screens**, so a screen cannot own it.
+
+Nothing opens it by hand. The server puts the two sockets in a room when a
+request is accepted and tells them both (`room-open`), so an accepted pairing, a
+remembered device let back in and an unsupervised one nobody was asked about all
+arrive here down the same path - and the same message says which side this
+socket is. **Which side decides who offers**: the peer asked for the connection,
+so the peer opens it and the host answers. One rule, rather than a negotiation
+about who negotiates.
+
+What crosses the server is SDP and ICE and nothing else, one message per call
+(`room-signal`), so the server holds nothing between two of them. Three details
+are worth keeping, and two of them are the same mistake at different heights:
+
+- an ICE candidate that arrives **before the description it belongs to** is held
+  until one is set - both ends start gathering at once and the messages cross;
+- a signal that arrives **before this side's own `room-open`** is held by room id
+  and replayed when it comes. The two ends are told about the room in two
+  separate messages and the offer chases them, so on a slow or backgrounded
+  socket the first signal can land first - and a dropped offer is a negotiation
+  that never starts, which is a wait that never ends;
+- the *null* candidate that ends gathering is not sent, since it says nothing the
+  other end needs.
+
+A description that cannot be *sent* ends the attempt (`leave("failed")`) rather
+than leaving a connection nobody is negotiating: there is nothing after it to
+recover with. Every step logs one line - `Room <id> open as peer`, `sent offer`,
+`is connecting`, `is connected`, `closed (reason)` - so a connection that does not
+come up says how far it got, on both machines.
+
+**There is no TURN server in this project: the WebSocket server is the relay.**
+A connection that cannot be made directly is carried by the same socket both ends
+already hold, if the server allows one. ICE is given `DIRECT_TIMEOUT` (12 s, and an ICE `failed` before that), and
+then what would have crossed between the two devices crosses the server instead
+(`room-data`). Three things are worth keeping straight:
+
+- **the clock is the client's, not ICE's.** A connection that never gathers a
+  usable candidate reports nothing at all, so waiting for `failed` is waiting for
+  a message that may never come;
+- **both ends have to give up together**, and they will not do it at the same
+  moment: whoever gets there first sends a `relay` signal and the other follows
+  on the spot. A first relayed message is taken as the same statement, for the
+  case where that signal is the one that went missing;
+- **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
+  answered to every client in `permissions` (it is off unless the configuration
+  says otherwise, since it spends the server's own bandwidth), and where it is
+  off a failed direct attempt ends the room rather than hanging on one;
+- **a direct connection that is *lost* is the same case as one that was never
+  made.** A channel that closes mid-room says nothing about why - the other end
+  leaving and the path between them breaking look identical from there, and what
+  tells them apart arrives on the socket rather than on the channel - so the room
+  is given `CLOSE_GRACE` (1 s) to hear a `room-close`, and what is still a room
+  afterwards moves onto the relay instead of ending. The screen does not blink:
+  the state stays `connected` and only the indicator appears.
+
+`send()` is the same call in both modes and `message` the same event, so nothing
+above the transport knows which it is on. **On the relay it has no size limit**:
+whatever is handed in becomes a binary frame (`buildRoomFrame` in
+`src/server.js`, bytes as they are and anything else JSON-encoded), and the
+communicator splits that into packets and puts it together again at the far end -
+which a JSON message is *not* subject to, and is the whole reason the frame
+exists. Two things follow that the stream work has to know:
+
+- **frames can finish out of order.** `send()` resolves when the last packet has
+  left, not when the far end has the message, so a big frame is still being
+  reassembled while a small one sent after it arrives whole. Anything that cares
+  about order carries its own sequence.
+- **both legs are the same protocol.** The data channel is wrapped in a
+  `Communicator` exactly as the socket is, so packets, acknowledgments and
+  reassembly happen on a direct connection too - which is what lets `send()` be
+  one call with one behaviour, and lifts the per-message ceiling a raw
+  `RTCDataChannel` has (a few hundred kilobytes). Its packet is 16 KB, the size
+  every browser agrees on, against the socket's 1 KB: no proxy sits in the middle
+  of this one. The room bar is the exception, and
+deliberately: a relayed connection is slower and is worth saying so - the
+indicator is in the empty track the centring already leaves, and it is only ever
+shown when it is true, because an indicator for the expected case is one more
+light to learn to ignore.
+
+**"Connected" means the two ends have exchanged packets**, not that ICE says so
+and not only that the channel opened: the channel opening says *this* end is
+ready, and the `sideSync`/`timeSync` that follows says the two of them actually
+reached each other, which is later and truer. A channel that opens but cannot be
+synced is not a connection - it is left to the direct clock, which takes the
+relay - so the sync failing must never report `connected`.
+
+The communicator is built when the channel is wired rather than when it opens:
+the other end opens at its own moment and can sync into this one first, and a
+packet that arrives before there is anything to receive it is a negotiation that
+hangs. It carries no media and nothing is sent on it yet - it
+is the handshake that proves the path, and the seam the control protocol and the
+stream land on (`getConnection()`/`getChannel()`).
+
+The two ways out are not the same. `leave()` is this side deciding: it tears the
+connection down **and** tells the server, so the other end hears `room-close` and
+stops. A `room-close` that arrives from the server is the other end having gone,
+and only takes this side down. Either way the state ends at `closed` and the
+event says why. One room at a time on this client - a second `room-open` replaces
+the first - which the server does not impose and a host with two peers will
+eventually need.
+
+## The room
+
+The room is the **peer's** side of a connection - the one looking at somebody
+else's screen - and the bar under the stream is that peer's half of it: what it
+hears, what it drives, and how much of the line the host is allowed to spend on
+it. Nothing carries any of it to a host yet, so the whole bar ends in one
+`settings` event on the screen and a `getSettings()` beside it, which is the
+seam the stream is wired to when it lands.
+
+**The bandwidth is the cap, and the resolution is priced against it.** One table
+in `ui/room/index.js` says what each picture costs to send, and the Mbps the peer
+allows is what decides which of them may be asked for at all - a resolution the
+line cannot carry is not paid for in sharpness but in a picture that arrives late
+and in pieces. So the entries over the cap are greyed and inert with their price
+beside them (an entry that is simply gone says nothing - see Permissions), the
+`automatic` entry is the cap itself and follows it, and a resolution that was
+chosen by name is brought **down** when the bandwidth moves under it, with the
+snackbar saying which one it is now. There is no path that leaves the bar showing
+a picture that is not being asked for.
+
+**A wait that is not going to end stops claiming to be one.** The screen gives
+the other device `CONNECT_TIMEOUT` (20 s, longer than ICE needs on any path that
+works) and then swaps the dialog's title, text and bar for *not connected* -
+nothing here retries, so what runs out is the claim that something is happening,
+and the quit button becomes the only thing left to do. A connection that drops
+later goes to the same state.
+
+**The wait ends when the connection does.** `room-loading` is up while
+`ctx["room"]` is not connected: the screen listens for `connected` and lifts it,
+and for `closed` and puts it back with the snackbar saying so - a connection that
+drops leaves the peer looking at the wait it came in through, with the quit
+button in it, rather than at a bar that controls nothing. `open()` asks
+`isConnected()` rather than assuming: the socket dropping and coming back reopens
+this screen, and the connection between the two devices does not run through that
+socket.
+
+**There are two waits and they are not the same wait.** The shell's loading
+layer is the one that covers a server that has gone away; `room-loading` is the
+wait for the *other device*, and it is an ordinary dialog under it (`dialog` is
+z-index 102 in `index.css`, the layer is 300). That ordering is the whole
+behaviour: while the socket is down the shell closes every dialog and raises its
+own layer, so a client that cannot reach a server is never also claiming to be
+reaching a host - and when the socket comes back, `loadPath()` opens the room
+again and its own wait returns with it.
+
+**A room is entered *for* something**, and either the path or the flow says so.
+`/room/<joinId>` is a remembered device - an address this client can be sent back
+to - and the room waits when the route carries one. A pairing the host did not
+remember has no id anywhere to put in a URL, so the dialog that accepted it
+navigates with `isConnecting` instead (`navigate(path, params)`; the params are
+gone after a reload, which is right - so is the pairing). `/room` typed by hand is
+neither, and is the bar with nothing in front of it.
+
+`setConnecting(false)` is what ends the wait, and nothing calls it yet - the
+thing that would is the stream.
+
+**An accepted request now moves both sides, and they move to different places.**
+The peer goes into the room it was asking for (`room/joining`, which handles the
+pairing, the remembered join and the unsupervised one that the server answers in
+the first call). The host goes to its own list: a yes it asked to *remember* is a
+connection it now keeps, so `room/create` lands on `management/shares` with that
+connection's settings open on it, because naming it is the one thing worth doing
+to a connection the moment it is made. A yes that was not remembered leaves
+nothing behind, so that host stays where it is - and a device let back in through
+`join-request` does not move the host either, since it was not deciding anything
+new. An unsupervised join never reaches the host at all.
+
+The wait carries a **quit** button, and it is a button rather than a question:
+the case it exists for is a host that is answering nothing, so asking one more
+thing that needs an answer is the one option it cannot offer. It dispatches
+`quit`, the room leaves, and the close guard goes with the screen.
+
+**A room is left through a question, and there are two of them** - the same
+question, asked by whoever owns the window:
+
+- the leaving button on the bar opens `room-exit`, which decides nothing and
+  hands its answer back as `done`, the way `room/request` does;
+- the window's own close button is the shell's to answer. A browser tab is held
+  by `beforeunload`, and the wording there has not been the page's to write for
+  years - only whether there is a dialog at all. Electron does **not** do the
+  same thing: a renderer that holds a close through `beforeunload` cancels it
+  *silently*, which would leave a window nobody could shut, so the desktop shell
+  is handed the strings instead (`set-close-guard`) and asks natively from
+  `main.js`. That is why the room translates the question itself and passes it
+  down rather than letting the shell word it.
+
+The guard belongs to being in the room and not to the way it is left:
+`open()` takes it and `close()` gives it back, so a navigation, a dropped
+connection and the leaving button all end it the same way.
 
 ## The registry
 
@@ -352,8 +567,9 @@ longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |
-| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live; what an accepted request leads *into* (the room, the stream) is not | `dev/plans/ws-pairing-joins.md` |
-| renaming a device, and the *settings* entry on both kinds of card | `dev/plans/ws-pairing-joins.md` |
+| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and an accepted request now opens the room on the peer and the connection's settings on the host; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
+| `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
+| `management/connection` names a connection **locally** — there is no call that carries a name to the other side, so each end sees its own; the *settings* entry of a `devices` card opens nothing yet, the same dialog is what it wants | `dev/plans/ws-pairing-joins.md` |
 | `management/account/*` (information, sessions, delete) | `dev/plans/ws-accounts.md` |
 | `nav-top` `setAccounts()` — the list is the guest alone | `dev/plans/ws-accounts.md` |
 

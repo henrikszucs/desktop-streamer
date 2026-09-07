@@ -17,6 +17,7 @@ import { handleAPI } from "./api.js";
 import { buildPublicConf } from "./handlers/conf.js";
 import { removePairCode, releasePairCodes } from "./handlers/pairing.js";
 import { detachJoins, releaseJoins } from "./handlers/joins.js";
+import { detachRooms, releaseRooms } from "./handlers/rooms.js";
 import { startDatabase, stopDatabase } from "./database.js";
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
@@ -33,6 +34,7 @@ const ServerWS = class {
     clients = new Map();            // key-sessionId, value-state object of the client
     pairs = new Map();              // key-pairCode, value-state object of the pair (see ./handlers/pairing.js)
     joins = new Map();              // key-joinId, value-state of a join a socket holds open (see ./handlers/joins.js)
+    rooms = new Map();              // key-roomId, value-the two sockets an accept put together (see ./handlers/rooms.js)
 
     // the rows behind the joins, and the only thing here that outlives the
     // process - see ./database.js
@@ -145,14 +147,24 @@ const ServerWS = class {
             "sendThreads": 16
         });
 
-        // create state, the session id is taken before the first await
+        // Create state, the session id is taken before the first await.
+        //
+        // `isRelayAllowed` is a permission and not a message: it is answered
+        // here, once, and read off this Map by the relay rather than looked up
+        // per message it carries (see handlers/rooms.js). Every client is a
+        // guest until dev/plans/ws-accounts.md lands, so the configuration is
+        // the whole answer today; when an account can sign in, this is the slot
+        // its row fills - read once for the session, because a permission is not
+        // expected to change under a live connection.
         /*{
             "com": Communicator,
-            "ws": WebSocket
+            "ws": WebSocket,
+            "isRelayAllowed": boolean
         }*/
         const client = new Map([
             ["com", com],
-            ["ws", ws]
+            ["ws", ws],
+            ["isRelayAllowed", this.confPublic["permissions"]?.["guestAllowRelay"] === true]
         ]);
         this.clients.set(sessionId, client);
 
@@ -186,6 +198,7 @@ const ServerWS = class {
                 return;     // a second close event after the cleanup
             }
             removePairCode(this, sessionId);
+            detachRooms(this, sessionId);
             detachJoins(this, sessionId);
             client.get("com").release();
             this.clients.delete(sessionId);
@@ -288,6 +301,7 @@ const ServerWS = class {
 
         // drop the connection state, the pair codes with their timeouts among it
         releasePairCodes(this);
+        releaseRooms(this);
         releaseJoins(this);
         this.clients.clear();
 

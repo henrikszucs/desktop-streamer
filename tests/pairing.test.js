@@ -20,6 +20,8 @@ const buildServer = function(sessionIds = ["session-1"], guestAllowShare = true,
     return {
         "clients": clients,
         "pairs": new Map(),
+        "joins": new Map(),
+        "rooms": new Map(),
         "confPublic": {
             "permissions": {
                 "guestAllowShare": guestAllowShare,

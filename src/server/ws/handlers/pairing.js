@@ -10,6 +10,7 @@
 import { generateId } from "../../common.js";
 import { push, notify, ANSWER_TIMEOUT } from "../notify.js";
 import { createJoin, attachJoin } from "./joins.js";
+import { createRoom } from "./rooms.js";
 
 // the code is read out loud, typed on a phone keypad and copied by hand, so it
 // is six digits and nothing else - no letter that can be misread as a digit and
@@ -383,6 +384,12 @@ const pairAccept = async function(ctx) {
 
     notify(server, peerSessionId, peerAnswer);
     ctx["messageObj"].send(hostAnswer);
+
+    // and the two of them are now in a room. It is told to both sides on its own
+    // rather than carried in these two answers: the host of an unsupervised join
+    // is never asked anything, so there is no answer to put it in there, and one
+    // way in is one way for a client to handle it - see handlers/rooms.js.
+    createRoom(server, sessionId, peerSessionId, join?.["joinId"] ?? "");
 };
 
 // no, from either side of it. From the host it is a decision and the code is

@@ -149,7 +149,7 @@ const createUI = function(ctx) {
         "snackbar": snackbar,
         "permissions": permissions,
         "env": {"browser": browser, "width": width, "sizeS": sizeS, "sizeM": sizeM},
-        "navigate": function(path) { return ctx["router"].navigate(path); },
+        "navigate": function(path, params) { return ctx["router"].navigate(path, params); },
         "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
         "closeDialog": function(id) { return ctx["router"].closeDialog(id); },
         "closeDialogs": function() { return ctx["router"].closeDialogs(); },

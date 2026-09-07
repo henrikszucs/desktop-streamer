@@ -1,0 +1,26 @@
+{
+    "room": {
+        "loading": {
+            "title": {
+                "en": "Connecting...",
+                "hu": "Kapcsolódás..."
+            },
+            "subtitle": {
+                "en": "Waiting for the other device, please wait...",
+                "hu": "Várakozás a másik eszközre, kérlek várj..."
+            },
+            "failedTitle": {
+                "en": "Not connected",
+                "hu": "Nincs kapcsolat"
+            },
+            "failed": {
+                "en": "The other device could not be reached.",
+                "hu": "A másik eszköz nem érhető el."
+            },
+            "quit": {
+                "en": "Quit",
+                "hu": "Kilépés"
+            }
+        }
+    }
+}

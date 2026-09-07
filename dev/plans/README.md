@@ -32,6 +32,7 @@ against an older configuration shape and never ran against the current schema
 | `handlers/connection.js` | `ping`, `session-get` |
 | `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
 | `handlers/joins.js` | `join-connect`, `join-list`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
+| `handlers/rooms.js` | `room-signal`, `room-data`, `room-leave` |
 
 Each is one function in a group file under `src/server/ws/handlers/`, reached
 through the dispatch table in `src/server/ws/api.js` - a new call is a function
@@ -53,12 +54,14 @@ lists where these plan files disagree with that code.
 | --- | --- | --- |
 | [ws-client-config.md](ws-client-config.md) | `conf-get` and the config shape the whole WS server reads | the call is done; the shape questions in it are open |
 | [ws-database.md](ws-database.md) | knex connection and the schema created on first boot | the connection and the `joins` table are done; the accounts tables are not |
-| [ws-pairing-joins.md](ws-pairing-joins.md) | pair codes, joins and the WebRTC signaling relay | pairing and joins are done; the signaling relay is not |
+| [ws-pairing-joins.md](ws-pairing-joins.md) | pair codes, joins and the WebRTC signaling relay | done, the relay in a different shape than planned - see the file |
 | [ws-accounts.md](ws-accounts.md) | e-mail, Google sign-in, persistent sessions, user data | open, and what the three above are still waiting on |
 
-What is left is one order: accounts, then the relay. Everything a connection can
-ask about *itself* or about the two devices at either end of a pairing is
-answered; nothing that needs a user behind it is, and nothing carries media yet.
+What is left is accounts. Everything a connection can ask about *itself*, about
+the two devices at either end of a pairing, and about the connection they
+negotiate is answered; nothing that needs a user behind it is, and **nothing
+carries media yet** - the relay carries the negotiation, and what the two ends do
+with the connection once it stands is still to be written.
 
 ## Client
 

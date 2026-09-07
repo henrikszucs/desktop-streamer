@@ -1,0 +1,22 @@
+{
+    "room": {
+        "exit": {
+            "title": {
+                "en": "Leave the room",
+                "hu": "Kilépés a szobából"
+            },
+            "question": {
+                "en": "Do you want to leave this room?",
+                "hu": "Biztosan kilépsz ebből a szobából?"
+            },
+            "cancel": {
+                "en": "Stay",
+                "hu": "Maradok"
+            },
+            "confirm": {
+                "en": "Leave",
+                "hu": "Kilépés"
+            }
+        }
+    }
+}

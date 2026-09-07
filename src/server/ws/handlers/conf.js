@@ -23,6 +23,10 @@ const buildPublicConf = function(conf, version) {
         "permissions": {
             "guestAllowShare": permissions["guestAllowShare"] ?? true,
             "guestAllowJoin": permissions["guestAllowJoin"] ?? true,
+            // whether this server will carry the data of two devices that cannot
+            // reach each other. The client has to know before it fails over -
+            // a fallback that does not exist is a wait, and a wait says nothing
+            "guestAllowRelay": permissions["guestAllowRelay"] ?? false,
             "isAuth": isAuth,
             "isGoogleAuth": isGoogleAuth
         },
@@ -56,6 +60,7 @@ const confGet = function(ctx) {
         "version": string,
         "webrtc": {"iceServers": string[]},
         "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean,
+                        "guestAllowRelay": boolean,
                         "isAuth": boolean, "isGoogleAuth": boolean},
         "pairing": {"answerTimeout": number},
         "auth": {"google": {"clientId": string}}   (only when configured)

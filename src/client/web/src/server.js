@@ -12,13 +12,81 @@ import { conf } from "./conf.js";
 // what the server may say on its own, each handed on as an event of that name
 const PUSH_EVENTS = new Set([
     "pair-request", "pair-accept", "pair-reject", "pair-cancel", "pair-code",
-    "join-request", "join-accept", "join-reject", "join-cancel", "join-remove"
+    "join-request", "join-accept", "join-reject", "join-cancel", "join-remove",
+    "join-online",
+    "room-open", "room-signal", "room-data", "room-close"
 ]);
+
+// The binary relay frame, the same bytes the server reads (see
+// src/server/ws/handlers/rooms.js):
+//
+//   [0]      the frame kind - 1 for bytes, 2 for a JSON payload
+//   [1..10]  the room id, one byte per character
+//   [11..]   the payload
+//
+// This is what a payload of any size travels as, and why there are two kinds:
+// the communicator splits an ArrayBuffer into packets and puts it back together
+// at the other end, and does none of that for a JSON message. So everything the
+// relay carries becomes bytes - an object is encoded on the way in and decoded
+// on the way out - and nothing anybody sends has a size to stay under.
+const FRAME_DATA = 1;
+const FRAME_JSON = 2;
+const ROOM_ID_LENGTH = 10;
+const FRAME_HEADER = 1 + ROOM_ID_LENGTH;
+
+// how long one frame is given to cross, whole rather than packet by packet
+const DATA_TIMEOUT = 60000;
+
+const buildRoomFrame = function(roomId, data) {
+    const isBinary = (data instanceof ArrayBuffer);
+    const payload = (isBinary === true
+        ? new Uint8Array(data)
+        : new TextEncoder().encode(JSON.stringify(data)));
+
+    const bytes = new Uint8Array(FRAME_HEADER + payload.byteLength);
+    bytes[0] = (isBinary === true ? FRAME_DATA : FRAME_JSON);
+    for (let i = 0; i < ROOM_ID_LENGTH; i++) {
+        bytes[1 + i] = roomId.charCodeAt(i);
+    }
+    bytes.set(payload, FRAME_HEADER);
+    return bytes.buffer;
+};
+
+// and back: the room it belongs to and the payload, or nothing for a frame this
+// client has no way to read
+const readRoomFrame = function(buffer) {
+    if (buffer.byteLength <= FRAME_HEADER) {
+        return undefined;
+    }
+    const header = new Uint8Array(buffer, 0, FRAME_HEADER);
+    if (header[0] !== FRAME_DATA && header[0] !== FRAME_JSON) {
+        return undefined;
+    }
+    let roomId = "";
+    for (let i = 1; i < FRAME_HEADER; i++) {
+        roomId += String.fromCharCode(header[i]);
+    }
+
+    const payload = buffer.slice(FRAME_HEADER);
+    if (header[0] === FRAME_DATA) {
+        return {"roomId": roomId, "data": payload};
+    }
+
+    // what went in as an object comes out as one - a frame that cannot be read
+    // back is a frame from something this client does not understand
+    try {
+        return {"roomId": roomId, "data": JSON.parse(new TextDecoder().decode(payload))};
+    } catch (error) {
+        console.error("Cannot read a relayed message:", error);
+        return undefined;
+    }
+};
 
 // events:
 // online, offline, version-mismatch,
 // pair-request, pair-accept, pair-reject, pair-cancel, pair-code,
-// join-request, join-accept, join-reject, join-cancel, join-remove
+// join-request, join-accept, join-reject, join-cancel, join-remove, join-online,
+// room-open, room-signal, room-data, room-close
 const Server = class extends EventTarget {
     address = "";
     ws = null;
@@ -287,13 +355,89 @@ const Server = class extends EventTarget {
         return messageObj.error === "" && messageObj.data?.["success"] === true;
     };
 
+    //
+    // the room
+    //
+    // one signal to the other end of the room this connection is in. The server
+    // carries it and reads nothing of it: what is inside is between the two
+    // clients (see src/room.js).
+    async roomSignal(roomId, signal) {
+        const messageObj = this.communicator.invoke({"type": "room-signal", "roomId": roomId, "signal": signal});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+    };
+
+    // the fallback, when the two ends could not reach each other: what would
+    // have gone over the connection goes through the server instead. It is
+    // refused unless the configuration allows it (`guestAllowRelay`), which is
+    // why the caller is told rather than left to wonder.
+    async roomData(roomId, data) {
+        const messageObj = this.communicator.invoke({"type": "room-data", "roomId": roomId, "data": data});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+    };
+
+    // The relay's own path, and the one with no size to stay under: whatever is
+    // handed in becomes bytes and the communicator splits those into packets, so
+    // a frame is as big as the two ends want it to be.
+    //
+    // It is *sent* rather than invoked: the answer would be one more round trip
+    // per frame and a stream cannot wait for one. What it reports is that the
+    // frame left, which is what backpressure needs.
+    async roomDataSend(roomId, data) {
+        const frame = buildRoomFrame(roomId, data);
+        const messageObj = this.communicator.send(frame, [frame], DATA_TIMEOUT);
+        await messageObj.wait();
+        return messageObj.error === "";
+    };
+
+    // this side is done with the room. A room that is already gone is not an
+    // error - it is what the caller wanted - so this one only reports.
+    async roomLeave(roomId) {
+        if (this.isOnline === false) {
+            return;
+        }
+        const messageObj = this.communicator.invoke({"type": "room-leave", "roomId": roomId});
+        await messageObj.wait();
+    };
+
     // what the server says on its own. The pairing flow is the whole of it
     // today: the host hears that somebody wants in, both sides hear how it
     // ended, and the host hears the code it was given in place of a refused
-    // one. Each becomes an event of the same name, with the message as detail.
+    // one - and either side of a remembered join hears the other arrive or go.
+    // The room is the other half: both ends are told they are in one, what the
+    // other is signaling, and when it is over.
+    // Each becomes an event of the same name, with the message as detail.
     async handleIncoming(messageObj) {
         await messageObj.wait();
         const message = messageObj.data;
+
+        // a frame the relay carried, which has no type of its own - it is the
+        // same "room-data" the JSON call makes, with an ArrayBuffer in it
+        if (message instanceof ArrayBuffer) {
+            const frame = readRoomFrame(message);
+            if (typeof frame === "undefined") {
+                console.warn("Unhandled incoming frame of " + message.byteLength + " bytes");
+                return;
+            }
+            this.dispatchEvent(new CustomEvent("room-data", {"detail": {
+                "type": "room-data",
+                "roomId": frame["roomId"],
+                "data": frame["data"]
+            }}));
+            return;
+        }
+
         const type = message?.["type"];
         if (PUSH_EVENTS.has(type) === false) {
             console.warn("Unhandled incoming message:", message);
@@ -302,5 +446,5 @@ const Server = class extends EventTarget {
         this.dispatchEvent(new CustomEvent(type, {"detail": message}));
     };
 };
-export { Server };
+export { Server, buildRoomFrame, readRoomFrame, FRAME_DATA, FRAME_JSON, FRAME_HEADER };
 export default Server;
