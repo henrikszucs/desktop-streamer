@@ -30,6 +30,13 @@ const RESOLUTIONS = [
 // bandwidth moves - which is what a peer that has not thought about it wants
 const AUTO = "auto";
 
+// the entry an id stands for, or nothing for AUTO, which is not one of them
+const resolutionOf = function(id) {
+    return RESOLUTIONS.find(function(resolution) {
+        return resolution["id"] === id;
+    });
+};
+
 // what the bar opens on: the room is joined before anybody has an opinion about
 // it, and 8 Mbps is a picture at 1080p rather than a choice to make first
 const DEFAULT_BANDWIDTH = 8;
@@ -58,6 +65,25 @@ const RoomScreen = class extends Screen {
     // the wait, and the clock that decides what it says
     loadingView = null;
     connectTimeoutId = -1;
+
+    // the stage and the bar over it, all taken in mount()
+    video = null;
+    bar = null;
+    relayChip = null;
+    audioBtn = null;
+    audioIcon = null;
+    audioTooltip = null;
+    controlBtn = null;
+    controlIcon = null;
+    controlTooltip = null;
+    bandwidthBtn = null;
+    bandwidthLabel = null;
+    bandwidthMenu = null;
+    resolutionBtn = null;
+    resolutionLabel = null;
+    resolutionMenu = null;
+    fullscreenIcon = null;
+    fullscreenTooltip = null;
 
     // the whole of what this bar decides, and what the `settings` event carries
     settings = {
@@ -216,9 +242,7 @@ const RoomScreen = class extends Screen {
     // the one that was chosen by name, or nothing for the entry that has no name
     // of its own
     chosen() {
-        return RESOLUTIONS.find((resolution) => {
-            return resolution["id"] === this.settings["resolution"];
-        });
+        return resolutionOf(this.settings["resolution"]);
     };
 
     // and what is actually asked for: `auto` is the cap, and a named one is
@@ -281,9 +305,7 @@ const RoomScreen = class extends Screen {
     // that would ask for one is inert and carries what it would cost, so this is
     // only ever reached for one the line can pay for
     setResolution(id) {
-        const wanted = RESOLUTIONS.find(function(resolution) {
-            return resolution["id"] === id;
-        });
+        const wanted = resolutionOf(id);
         if (typeof wanted !== "undefined" && wanted["bandwidth"] > this.settings["bandwidth"]) {
             return;
         }
@@ -329,9 +351,7 @@ const RoomScreen = class extends Screen {
 
         for (const item of this.resolutionMenu.children) {
             const id = item.dataset["resolution"];
-            const entry = RESOLUTIONS.find(function(resolution) {
-                return resolution["id"] === id;
-            });
+            const entry = resolutionOf(id);
             const isBlocked = (typeof entry !== "undefined" && entry["bandwidth"] > this.settings["bandwidth"]);
             const isCurrent = (id === this.settings["resolution"]);
 
@@ -405,11 +425,8 @@ const RoomScreen = class extends Screen {
     //
     // waiting for the other device
     //
-    // the room is on screen under it - the bar, the stage, everything - because
-    // what is being waited for is the picture and not the room. What ends the
-    // wait is the stream arriving, so nothing reports one yet: until
-    // dev/plans/ws-pairing-joins.md lands, a room entered for a join waits here
-    // until the peer quits.
+    // the room is on screen under it, because what is waited for is the picture
+    // and not the room. Nothing reports one yet (dev/plans/ws-pairing-joins.md).
     async setConnecting(isConnecting, isFailed = false) {
         this.isConnecting = (isConnecting === true);
         clearTimeout(this.connectTimeoutId);
@@ -514,14 +531,9 @@ const RoomScreen = class extends Screen {
         this.setCloseGuard(true);
 
         // A room is entered *for* something, and either the path or the flow
-        // says so: /room/<id> is a remembered device, and a pairing that was
-        // never remembered has no id at all, so the dialog that accepted it says
-        // `isConnecting` instead. /room on its own is neither - the screen with
-        // nothing behind it, which is how the bar is reached today.
-        //
-        // A connection that is already up is not waited for: the socket dropping
-        // and coming back reopens this screen, and the connection between the
-        // two devices does not go through that socket.
+        // says so - see CLIENT.md, "The room". A connection that is already up
+        // is not waited for: the socket that reopened this screen is not the one
+        // carrying it.
         const joinId = params?.["path"]?.[0];
         const isEntered = (params?.["isConnecting"] === true || (typeof joinId === "string" && joinId !== ""));
         this.drawRelay(this.ctx["room"].isRelay());

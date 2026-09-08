@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, joinConnect, joinList, joinRequest, joinAccept, joinReject, joinDelete } from "../src/server/ws/handlers/joins.js";
+import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
 
 // a remembered join is a row, so these run against a real SQLite file - which
 // makes them the only cover database.js has as well
@@ -156,6 +156,73 @@ test("join-list answers the joins this connection is on", async () => {
         "isUnsupervised": false,
         "isOnline": true
     }]);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+//
+// the name
+//
+test("join-rename writes the caller's own column and leaves the other alone", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    const hostCtx = buildCtx(server, "host", {"joinId": join["joinId"], "name": "Laptop"});
+    await joinRename(hostCtx);
+    assert.equal(hostCtx.answers[0]["success"], true);
+    assert.equal(hostCtx.answers[0]["name"], "Laptop");
+
+    const peerCtx = buildCtx(server, "peer", {"joinId": join["joinId"], "name": "Office desktop"});
+    await joinRename(peerCtx);
+    assert.equal(peerCtx.answers[0]["success"], true);
+
+    // the host named the peer, the peer named the host: two columns, and
+    // neither side was told anything about the other's
+    const row = await db("joins").where("join_id", join["joinId"]).first();
+    assert.equal(row["peer_name"], "Laptop");
+    assert.equal(row["host_name"], "Office desktop");
+    assert.equal(pushesOf(server, "peer", "join-rename").length, 0);
+    assert.equal(pushesOf(server, "host", "join-rename").length, 0);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("join-connect hands the name back to the side that wrote it", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    await joinRename(buildCtx(server, "host", {"joinId": join["joinId"], "name": "Laptop"}));
+
+    const ctx = buildCtx(server, "host", {"joinCode": join["hostCode"]});
+    await joinConnect(ctx);
+    assert.equal(ctx.answers[0]["name"], "Laptop");
+
+    const peerCtx = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(peerCtx);
+    assert.equal(peerCtx.answers[0]["name"], "");
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("join-rename refuses a join this socket is not on, and a name that is not one", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    const strangerCtx = buildCtx(server, "other", {"joinId": join["joinId"], "name": "Laptop"});
+    await joinRename(strangerCtx);
+    assert.equal(strangerCtx.answers[0]["error"], "unknown-join");
+
+    for (const name of [undefined, 7, "x".repeat(JOIN_NAME_MAX + 1)]) {
+        const ctx = buildCtx(server, "host", {"joinId": join["joinId"], "name": name});
+        await joinRename(ctx);
+        assert.equal(ctx.answers[0]["error"], "invalid-name");
+    }
+
+    const row = await db("joins").where("join_id", join["joinId"]).first();
+    assert.equal(row["peer_name"], "");
 
     releaseJoins(server);
     await dropDatabase(db, file);

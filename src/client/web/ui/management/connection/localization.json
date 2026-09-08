@@ -9,8 +9,8 @@
             "hu": "Név"
         },
         "nameHint": {
-            "en": "This name is only stored on this device.",
-            "hu": "Ez a név csak ezen az eszközön tárolódik."
+            "en": "Only you see this name. The other device keeps its own.",
+            "hu": "Ezt a nevet csak te látod. A másik eszköz a sajátját tartja meg."
         },
         "delete": {
             "en": "Delete",
@@ -31,6 +31,10 @@
         "unknown": {
             "en": "This connection is not held by this device any more.",
             "hu": "Ezt a kapcsolatot már nem tárolja ez az eszköz."
+        },
+        "failed": {
+            "en": "The connection could not be saved.",
+            "hu": "A kapcsolatot nem sikerült menteni."
         }
     }
 }

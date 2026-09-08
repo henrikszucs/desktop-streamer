@@ -282,7 +282,7 @@ merged into the dispatch table in `api.js`.
 | `handlers/conf.js` | `conf-get` |
 | `handlers/connection.js` | `ping`, `session-get` |
 | `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
-| `handlers/joins.js` | `join-connect`, `join-list`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
+| `handlers/joins.js` | `join-connect`, `join-list`, `join-rename`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
 | `handlers/rooms.js` | `room-signal`, `room-data`, `room-leave`, and every **binary** message (see below) |
 | anything else | answered `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
 
@@ -310,7 +310,7 @@ could not carry (one message, one frame) a binary frame can.
 
 | type | request | answer |
 | --- | --- | --- |
-| `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "isAuth": bool, "isGoogleAuth": bool}, "pairing": {"answerTimeout": number}, "auth": {"google": {"clientId": string}}}` |
+| `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "guestAllowRelay": bool, "isAuth": bool, "isGoogleAuth": bool}, "pairing": {"answerTimeout": number}, "auth": {"google": {"clientId": string}}}` |
 | `ping` | - | `{"success": true, "timestamp": number}` |
 | `session-get` | - | `{"success": true, "sessionId": string}` |
 
@@ -333,7 +333,7 @@ client never carries a default of its own.
 | --- | --- | --- |
 | `guestAllowShare` | `true` | a guest may share this device |
 | `guestAllowJoin` | `true` | a guest may join someone else's room |
-| `guestAllowRelay` | `false` | this server will carry the data of two devices that cannot reach each other (`room-data`), which is its own bandwidth - so it is the one guest flag that is off until it is asked for. The client is told because a fallback that is not there must not be waited for; the negotiation itself (`room-signal`) is never gated. It is answered **once per connection**, into the client state at `clientConnect`, and read from there by every relayed message - never re-read from the configuration or a row while the socket is live |
+| `guestAllowRelay` | `false` | this server will carry the data of two devices that cannot reach each other, which is its own bandwidth - so it is the one guest flag that is off until it is asked for. It gates the **two relayed payload paths**: the `room-data` call and the binary relay frame, which is the one the client actually streams over. The negotiation itself (`room-signal`) is never gated. The client is told because a fallback that is not there must not be waited for. It is answered **once per connection**, into the client state at `clientConnect`, and read from there by every relayed message - never re-read from the configuration or a row while the socket is live |
 | `isAuth` | - | this server has some way to sign in, so an account is worth offering |
 | `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |
 
@@ -353,10 +353,12 @@ on screen or replaces it with that notice. A flag that has not arrived reads as 
 refusal, which is only ever true while the loading layer is still up. When `auth` is absent there is no sign-in at all - `isGoogleAuth` is
 `false`, the `auth` section is left off, every client stays a guest, and the auth
 half of the configuration decides nothing. The permissions the schema carries and
-this answer does not are the ones the client has no say in: `guestAllowRelay` is
-enforced on the relay itself, `userRegister` is enforced at sign-in (the client
-cannot know whether the account behind a credential exists yet), and
-`userRegisterRelay` is a registration policy that decides nothing on screen.
+this answer does not are the ones the client has no say in: `userRegister` is
+enforced at sign-in (the client cannot know whether the account behind a
+credential exists yet), and `userRegisterRelay` is a registration policy that
+decides nothing on screen. `guestAllowRelay` is **not** one of them - it is
+enforced on the relay *and* answered here, because a client that waited for a
+fallback this server does not carry would wait for ever.
 
 `sessionId` is the id of the **connection**, ten characters from
 `generateId(10)`, unique among the live `clients` Map. It is not an account

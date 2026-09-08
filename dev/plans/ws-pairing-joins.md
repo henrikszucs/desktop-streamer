@@ -94,7 +94,7 @@ Differences from the code that was removed, all deliberate:
 | `join-delete` | `{"joinId"}` | `{"success"}` **(done)** |
 | `join-disconnect` | `{"joinId", ...}` | `{"success"}` |
 | `join` | `{"joinId"}` | signaling, below |
-| `join-rename` | `{"joinId", "name", "peerCode"\|"hostCode"}` | `{"success"}` |
+| `join-rename` | `{"joinId", "name"}` | `{"success", "name"}` **(done, one code)** |
 | `join-remember` | `{"joinId", "remember", ...}` | `{"success"}` |
 | `join-rehost` | `{"joinId", ...}` | `{"success", "hostCode"}` |
 
@@ -109,9 +109,25 @@ above in three places, all deliberate:
 - **One code, not a join id and a code.** Which of the two a socket presents is
   what decides its side, so the id adds nothing to the lookup.
 - **`join-list` is new**, because the two screens need who is online and nothing
-  else does. The `broadcastJoin` fan-out below is not built: a list that is only
-  read when somebody opens the tab does not need one, and the pushes that do
-  exist (`join-cancel`, `join-remove`) go to the sockets of one join.
+  else does. The `broadcastJoin` fan-out below is not built - it collects sockets
+  from subscriptions that do not exist yet - and every push this group sends goes
+  to the sockets of one join instead:
+
+```
+{"timestamp", "type": "join-request", "joinId": string, "details": {...}, "timeout": number}
+{"timestamp", "type": "join-accept", "joinId": string}
+{"timestamp", "type": "join-reject", "joinId": string, "reason": "rejected"|"timeout"|"gone"|"removed"}
+{"timestamp", "type": "join-cancel", "joinId": string, "reason": "cancelled"|"timeout"|"gone"|"removed"}
+{"timestamp", "type": "join-online", "joinId": string, "isOnline": boolean}
+{"timestamp", "type": "join-remove", "joinId": string}
+```
+
+  **`join-online` is presence, and only its edges.** The first socket of a side
+  arriving and the last one leaving are pushed to the other side; a second window
+  of a device that is already there changes nothing and sends nothing. It is a
+  push rather than a poll because the badge that draws it is on the bars, not on
+  a screen somebody opened - `join-list` answers the same question once, for a
+  screen that has just been opened.
 
 `is_remember` is still not a column - a row existing is the remembered flag - and
 `remember`/`unsupervised` reach the server as the two flags on `pair-accept`.
@@ -120,10 +136,20 @@ above in three places, all deliberate:
 presents decides which side it is and what it may change. They are ten characters
 and must differ from each other; `addJoin` regenerated until they did.
 
-Each side names the other independently: `peerName` and `hostName` are separate
-columns, and `join-rename` writes only the caller's. The exception is a user
-paired with themselves (`peerUserId === hostUserId`), where both names move
-together - `updateJoin` carries that case throughout.
+Each side names the other independently: `peer_name` and `host_name` are
+separate columns, and `join-rename` writes only the caller's - the host names the
+peer, the peer names the host, which is the same column `join-connect` reads the
+name back from. **Nothing is pushed**: the other side is not affected by what
+this one calls it. The name is capped at `JOIN_NAME_MAX` (64), the length of the
+input that writes it. The exception the old code carried - a user paired with
+themselves (`peerUserId === hostUserId`), where both names moved together - waits
+for accounts, since there are no user ids to compare yet.
+
+The name is on the row rather than only in the client so a device presenting the
+same code again is handed it back. The client keeps its own copy for the screens
+it draws offline and adopts the row's when `join-connect` answers a non-empty one
+(`connectAll` in `src/client/web/src/joins.js`); an empty one is a row nobody has
+named, not a name somebody cleared.
 
 Every change fans out through `broadcastJoin(joinId, msg, containDevices,
 containShares, containPeers, containHost, callerClientId)`, which collects the
@@ -185,7 +211,9 @@ Differences from the plan below, all deliberate:
   one call in this protocol that runs per message rather than per flow. When
   `ws-accounts.md` lands, sign-in fills that slot from the user's row - one read
   for the session, not one per message.
-- **`guestAllowRelay` gates `room-data` alone.** The schema calls it *use server
+- **`guestAllowRelay` gates the relayed payload, in both of its forms** - the
+  `room-data` call and the binary frame, which is the one a client actually
+  streams over. The schema calls it *use server
   for media data transfer*, which is what the fallback is: two devices that
   cannot reach each other, and the server carrying what would have gone between
   them. The negotiation every connection needs (`room-signal`) is never gated -
@@ -245,9 +273,9 @@ communicator timeout.
 1. Restore `joinsUser` (`pairs` and `joins` are live) when accounts land - the
    device list of a signed-in user cannot be found by walking sockets.
 2. ~~Give `pair-accept` the join it should make~~ - done, with `unsupervised`
-   beside `remember`. What is missing from it is the naming: `peer_name` and
-   `host_name` are written empty and `join-rename` does not exist, so both
-   screens fall back to a localized label.
+   beside `remember`. ~~What is missing from it is the naming~~ - `join-rename`
+   is done too. `pair-accept` still writes both name columns empty, so a
+   connection nobody has named falls back to a localized label on both screens.
 3. Restore the join branches and `broadcastJoin`.
 4. ~~Restore the `join` signaling relay last; it is the only branch that holds
    two messages open at once.~~ - done as `handlers/rooms.js`, which holds none.

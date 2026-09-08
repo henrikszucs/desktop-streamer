@@ -285,6 +285,16 @@ side deleted it while this one was away. The devices and shares screens then rea
 the local records and ask the server only for who is online, which is the one
 thing a local record cannot know.
 
+**A connection has a name, and it is this side's own.** `join-rename` writes it
+to the caller's own column on the row (`peer_name` for a host, `host_name` for a
+peer) and nothing is pushed to the other end, which keeps whatever it called this
+one. It is on the row rather than only in the local record so a device presenting
+the same code again is handed it back: `rename()` writes both, and `connectAll()`
+adopts what `join-connect` answers when that is not empty - an empty one is a
+connection nobody has named, not a name somebody cleared, so the local record
+stands. `management/connection` is the dialog, and a rename made while the socket
+is down is local only, since the call cannot be made.
+
 Who is on the other side of a join arrives the same way: `join-online` is pushed
 to each side as the other's first socket appears and its last one goes, so
 presence is the server's answer rather than the age of the last screen that
@@ -569,7 +579,7 @@ longer serves — do not paste it back untouched.
 | --- | --- |
 | `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and an accepted request now opens the room on the peer and the connection's settings on the host; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
-| `management/connection` names a connection **locally** — there is no call that carries a name to the other side, so each end sees its own; the *settings* entry of a `devices` card opens nothing yet, the same dialog is what it wants | `dev/plans/ws-pairing-joins.md` |
+| the *settings* entry of a `devices` card opens nothing yet — `management/connection`, which names and forgets a connection, is the dialog it wants | `dev/plans/ws-pairing-joins.md` |
 | `management/account/*` (information, sessions, delete) | `dev/plans/ws-accounts.md` |
 | `nav-top` `setAccounts()` — the list is the guest alone | `dev/plans/ws-accounts.md` |
 

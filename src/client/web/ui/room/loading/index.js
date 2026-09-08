@@ -1,14 +1,9 @@
 "use strict";
 
 // the wait for the *other device*, which is not the wait for the server: the
-// shell's own loading layer is the one that covers a dropped connection, and it
-// sits over this one (index.css) because a client with no server has nothing to
-// say about a host either.
-//
-// It decides nothing. The button dispatches `quit` and the room screen leaves,
-// the way `room-exit` hands its answer back - and it is a button rather than a
-// question, because the whole reason it is here is a host that is not answering
-// anything.
+// shell's own loading layer covers a dropped connection and sits over this one.
+// It decides nothing - the button dispatches `quit` and the room screen leaves,
+// the way `room-exit` hands its answer back.
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";

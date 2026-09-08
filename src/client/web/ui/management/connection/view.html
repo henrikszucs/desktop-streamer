@@ -1,5 +1,5 @@
 <!--
-    One remembered connection: what this client calls it, and the way to forget
+    One remembered connection: what this side calls it, and the way to forget
     it. Minimal on purpose - the rest of what a connection could carry needs
     calls the server does not answer yet (dev/plans/ws-pairing-joins.md).
 -->
@@ -15,10 +15,10 @@
         <label data-localization="connection.name">Name</label>
     </div>
     <!--
-        The name is this client's own: there is no call that carries one to the
-        other side, so it is said here rather than left to be discovered.
+        Each side names the other independently, so the name is said here rather
+        than left to be discovered from the other device not changing.
     -->
-    <div class="small-text" id="connection-name-hint" data-localization="connection.nameHint">This name is only stored on this device.</div>
+    <div class="small-text" id="connection-name-hint" data-localization="connection.nameHint">Only you see this name. The other device keeps its own.</div>
     <nav class="right-align">
         <button class="border error-text" id="btn-connection-delete">
             <i>delete</i>

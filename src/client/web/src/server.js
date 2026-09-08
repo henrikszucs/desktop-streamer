@@ -24,11 +24,8 @@ const PUSH_EVENTS = new Set([
 //   [1..10]  the room id, one byte per character
 //   [11..]   the payload
 //
-// This is what a payload of any size travels as, and why there are two kinds:
-// the communicator splits an ArrayBuffer into packets and puts it back together
-// at the other end, and does none of that for a JSON message. So everything the
-// relay carries becomes bytes - an object is encoded on the way in and decoded
-// on the way out - and nothing anybody sends has a size to stay under.
+// Everything the relay carries becomes bytes - which is what the two kinds are
+// for - so nothing sent over it has a size to stay under.
 const FRAME_DATA = 1;
 const FRAME_JSON = 2;
 const ROOM_ID_LENGTH = 10;
@@ -346,6 +343,19 @@ const Server = class extends EventTarget {
         }
         const messageObj = this.communicator.invoke({"type": "join-reject", "joinId": joinId});
         await messageObj.wait();
+    };
+
+    // what this client calls the other side. The name is the caller's own column
+    // on the row, so join-connect hands it back and the other side never sees it.
+    async joinRename(joinId, name) {
+        const messageObj = this.communicator.invoke({"type": "join-rename", "joinId": joinId, "name": name});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
     };
 
     // either side forgets the other for good - the row goes with it

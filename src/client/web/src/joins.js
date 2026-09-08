@@ -80,12 +80,23 @@ const createJoins = function(ctx) {
                 records.set(joinId, {...records.get(joinId), ...record, "joinId": joinId});
                 try {
                     const answer = await ctx["server"].joinConnect(record["joinCode"]);
-                    records.set(joinId, {
+                    const merged = {
                         ...records.get(joinId),
                         "isHost": answer["isHost"],
                         "isUnsupervised": answer["isUnsupervised"],
                         "isOnline": answer["isOnline"]
-                    });
+                    };
+
+                    // the name is on the row too, so this is where a device that
+                    // named the connection elsewhere gets it back. An empty one
+                    // is a row nobody named, not a name somebody cleared.
+                    if (typeof answer["name"] === "string" && answer["name"] !== "") {
+                        merged["name"] = answer["name"];
+                        if (record["name"] !== answer["name"]) {
+                            await setJoin(joinId, {"name": answer["name"]});
+                        }
+                    }
+                    records.set(joinId, merged);
                 } catch (error) {
                     // the row is gone: the other side forgot this device, and a
                     // code that opens nothing is worth keeping no longer
@@ -116,13 +127,16 @@ const createJoins = function(ctx) {
             return records.get(detail["joinId"]);
         },
 
-        // what the connection is called on this client. There is no call that
-        // carries a name to the server yet (dev/plans/ws-pairing-joins.md), so
-        // this is local: the other side goes on seeing whatever it named it.
+        // what this client calls the other side of a connection. It is written
+        // on the row as well as here, so another window of this device is handed
+        // it back; the other side keeps the name it gave, which is its own.
         async rename(joinId, name) {
             const record = records.get(joinId);
             if (record === undefined) {
                 return undefined;
+            }
+            if (ctx["server"].isOnline === true) {
+                await ctx["server"].joinRename(joinId, name);
             }
             await setJoin(joinId, {"name": name});
             records.set(joinId, {...record, "name": name});

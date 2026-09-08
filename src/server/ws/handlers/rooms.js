@@ -183,6 +183,66 @@ const releaseRooms = function(server) {
 //
 // the calls
 //
+// Both relayed calls are the same four questions - is this socket in that room,
+// is the payload one of these, is it small enough, is the other end still there
+// - and differ only in what they carry and what it may weigh. The differences
+// are the descriptors below; this is the shape they are asked in.
+const relayTo = function(ctx, relay) {
+    const server = ctx["server"];
+    const message = ctx["message"];
+    const held = heldRoom(server, ctx["sessionId"], message["roomId"]);
+    if (held === undefined) {
+        ctx["messageObj"].send({"success": false, "error": "unknown-room"});
+        return;
+    }
+
+    const payload = message[relay["field"]];
+    if (relay["isValid"](payload) === false) {
+        ctx["messageObj"].send({"success": false, "error": relay["invalidError"]});
+        return;
+    }
+    if (JSON.stringify(payload).length > relay["max"]) {
+        ctx["messageObj"].send({"success": false, "error": "too-large"});
+        return;
+    }
+
+    const targetSessionId = otherSessionId(held["room"], held["isHost"]);
+    if (server.clients.has(targetSessionId) === false) {
+        ctx["messageObj"].send({"success": false, "error": "offline"});
+        return;
+    }
+
+    notify(server, targetSessionId, {
+        "type": relay["type"],
+        "roomId": held["room"].get("roomId"),
+        [relay["field"]]: payload
+    });
+    ctx["messageObj"].send({"success": true});
+};
+
+// an SDP or a candidate: an object, and one small enough to be one
+const SIGNAL_RELAY = {
+    "type": "room-signal",
+    "field": "signal",
+    "invalidError": "invalid-signal",
+    "max": SIGNAL_MAX,
+    "isValid": function(payload) {
+        return typeof payload === "object" && payload !== null;
+    }
+};
+
+// whatever the two ends are saying to each other: anything at all, as long as
+// it is something
+const DATA_RELAY = {
+    "type": "room-data",
+    "field": "data",
+    "invalidError": "invalid-data",
+    "max": DATA_MAX,
+    "isValid": function(payload) {
+        return typeof payload !== "undefined";
+    }
+};
+
 // one signal to the other end of a room. This is the whole relay: it is not a
 // conversation the server holds open, it is one message carried across, so a
 // negotiation is as many of these as the two ends need and the server is holding
@@ -196,36 +256,7 @@ const roomSignal = function(ctx) {
         "success": boolean,
         "error": string
     }*/
-    const server = ctx["server"];
-    const message = ctx["message"];
-    const held = heldRoom(server, ctx["sessionId"], message["roomId"]);
-    if (held === undefined) {
-        ctx["messageObj"].send({"success": false, "error": "unknown-room"});
-        return;
-    }
-
-    const signal = message["signal"];
-    if (typeof signal !== "object" || signal === null) {
-        ctx["messageObj"].send({"success": false, "error": "invalid-signal"});
-        return;
-    }
-    if (JSON.stringify(signal).length > SIGNAL_MAX) {
-        ctx["messageObj"].send({"success": false, "error": "too-large"});
-        return;
-    }
-
-    const targetSessionId = otherSessionId(held["room"], held["isHost"]);
-    if (server.clients.has(targetSessionId) === false) {
-        ctx["messageObj"].send({"success": false, "error": "offline"});
-        return;
-    }
-
-    notify(server, targetSessionId, {
-        "type": "room-signal",
-        "roomId": held["room"].get("roomId"),
-        "signal": signal
-    });
-    ctx["messageObj"].send({"success": true});
+    relayTo(ctx, SIGNAL_RELAY);
 };
 
 // either side is done with it. Leaving a room somebody else already left is not
@@ -262,41 +293,13 @@ const roomData = function(ctx) {
         "success": boolean,
         "error": string
     }*/
-    const server = ctx["server"];
-    const message = ctx["message"];
-
-    // the answer this connection was given when it was taken, not a lookup
-    if (isRelayAllowed(server, ctx["sessionId"]) === false) {
+    // the answer this connection was given when it was taken, not a lookup, and
+    // asked before the room is: what is refused here is the caller, not the room
+    if (isRelayAllowed(ctx["server"], ctx["sessionId"]) === false) {
         ctx["messageObj"].send({"success": false, "error": "not-allowed"});
         return;
     }
-
-    const held = heldRoom(server, ctx["sessionId"], message["roomId"]);
-    if (held === undefined) {
-        ctx["messageObj"].send({"success": false, "error": "unknown-room"});
-        return;
-    }
-    if (typeof message["data"] === "undefined") {
-        ctx["messageObj"].send({"success": false, "error": "invalid-data"});
-        return;
-    }
-    if (JSON.stringify(message["data"]).length > DATA_MAX) {
-        ctx["messageObj"].send({"success": false, "error": "too-large"});
-        return;
-    }
-
-    const targetSessionId = otherSessionId(held["room"], held["isHost"]);
-    if (server.clients.has(targetSessionId) === false) {
-        ctx["messageObj"].send({"success": false, "error": "offline"});
-        return;
-    }
-
-    notify(server, targetSessionId, {
-        "type": "room-data",
-        "roomId": held["room"].get("roomId"),
-        "data": message["data"]
-    });
-    ctx["messageObj"].send({"success": true});
+    relayTo(ctx, DATA_RELAY);
 };
 
 // The other way in: a frame rather than a call.

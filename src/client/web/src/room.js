@@ -3,30 +3,10 @@
 // the live connection between this device and the other one: the room the server
 // put the two sockets in, and the WebRTC connection negotiated across it.
 //
-// The server carries the negotiation and nothing else (see
-// src/server/ws/handlers/rooms.js), so this file is the whole of what a
-// connection *is* on this client. It carries no media yet: the data channel is
-// what says the two ends can reach each other at all, which is what the room
-// screen is waiting for.
-//
-// There are two ways it can stand. **Direct** is the WebRTC connection between
-// the two devices. **Relayed** is the fallback for the pairs that cannot make
-// one - a NAT neither end gets through, a network that blocks everything but the
-// server - where what would have crossed the connection crosses the server
-// instead. It is slower and it is the server's bandwidth, which is why it is a
-// permission and why the room says so on screen. Everything above the transport
-// is the same either way.
-//
-// Nothing opens it by hand. The server tells both sides they are in a room -
-// `room-open` - and which side each of them is, so an accepted pairing, a
-// remembered device let back in and an unsupervised one that nobody was asked
-// about all arrive here the same way.
-//
-// **Both ways speak the same protocol.** The channel is wrapped in a
-// Communicator exactly as the socket is (src/server.js), so a message is split
-// into packets, acknowledged and put back together whichever leg carries it -
-// which is what makes `send()` one call with one behaviour rather than two, and
-// what lifts the per-message ceiling a raw data channel has.
+// It stands either direct or relayed through the server, speaks the same
+// protocol both ways, carries no media yet, and is opened by the server's
+// room-open rather than by hand. Why each of those is so - and what the two
+// holding places below are for - is .claude/CLIENT.md, "The connection".
 
 // third-party dependencies
 import Communicator from "../libs/communicator/communicator.js";
@@ -52,22 +32,16 @@ const DIRECT_TIMEOUT = 12000;
 const MODE_DIRECT = "direct";
 const MODE_RELAY = "relay";
 
-// How the channel's communicator is set up. The packet is what one SCTP message
-// carries: 16 KB is the size every browser agrees on, well under the 256 KB
-// Chrome allows and well over the 1 KB the socket uses, because this leg has no
-// proxy in the middle to think about. Everything else is the socket's settings -
-// the same protocol, the same clocks.
+// what one SCTP message carries: the size every browser agrees on, against the
+// socket's 1 KB - no proxy sits in the middle of this leg
 const CHANNEL_PACKET_SIZE = 16000;
 
 // what one message is given to cross, whole rather than packet by packet: a
 // frame worth megabytes is a lot of packets and none of them is late
 const DATA_TIMEOUT = 60000;
 
-// how long a lost direct connection is given before it is treated as one. A
-// channel that closes says nothing about *why*: the other end leaving and the
-// path between them breaking look the same from here, and what tells them apart
-// arrives on the socket rather than on the channel. So the room is given a beat
-// to hear it, and what is still a room afterwards falls back instead of ending.
+// how long a lost direct connection is given to turn out to be the other end
+// having left, which arrives on the socket rather than on the channel
 const CLOSE_GRACE = 1000;
 
 const createRoom = function(ctx) {
@@ -87,12 +61,8 @@ const createRoom = function(ctx) {
     // to go yet: ICE starts on both ends at once and the two messages cross
     const earlyCandidates = [];
 
-    // and a signal that arrives before this side has been told there is a room
-    // at all. The two ends are told in two separate messages and the offer
-    // chases them, so on a slow or backgrounded socket the first signal can land
-    // first - and a dropped offer is a negotiation that never starts, which is a
-    // wait that never ends. They are kept by room id, since that is all this
-    // side knows about them until its own room-open arrives.
+    // and a signal that arrives before this side's own room-open, kept by room
+    // id because that is all this side knows about it until one comes
     const earlySignals = new Map();     // roomId -> [signal]
 
     // enough for an offer and the candidates that chase it, and no more: what is
@@ -169,14 +139,9 @@ const createRoom = function(ctx) {
         }
     };
 
-    // The channel is the handshake, and the communicator over it is the proof:
-    // the channel opening says this end is ready, the sync that follows says the
-    // two of them actually reached each other, which is later and truer.
-    //
-    // The communicator is built here rather than on "open" because the other end
-    // opens at its own moment and may sync into this one before it fires - a
-    // packet that arrives before there is anything to receive it is a
-    // negotiation that hangs.
+    // The channel is the handshake and the sync over it is the proof. The
+    // communicator is built here rather than on "open" because the other end may
+    // sync into this one before that fires - see CLIENT.md, "The connection".
     const wireChannel = function() {
         channel.binaryType = "arraybuffer";
 
@@ -239,10 +204,8 @@ const createRoom = function(ctx) {
             emit("connected", {"roomId": roomId, "isHost": isHost, "isRelay": false});
         });
 
-        // A channel closing under a relay is the direct attempt being cleared
-        // away, not the room ending. One that closes while it *is* the room is
-        // the connection being lost - which the relay is for just as much as a
-        // connection that never came up, so it is taken rather than ended on.
+        // a channel that closes while it *is* the room is the connection being
+        // lost, which the relay is for as much as one that never came up
         channel.addEventListener("close", function() {
             if (mode !== MODE_DIRECT) {
                 return;
@@ -260,10 +223,8 @@ const createRoom = function(ctx) {
     //
     // the fallback
     //
-    // whether there is one at all. The server answers this for every client
-    // whether its configuration sets it or not, so a client never holds a
-    // default of its own - and a fallback that is not there must not be waited
-    // for, because nothing would ever end that wait.
+    // whether there is one at all. It is answered for every client, so this
+    // holds no default of its own, and one that is not there is not waited for.
     const isRelayAllowed = function() {
         return ctx["conf"]["remote"]?.["permissions"]?.["guestAllowRelay"] === true;
     };

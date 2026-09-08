@@ -21,6 +21,10 @@ const JOIN_CODE_LENGTH = 10;
 // the search gives up rather than spinning, as the pair codes do
 const JOIN_CODE_ATTEMPTS = 100;
 
+// a name is a label on a card, not a document: the input that writes one is
+// capped at the same length
+const JOIN_NAME_MAX = 64;
+
 // a code no row holds. The two codes of one join must differ from each other as
 // well, since which one a socket presents is what decides the side it is on.
 const generateJoinCodes = async function(db) {
@@ -344,6 +348,44 @@ const joinList = function(ctx) {
     ctx["messageObj"].send({"success": true, "joins": joins});
 };
 
+// what the caller calls the other side of a join. Each side names the other
+// independently - `peer_name` and `host_name` are separate columns - so this
+// writes one of them and nothing is pushed anywhere: the other side goes on
+// seeing whatever it named this one. It is on the row rather than only in the
+// client so that a device presenting the same code again is handed it back.
+const joinRename = async function(ctx) {
+    /*{
+        "joinId": string,
+        "name": string
+    }*/
+    /*{
+        "success": boolean,
+        "name": string,
+        "error": string
+    }*/
+    const server = ctx["server"];
+    const held = heldJoin(server, ctx["sessionId"], ctx["message"]["joinId"]);
+    if (held === undefined) {
+        ctx["messageObj"].send({"success": false, "error": "unknown-join"});
+        return;
+    }
+
+    const name = ctx["message"]["name"];
+    if (typeof name !== "string" || name.length > JOIN_NAME_MAX) {
+        ctx["messageObj"].send({"success": false, "error": "invalid-name"});
+        return;
+    }
+
+    // the caller's own column: a host names the peer, a peer names the host,
+    // which is the same side join-connect reads the name back from
+    if (server.db !== null) {
+        await server.db("joins")
+            .where("join_id", held["join"].get("joinId"))
+            .update(held["isHost"] === true ? {"peer_name": name} : {"host_name": name});
+    }
+    ctx["messageObj"].send({"success": true, "name": name});
+};
+
 // the peer wants in, on a pairing that was made before. Supervised, the host is
 // asked exactly as it was the first time; unsupervised, nobody is disturbed -
 // that is what the host agreed to when it ticked the box.
@@ -528,11 +570,12 @@ const joinDelete = async function(ctx) {
 const handlers = {
     "join-connect": joinConnect,
     "join-list": joinList,
+    "join-rename": joinRename,
     "join-request": joinRequest,
     "join-accept": joinAccept,
     "join-reject": joinReject,
     "join-delete": joinDelete
 };
 
-export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, joinConnect, joinList, joinRequest, joinAccept, joinReject, joinDelete, JOIN_CODE_LENGTH };
+export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
 export default handlers;

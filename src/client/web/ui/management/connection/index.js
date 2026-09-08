@@ -3,10 +3,9 @@
 // the settings of one remembered connection, from either list that shows one -
 // what this client calls it, and forgetting it for good.
 //
-// Both are the whole of what a connection can be told to do today: a name has
-// no call that carries it to the other side, so it is local (see rename() in
-// src/joins.js), and deleting is the one that is not - it drops the row, so the
-// two codes stop opening anything and the other side is told.
+// Both are the whole of what a connection can be told to do today: a name is
+// this side's own column on the row (join-rename), and deleting drops the row
+// itself, so the two codes stop opening anything and the other side is told.
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";
@@ -16,6 +15,7 @@ const ConnectionDialog = class extends Dialog {
     static rootId = "dialog-connection";
 
     joinId = "";
+    nameInput = null;
 
     async mount(ctx) {
         this.nameInput = document.getElementById("input-connection-name");
@@ -31,14 +31,21 @@ const ConnectionDialog = class extends Dialog {
         });
     };
 
+    // the name goes to the server as well as here, so this is a call that can
+    // fail on a connection that has just dropped
     async save() {
         const ctx = this.ctx;
         const localization = ctx["localization"];
-        const record = await ctx["joins"].rename(this.joinId, this.nameInput.value.trim());
-        if (typeof record === "undefined") {
-            ctx["ui"].snackbar.show(localization.get("connection.unknown"), true);
-        } else {
-            ctx["ui"].snackbar.show(localization.get("connection.saved"));
+        try {
+            const record = await ctx["joins"].rename(this.joinId, this.nameInput.value.trim());
+            if (typeof record === "undefined") {
+                ctx["ui"].snackbar.show(localization.get("connection.unknown"), true);
+            } else {
+                ctx["ui"].snackbar.show(localization.get("connection.saved"));
+            }
+        } catch (error) {
+            console.error(error);
+            ctx["ui"].snackbar.show(localization.get("connection.failed"), true);
         }
         this.requestClose();
     };

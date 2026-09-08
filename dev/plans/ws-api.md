@@ -8,9 +8,10 @@ The shapes below were read out of the removed implementation
 disagree, the disagreements are listed at the bottom and the code is what is
 recorded here.
 
-**19 calls to implement, 4 answered today.** Nothing in the browser sends a type
-the server does not answer, so none of this is broken right now; it is all
-feature work that is missing on both ends.
+**10 of the original 19 are still to implement**, all of them accounts, user
+data, or the three join calls that wait on one. The pairing, the joins a device
+comes back on and the relay are answered today, several of them in a shape the
+tables below do not describe — where that is so, the section says which.
 
 ## Answered today
 
@@ -19,9 +20,18 @@ feature work that is missing on both ends.
 | `conf-get` | `handlers/conf.js` | – | the public half of the configuration, the server version included |
 | `ping` | `handlers/connection.js` | – | `{"success": true, "timestamp"}` |
 | `session-get` | `handlers/connection.js` | – | `{"success": true, "sessionId"}` |
+| `pair-create` / `pair-delete` | `handlers/pairing.js` | – | the six digit code a host offers, and giving it up |
+| `pair-request` / `pair-accept` / `pair-reject` | `handlers/pairing.js` | `{"pairCode"}` / `{"remember", "unsupervised"}` / – | the one join attempt a code carries |
+| `join-connect` / `join-list` | `handlers/joins.js` | `{"joinCode"}` / – | be reachable on a code; who is online |
+| `join-rename` | `handlers/joins.js` | `{"joinId", "name"}` | `{"success", "name"}` |
+| `join-request` / `join-accept` / `join-reject` | `handlers/joins.js` | `{"joinId"}` | the same accept-or-reject, on a pairing already made |
+| `join-delete` | `handlers/joins.js` | `{"joinId"}` | `{"success"}` |
+| `room-signal` / `room-data` / `room-leave` | `handlers/rooms.js` | `{"roomId", …}` | the relay, one message per call |
+| a **binary** message | `handlers/rooms.js` | `[kind][roomId][payload]` | forwarded, unanswered |
 
-`ping` and `session-get` are newer than the cut — they were
-never in `6c0d18a`. Everything below was.
+`ping`, `session-get`, `join-list`, `join-request`/`join-accept`/`join-reject`
+and the three `room-*` calls are newer than the cut — they were never in
+`6c0d18a`. Everything below was.
 
 ## To implement
 
@@ -58,9 +68,10 @@ Plan: [ws-accounts.md](ws-accounts.md).
 `devices`, `shares`. `once` asks for the current value without subscribing.
 `picture` is fetched with `httpsGetImage` and sent as data, never as a Google URL.
 
-### Pairing → `handlers/pair.js`
+### Pairing → `handlers/pairing.js` **(done)**
 
-Plan: [ws-pairing-joins.md](ws-pairing-joins.md). Depends on accounts.
+Plan: [ws-pairing-joins.md](ws-pairing-joins.md). The shapes below are the
+removed code's; what landed differs and is written out in the plan.
 
 | type | request | answer |
 | --- | --- | --- |
@@ -75,48 +86,58 @@ Plan: [ws-pairing-joins.md](ws-pairing-joins.md). Depends on accounts.
 single-use: every exit path — accept, reject, delete, timeout, socket close —
 has to go through `removePairCode` or the code leaks.
 
-### Joins → `handlers/join.js`
+### Joins → `handlers/joins.js` **(half done)**
 
 Plan: [ws-pairing-joins.md](ws-pairing-joins.md).
 
 | type | request | answer |
 | --- | --- | --- |
-| `join-connect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success", "values": {"name", "isOnline", "isRemember"}}` |
+| `join-connect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success", "values": {"name", "isOnline", "isRemember"}}` **(done, one code and no `values`)** |
+| `join-rename` | `{"joinId", "name", "peerCode"\|"hostCode"}` | `{"success"}` **(done, one code, and the name is answered back)** |
+| `join-delete` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success"}` **(done, one code)** |
 | `join-disconnect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success"}` |
-| `join-rename` | `{"joinId", "name", "peerCode"\|"hostCode"}` | `{"success"}` |
 | `join-remember` | `{"joinId", "isRemember", "hostCode"}` | `{"success"}` |
 | `join-rehost` | `{"joinId"}` | `{"success", "hostCode"}` |
-| `join-delete` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success"}` |
 
 `peerCode` and `hostCode` are the two capabilities of a join — which one a socket
-presents decides which side it is and what it may change. Each side names the
-other independently, so `join-rename` writes only the caller's column; the
-exception is a user paired with themselves, where both names move together.
+presents decides which side it is and what it may change. **The three that landed
+take the code alone**: which of the two a socket presented at `join-connect` is
+what decides its side, so the id adds nothing to the lookup. Each side names the
+other independently, so `join-rename` writes only the caller's column
+(`peer_name` for a host, `host_name` for a peer — the same one `join-connect`
+reads back, and nothing is pushed to the other side); the exception is a user
+paired with themselves, where both names move together, and that waits for
+accounts to have user ids to compare.
 
-### Signaling relay → `handlers/relay.js`
+### Signaling relay → `handlers/rooms.js` **(done, in a different shape)**
 
 Plan: [ws-pairing-joins.md](ws-pairing-joins.md).
 
-| type | request | answer |
-| --- | --- | --- |
-| `join` | `{"joinId"}` | a relay loop, not a single answer |
+The removed code had one call, `join` `{"joinId"}`, and it was a relay *loop*
+rather than a single answer: it held two messages open at once and carried SDP
+and ICE between the two sockets until the peer sent `finish`, so every branch
+that returned early had to send `{"finish": false}` or the other side waited out
+the communicator timeout.
 
-The one call that holds two messages open at once: it carries SDP and ICE
-between the peer that asked and the first connected host socket, using the
-communicator's invoke in both directions, until the peer sends `finish`. Every
-branch that returns early has to send `{"finish": false}` to the other side or
-it waits out the communicator timeout.
-
-Worth its own file for that reason — it is the only handler that is a
-conversation rather than a request and an answer.
+**That is not what landed.** `handlers/rooms.js` is one message per call —
+`room-signal`, `room-data`, `room-leave`, and a binary frame that is not a call
+at all — so the server holds nothing between two signals and there is no
+held-open conversation to bound. What ties the two sockets together is a room
+rather than a join, because a pairing that was not remembered leaves no join
+behind to key one on. The differences are written out in
+[ws-pairing-joins.md](ws-pairing-joins.md).
 
 ## Server-initiated events
 
 These are **not** in the request/answer table above, and `ws/api.js` has no place
-for them: it dispatches what arrives, and nothing in `src/server/ws/` currently
-sends a message a client did not ask for. Restoring accounts or pairing means
-adding that direction — a `ws/events.js` beside `api.js`, or a method on
-`ServerWS` the handlers call.
+for them: it dispatches what arrives. **That direction exists now** — it is
+`ws/notify.js` (`push`, `notify`, `notifyAll`, `pushData`), which the pairing,
+join and room groups all send through. What is left below is the account half.
+
+The pushes that landed are written out in
+[ws-pairing-joins.md](ws-pairing-joins.md): five for pairing, six for joins
+(`join-online` among them, which is presence and pushed only on its edges) and
+four for rooms.
 
 From the account work:
 
@@ -141,26 +162,27 @@ set so a socket in two of them is notified once, and excludes the caller.
 
 ## What this needs that the current `ws/` folder does not have
 
-1. **An outbound direction.** See above.
+1. ~~**An outbound direction.**~~ `ws/notify.js`. See above.
 2. **Per-connection state.** `clientConnect` puts `com` and `ws` in the client
    `Map`. Signed-in connections also need `isLoggedIn`, `userId` and the
    *account* `sessionId` — which is not the connection session id
    `generateSessionId()` produces. Keep the two apart.
-3. **Server-level indexes.** `sessions`, `subscriptions`, `pairs`, `joins` and
-   `joinsUser` maps on `ServerWS`. All in memory, which is what makes the WS
-   server single-process — worth saying out loud before anything assumes
-   otherwise.
+3. **Server-level indexes.** `pairs`, `joins` and `rooms` are on `ServerWS`
+   already; `sessions`, `subscriptions` and `joinsUser` come with accounts. All
+   in memory, which is what makes the WS server single-process — worth saying
+   out loud before anything assumes otherwise.
 4. **Shared guards.** Almost every removed branch opened with the same two
    checks: input types, then `if (client.get("isLoggedIn") !== true)`. That
    belongs in one place rather than copied into 19 handlers.
-5. **A close handler that unwinds.** The current one releases the communicator
-   and drops the client. It will also have to end the account session, drop every
-   subscription, release the pair code, and remove the socket from every join it
-   is in while notifying the other side.
-6. **An answer convention.** `api.js` `reject` sends
-   `{"success": false, "error": "unknown-type"}`, but every removed branch
-   answered a bare `{"success": false}` with no reason. Pick one before writing
-   19 handlers against the other.
+5. **A close handler that unwinds.** It releases the communicator, drops the
+   client, releases the pair code (`releasePeer`), leaves every join
+   (`detachJoins`) and every room (`detachRooms`), telling the other side of
+   each. What is left for accounts: ending the account session and dropping
+   every subscription.
+6. ~~**An answer convention.**~~ Settled: `{"success": false, "error": <name>}`,
+   the shape `api.js` `reject` already used. Every handler written since answers
+   a reason rather than the bare `{"success": false}` the removed branches
+   sent.
 
 ## Where the plans and the removed code disagree
 
@@ -192,8 +214,11 @@ Also worth knowing before restoring:
 The old client (`da3921d`) only ever called 15 of the 20 types. It never
 implemented `join` (the relay), `join-rename`, `join-remember`, `join-rehost` or
 `join-delete` — so the room and the WebRTC half were never finished on the
-browser side either, and `ui/room/index.js` is still an empty `Screen`. Restoring
-those five server calls is not enough to make a room work.
+browser side either. **Three of those five are answered now**, and the browser
+half is written against them: `src/client/web/src/room.js` is the connection,
+`ui/room/index.js` the screen over it, and `join-rename` reaches the server from
+the connection dialog. `join-remember` and `join-rehost` are still on neither
+side.
 
 One gap belongs to `conf-get` rather than to any of the above: the client hides
 the `services` route unless the answer carries `serviceSharing`
@@ -203,5 +228,8 @@ open work item 2 in [ws-client-config.md](ws-client-config.md).
 
 ## Suggested order
 
-Unchanged from [README.md](README.md): client config → database → accounts →
-pairing/joins. Within the last one, joins before the relay, and the relay last.
+From [README.md](README.md): client config → database → accounts →
+pairing/joins. **The last one went first** — pairing, then joins, then the relay
+— because none of it needed an account to work: the join code is the credential
+until one exists. What is left is the account half, and the three join calls
+(`join-disconnect`, `join-remember`, `join-rehost`) worth doing beside it.
