@@ -514,13 +514,16 @@ join and closes itself - it navigates nowhere, and it closes *before* it stores,
 since opening a screen closes the dialogs over it.
 
 Two things that listener has to be careful about. A pairing the host did not ask
-to remember carries **no join id**: the host is moved all the same - it is
-sharing itself out, which is what that screen is - but there is nothing to name
-and nothing to forget, so no settings dialog is opened over it. And the record
+to remember carries **no join id**: the host is moved and the settings are opened
+all the same, on the *room* rather than on a record (`{"joinId": "", "isLive":
+true}`) - what was just accepted is what the host is looking at either way. And
+the record
 may be a moment *behind* the room - the accept answer that carries the new join
 and this push cross on the same socket - so a room whose record is not there yet
 waits for the `change` that stores it rather than deciding it is a room about
-nothing.
+nothing. A join that never arrives at all is the one case with nothing to open:
+there is no card for it on the screen either, so it is logged rather than left as
+a navigation that did half of what it was for.
 
 **A share is not only a record.** `ctx["joins"]` is what a device *keeps*, and a
 pairing nobody remembered is kept by nothing: the room is the whole of it. Drawn
@@ -545,6 +548,28 @@ only while the connection does - the hint under the field says so - and *delete*
 is `room.leave()`, because deleting a share that **is** only a connection is
 ending it. One dialog for both, since a host that has just let somebody in should
 not have to learn a second screen for the connection it did not tick a box for.
+
+**Neither delete is taken without asking.** `ctx["ui"].confirm()` is the one
+question the shell puts before something is undone for good -
+`ui/management/confirm/`, opened *nested* so whatever asked it is still behind
+it, dispatching `done` the way `room/exit` does. It is handed **localization
+keys** rather than lines: a language switched while a dialog stands re-translates
+the document from `data-localization`, so a line written in as text would go back
+to whatever the markup was built with - which is the same reason
+`management/connection` writes the key of its hint onto the element before
+reading it. The two questions are not one question: forgetting a join is gone from
+both devices for good (`confirm.deleteJoin`), ending a live share only ends what
+is up (`confirm.endRoom`, and the button says *End* rather than *Delete*).
+
+**A rebuild the room asked for is not dropped.** The grid answers two sources and
+they need opposite guards: `joins` fires `change` *because* the build asked it
+(`list()` writes who is online), so answering that one would build for ever - it
+is skipped while `isBuilding`. A room does not move because this screen asked
+something, so `connecting`/`closed`/`name` arriving mid-build set `isPending` and
+the build runs again, rather than leaving a card standing for a connection that is
+already gone. `buildCards` also empties the grid only once the records have
+arrived, so a rebuild does not blink and a call that fails does not leave the
+screen empty.
 
 The wait carries a **quit** button, and it is a button rather than a question:
 the case it exists for is a host that is answering nothing, so asking one more

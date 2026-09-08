@@ -153,6 +153,22 @@ const createUI = function(ctx) {
         "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
         "closeDialog": function(id) { return ctx["router"].closeDialog(id); },
         "closeDialogs": function() { return ctx["router"].closeDialogs(); },
+
+        // the one question asked before something is undone for good, answered
+        // true or false. It opens nested - whatever asked it is still behind it
+        // and is what acts on the answer - and it is given localization keys
+        // rather than lines, so a language switched while it stands redraws it.
+        "confirm": async function(params) {
+            const view = await ctx["router"].openDialog("confirm", params, true);
+            if (typeof view === "undefined" || view === null) {
+                return false;
+            }
+            return await new Promise(function(resolve) {
+                view.addEventListener("done", function(event) {
+                    resolve(event.detail?.["isConfirmed"] === true);
+                }, {"once": true});
+            });
+        },
         "loadModule": function(id) { return ctx["router"].load(id); }
     };
 };

@@ -1,0 +1,23 @@
+<!--
+    The question asked before something is undone for good. What is being undone
+    is named by whoever opens it - see confirm() in ui/ui.js - because the two
+    answers are the same whatever it was.
+-->
+<dialog id="dialog-confirm">
+    <nav>
+        <h5 class="max" data-localization="confirm.title">Are you sure?</h5>
+        <button class="circle transparent" id="btn-confirm-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <p id="dialog-confirm-message" data-localization="confirm.deleteJoin"></p>
+    <nav class="right-align">
+        <button class="border" id="btn-confirm-cancel">
+            <span data-localization="confirm.cancel">Cancel</span>
+        </button>
+        <button class="error" id="btn-confirm-accept">
+            <i>delete</i>
+            <span id="btn-confirm-accept-label" data-localization="confirm.delete">Delete</span>
+        </button>
+    </nav>
+</dialog>

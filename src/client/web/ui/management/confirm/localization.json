@@ -1,0 +1,28 @@
+{
+    "confirm": {
+        "title": {
+            "en": "Are you sure?",
+            "hu": "Biztos vagy benne?"
+        },
+        "cancel": {
+            "en": "Cancel",
+            "hu": "Mégse"
+        },
+        "delete": {
+            "en": "Delete",
+            "hu": "Törlés"
+        },
+        "end": {
+            "en": "End",
+            "hu": "Lezárás"
+        },
+        "deleteJoin": {
+            "en": "This connection is forgotten on both devices, and neither code opens anything again.",
+            "hu": "Ez a kapcsolat mindkét eszközön törlődik, és egyik kód sem nyit meg többé semmit."
+        },
+        "endRoom": {
+            "en": "The connection standing right now is ended, and the other device is disconnected.",
+            "hu": "A most élő kapcsolat lezárul, és a másik eszköz lecsatlakozik."
+        }
+    }
+}

@@ -77,16 +77,28 @@ const ConnectionDialog = class extends Dialog {
     async remove() {
         const ctx = this.ctx;
 
+        // neither delete can be taken back, so both are asked about first. What
+        // is being undone is not the same thing in the two cases, so the
+        // question is not the same one either.
+        const isLive = this.isLive;
+        const joinId = this.joinId;
+        const isConfirmed = await ctx["ui"].confirm(isLive === true
+            ? {"message": "confirm.endRoom", "confirm": "confirm.end"}
+            : {"message": "confirm.deleteJoin"});
+        if (isConfirmed === false) {
+            return;
+        }
+
         // there is no row to drop, so what is deleted is the connection itself -
         // the other side is told through the server, as it is for any leaving
-        if (this.isLive === true) {
+        if (isLive === true) {
             ctx["room"].leave();
             ctx["ui"].snackbar.show(ctx["localization"].get("connection.disconnected"));
             this.requestClose();
             return;
         }
         try {
-            await ctx["joins"].remove(this.joinId);
+            await ctx["joins"].remove(joinId);
             ctx["ui"].snackbar.show(ctx["localization"].get("connection.deleted"));
         } catch (error) {
             console.error(error);
@@ -112,8 +124,13 @@ const ConnectionDialog = class extends Dialog {
             : this.ctx["joins"].get(this.joinId)?.["name"] ?? "");
 
         // the line under the field says what the name is worth, and that is not
-        // the same sentence for a name on a row and one on a connection
-        this.hint.innerText = this.ctx["localization"].get(this.isLive === true ? "connection.liveHint" : "connection.nameHint");
+        // the same sentence for a name on a row and one on a connection. The key
+        // is written onto the element as well as read from it: a language
+        // switched while this dialog stands re-translates the document from
+        // those attributes, and the line would otherwise go back to the other one.
+        const hintKey = (this.isLive === true ? "connection.liveHint" : "connection.nameHint");
+        this.hint.setAttribute("data-localization", hintKey);
+        this.hint.innerText = this.ctx["localization"].get(hintKey);
 
         super.open(params);
         this.nameInput.focus();

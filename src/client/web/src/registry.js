@@ -105,6 +105,11 @@ const routes = new Map([
         "css": "/ui/management/settings/about/view.css",
         "localization": "/ui/management/settings/about/localization.json"
     }],
+    ["confirm", {
+        "load": () => import("../ui/management/confirm/index.js"),
+        "html": "/ui/management/confirm/view.html",
+        "localization": "/ui/management/confirm/localization.json"
+    }],
     ["connection", {
         "load": () => import("../ui/management/connection/index.js"),
         "html": "/ui/management/connection/view.html",

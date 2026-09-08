@@ -41,6 +41,11 @@ const SharesScreen = class extends Screen {
     // rebuild for
     isBuilding = false;
 
+    // and a change that arrived while it was building anyway. Only the room's
+    // are held: a room does not move because this screen asked something, so
+    // answering one cannot start a build that asks for another.
+    isPending = false;
+
     async mount(ctx) {
         this.areaUser = document.getElementById("screen-shares-user");
         this.areaGuest = document.getElementById("screen-shares-guest");
@@ -55,9 +60,9 @@ const SharesScreen = class extends Screen {
         // and the live one is a card too, so the room's edges - and the name it
         // is given in the dialog over this screen - are the same kind of change
         // to this grid as a record's are
-        ctx["room"].addEventListener("connecting", this.onSharesChange);
-        ctx["room"].addEventListener("closed", this.onSharesChange);
-        ctx["room"].addEventListener("name", this.onSharesChange);
+        ctx["room"].addEventListener("connecting", this.onRoomChange);
+        ctx["room"].addEventListener("closed", this.onRoomChange);
+        ctx["room"].addEventListener("name", this.onRoomChange);
 
         // and a connection that has just been made is this screen's business
         // wherever the host happens to be standing - see below
@@ -66,6 +71,20 @@ const SharesScreen = class extends Screen {
 
     onSharesChange = () => {
         if (this.isOpen === false || this.isBuilding === true) {
+            return;
+        }
+        this.build();
+    };
+
+    // the room going while the grid was being built is a card that would stand
+    // there after the connection under it is gone, so it is built again rather
+    // than dropped the way a record's own change is
+    onRoomChange = () => {
+        if (this.isOpen === false) {
+            return;
+        }
+        if (this.isBuilding === true) {
+            this.isPending = true;
             return;
         }
         this.build();
@@ -86,19 +105,25 @@ const SharesScreen = class extends Screen {
         }
         const joinId = detail["joinId"] ?? "";
 
-        // the record the settings would be about, where there is one to wait
-        // for. A pairing the host did not remember carries no join id: it is a
-        // share all the same and it lands on this screen as one, but there is
-        // nothing to name and nothing to forget, so no dialog is opened over it.
+        // the record the settings will be about, where there is one to wait for.
+        // A pairing the host did not remember carries no join id - the room is
+        // the whole of it - and the dialog is opened on the room instead.
         const record = (joinId === "" ? undefined : await this.recordOf(joinId));
 
         // the screen first: opening one closes every dialog over it, so the
         // settings would go with the navigation the other way round
         await this.ctx["ui"].navigate("shares");
-        if (typeof record === "undefined") {
+
+        // a join that never arrived is the one case with nothing to open: the
+        // card is not on the screen either, so it is said here rather than left
+        // as a navigation that did half of what it was for
+        if (joinId !== "" && typeof record === "undefined") {
+            console.warn("The join " + joinId + " did not arrive, so its settings are not opened");
             return;
         }
-        this.ctx["ui"].openDialog("connection", {"joinId": joinId});
+        this.ctx["ui"].openDialog("connection", (joinId === ""
+            ? {"joinId": "", "isLive": true}
+            : {"joinId": joinId}));
     };
 
     // the record a room is about, waited for rather than asked once: it may
@@ -131,16 +156,19 @@ const SharesScreen = class extends Screen {
     async build() {
         this.isBuilding = true;
         try {
-            await this.buildCards();
+            do {
+                this.isPending = false;
+                await this.buildCards();
+            } while (this.isPending === true && this.isOpen === true);
         } finally {
             this.isBuilding = false;
+            this.isPending = false;
         }
     };
 
     async buildCards() {
         const ctx = this.ctx;
         const room = ctx["room"];
-        this.area2.innerHTML = "";
 
         // the connection standing right now, and the record it is on when it is
         // on one - a remembered device that is connected is one card that says
@@ -155,6 +183,11 @@ const SharesScreen = class extends Screen {
             console.error(error);
             return;
         }
+
+        // and only now: the grid emptied before the answer arrives is a screen
+        // that blinks on every rebuild, and one that stays empty when the call
+        // fails
+        this.area2.innerHTML = "";
 
         const localization = ctx["localization"];
         for (const record of records) {
@@ -172,7 +205,13 @@ const SharesScreen = class extends Screen {
             // saying so on the card, since nothing else will ever mention it
             box.setUnattended(record["isUnsupervised"] === true);
 
+            // forgetting one goes both ways and cannot be undone, so it is
+            // asked about first - see confirm() in ui/ui.js
             box.addEventListener("delete", async function(event) {
+                const isConfirmed = await ctx["ui"].confirm({"message": "confirm.deleteJoin"});
+                if (isConfirmed === false) {
+                    return;
+                }
                 await ctx["joins"].remove(event.detail["joinId"]);
                 box.el.remove();
             });
@@ -214,8 +253,11 @@ const SharesScreen = class extends Screen {
         box.addEventListener("settings", function() {
             ctx["ui"].openDialog("connection", {"joinId": "", "isLive": true});
         });
-        box.addEventListener("delete", function() {
-            ctx["room"].leave();
+        box.addEventListener("delete", async function() {
+            const isConfirmed = await ctx["ui"].confirm({"message": "confirm.endRoom", "confirm": "confirm.end"});
+            if (isConfirmed === true) {
+                ctx["room"].leave();
+            }
         });
         return box.el;
     };
