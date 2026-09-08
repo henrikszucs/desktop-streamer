@@ -21,20 +21,24 @@ const PUSH_EVENTS = new Set([
 // src/server/ws/handlers/rooms.js):
 //
 //   [0]      the frame kind - 1 for bytes, 2 for a JSON payload
-//   [1..10]  the room id, one byte per character
+//   [1..10]  this client's own room key, one byte per character
 //   [11..]   the payload
 //
 // Everything the relay carries becomes bytes - which is what the two kinds are
 // for - so nothing sent over it has a size to stay under.
+//
+// The key that goes out is not the key that arrives: each side holds its own,
+// and the server writes the receiver's over the sender's on the way through, so
+// a frame never carries one side's credential to the other.
 const FRAME_DATA = 1;
 const FRAME_JSON = 2;
-const ROOM_ID_LENGTH = 10;
-const FRAME_HEADER = 1 + ROOM_ID_LENGTH;
+const ROOM_KEY_LENGTH = 10;
+const FRAME_HEADER = 1 + ROOM_KEY_LENGTH;
 
 // how long one frame is given to cross, whole rather than packet by packet
 const DATA_TIMEOUT = 60000;
 
-const buildRoomFrame = function(roomId, data) {
+const buildRoomFrame = function(roomKey, data) {
     const isBinary = (data instanceof ArrayBuffer);
     const payload = (isBinary === true
         ? new Uint8Array(data)
@@ -42,8 +46,8 @@ const buildRoomFrame = function(roomId, data) {
 
     const bytes = new Uint8Array(FRAME_HEADER + payload.byteLength);
     bytes[0] = (isBinary === true ? FRAME_DATA : FRAME_JSON);
-    for (let i = 0; i < ROOM_ID_LENGTH; i++) {
-        bytes[1 + i] = roomId.charCodeAt(i);
+    for (let i = 0; i < ROOM_KEY_LENGTH; i++) {
+        bytes[1 + i] = roomKey.charCodeAt(i);
     }
     bytes.set(payload, FRAME_HEADER);
     return bytes.buffer;
@@ -59,20 +63,20 @@ const readRoomFrame = function(buffer) {
     if (header[0] !== FRAME_DATA && header[0] !== FRAME_JSON) {
         return undefined;
     }
-    let roomId = "";
+    let roomKey = "";
     for (let i = 1; i < FRAME_HEADER; i++) {
-        roomId += String.fromCharCode(header[i]);
+        roomKey += String.fromCharCode(header[i]);
     }
 
     const payload = buffer.slice(FRAME_HEADER);
     if (header[0] === FRAME_DATA) {
-        return {"roomId": roomId, "data": payload};
+        return {"roomKey": roomKey, "data": payload};
     }
 
     // what went in as an object comes out as one - a frame that cannot be read
     // back is a frame from something this client does not understand
     try {
-        return {"roomId": roomId, "data": JSON.parse(new TextDecoder().decode(payload))};
+        return {"roomKey": roomKey, "data": JSON.parse(new TextDecoder().decode(payload))};
     } catch (error) {
         console.error("Cannot read a relayed message:", error);
         return undefined;
@@ -371,8 +375,8 @@ const Server = class extends EventTarget {
     // one signal to the other end of the room this connection is in. The server
     // carries it and reads nothing of it: what is inside is between the two
     // clients (see src/room.js).
-    async roomSignal(roomId, signal) {
-        const messageObj = this.communicator.invoke({"type": "room-signal", "roomId": roomId, "signal": signal});
+    async roomSignal(roomKey, signal) {
+        const messageObj = this.communicator.invoke({"type": "room-signal", "roomKey": roomKey, "signal": signal});
         await messageObj.wait();
         if (messageObj.error !== "") {
             throw new Error(messageObj.error);
@@ -386,8 +390,8 @@ const Server = class extends EventTarget {
     // have gone over the connection goes through the server instead. It is
     // refused unless the configuration allows it (`guestAllowRelay`), which is
     // why the caller is told rather than left to wonder.
-    async roomData(roomId, data) {
-        const messageObj = this.communicator.invoke({"type": "room-data", "roomId": roomId, "data": data});
+    async roomData(roomKey, data) {
+        const messageObj = this.communicator.invoke({"type": "room-data", "roomKey": roomKey, "data": data});
         await messageObj.wait();
         if (messageObj.error !== "") {
             throw new Error(messageObj.error);
@@ -404,8 +408,8 @@ const Server = class extends EventTarget {
     // It is *sent* rather than invoked: the answer would be one more round trip
     // per frame and a stream cannot wait for one. What it reports is that the
     // frame left, which is what backpressure needs.
-    async roomDataSend(roomId, data) {
-        const frame = buildRoomFrame(roomId, data);
+    async roomDataSend(roomKey, data) {
+        const frame = buildRoomFrame(roomKey, data);
         const messageObj = this.communicator.send(frame, [frame], DATA_TIMEOUT);
         await messageObj.wait();
         return messageObj.error === "";
@@ -413,11 +417,11 @@ const Server = class extends EventTarget {
 
     // this side is done with the room. A room that is already gone is not an
     // error - it is what the caller wanted - so this one only reports.
-    async roomLeave(roomId) {
+    async roomLeave(roomKey) {
         if (this.isOnline === false) {
             return;
         }
-        const messageObj = this.communicator.invoke({"type": "room-leave", "roomId": roomId});
+        const messageObj = this.communicator.invoke({"type": "room-leave", "roomKey": roomKey});
         await messageObj.wait();
     };
 
@@ -442,7 +446,7 @@ const Server = class extends EventTarget {
             }
             this.dispatchEvent(new CustomEvent("room-data", {"detail": {
                 "type": "room-data",
-                "roomId": frame["roomId"],
+                "roomKey": frame["roomKey"],
                 "data": frame["data"]
             }}));
             return;

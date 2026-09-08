@@ -17,8 +17,23 @@
 import { generateId } from "../../common.js";
 import { notify, pushData } from "../notify.js";
 
-const ROOM_ID_LENGTH = 10;
-const ROOM_ID_ATTEMPTS = 100;
+// What a room is *held* by, and why there are two of them.
+//
+// A room has one identity and two credentials: the host is given one key, the
+// peer another, and neither is ever told the other's. Everything a socket does
+// to a room it does by presenting its own key, and the key names the side as
+// much as the room - so a key that gets out (a log, a screenshot, the other end
+// of a connection, a client that keeps more than it should) can only ever do
+// the half its holder was already doing. One shared id would have made every
+// leak a leak of both halves.
+//
+// The key alone is not the whole check: the socket presenting it still has to
+// be the side that was given it (heldRoom below). The split is what keeps the
+// two halves apart if that check ever has to loosen - a host reconnecting onto
+// a second socket, say - and what keeps the *far end* from holding a credential
+// it could act with.
+const ROOM_KEY_LENGTH = 10;
+const ROOM_KEY_ATTEMPTS = 100;
 
 // a signal is opaque, but it is not unbounded: a relay that carries anything of
 // any size is a way to push anything of any size at somebody else's socket. An
@@ -37,41 +52,47 @@ const DATA_MAX = 64 * 1024;
 // The binary relay frame: what a payload of any size travels as.
 //
 //   [0]      the frame kind - 1 for bytes, 2 for a JSON payload
-//   [1..10]  the room id, one byte per character
+//   [1..10]  the sender's own room key, one byte per character
 //   [11..]   the payload, whatever the two ends put there
 //
 // The header is read by the server to know where to send it and by the other
-// client to know what it is - the same bytes for both, so the frame is
-// forwarded exactly as it arrived and nothing is copied or rebuilt on the way.
-// The kind is not the server's business beyond being one it knows: what a
-// payload *is* stays between the two clients, as everything else in a room does.
-// The client half of this is buildRoomFrame/readRoomFrame in
-// src/client/web/src/server.js and has to match byte for byte.
+// client to know which room it belongs to - but *not* as the same ten bytes:
+// each side knows the room by its own key, so the server writes the far end's
+// key over the sender's before forwarding. It is ten bytes in place, the
+// payload behind them untouched and nothing copied, and it is what keeps the
+// frame from handing one side the other's credential. The kind is not the
+// server's business beyond being one it knows: what a payload *is* stays
+// between the two clients, as everything else in a room does. The client half
+// of this is buildRoomFrame/readRoomFrame in src/client/web/src/server.js and
+// has to match byte for byte.
 const FRAME_DATA = 1;
 const FRAME_JSON = 2;
 const FRAME_KINDS = new Set([FRAME_DATA, FRAME_JSON]);
-const FRAME_HEADER = 1 + ROOM_ID_LENGTH;
+const FRAME_HEADER = 1 + ROOM_KEY_LENGTH;
 
-const generateRoomId = function(server) {
-    for (let i = 0; i < ROOM_ID_ATTEMPTS; i++) {
-        const roomId = generateId(ROOM_ID_LENGTH);
-        if (server.rooms.has(roomId) === false) {
-            return roomId;
+// one key, unique among every key of every room that stands - both sides of a
+// room live in the same table, so a key names a room and a side in one lookup
+const generateRoomKey = function(server, taken = "") {
+    for (let i = 0; i < ROOM_KEY_ATTEMPTS; i++) {
+        const roomKey = generateId(ROOM_KEY_LENGTH);
+        if (server.rooms.has(roomKey) === false && roomKey !== taken) {
+            return roomKey;
         }
     }
     return undefined;
 };
 
-// the rooms one socket is in, so its close can find them
-const roomIdsOf = function(server, sessionId) {
+// the keys one socket holds, so its close can find the rooms they open. Its own
+// only: a socket is never given the key of the side it is talking to.
+const roomKeysOf = function(server, sessionId) {
     const client = server.clients.get(sessionId);
     if (client === undefined) {
         return undefined;
     }
-    if (client.has("roomIds") === false) {
-        client.set("roomIds", new Set());
+    if (client.has("roomKeys") === false) {
+        client.set("roomKeys", new Set());
     }
-    return client.get("roomIds");
+    return client.get("roomKeys");
 };
 
 // Both sides are *told* about the room rather than handed it in an answer, and
@@ -79,54 +100,73 @@ const roomIdsOf = function(server, sessionId) {
 // gets one, and so does the host of an unsupervised join, which is never asked
 // anything at all. One message, one path through the client - see src/room.js.
 const createRoom = function(server, hostSessionId, peerSessionId, joinId = "") {
-    const hostRooms = roomIdsOf(server, hostSessionId);
-    const peerRooms = roomIdsOf(server, peerSessionId);
+    const hostRooms = roomKeysOf(server, hostSessionId);
+    const peerRooms = roomKeysOf(server, peerSessionId);
     if (hostRooms === undefined || peerRooms === undefined) {
         return undefined;       // a socket went while the answer was being sent
     }
 
-    const roomId = generateRoomId(server);
-    if (roomId === undefined) {
+    // one room, two keys - see the note on ROOM_KEY_LENGTH above
+    const hostKey = generateRoomKey(server);
+    const peerKey = generateRoomKey(server, hostKey);
+    if (hostKey === undefined || peerKey === undefined) {
         return undefined;
     }
 
     /*{
-        "roomId", "hostSessionId", "peerSessionId", "joinId"
+        "hostKey", "peerKey", "hostSessionId", "peerSessionId", "joinId"
     }*/
     const room = new Map([
-        ["roomId", roomId],
+        ["hostKey", hostKey],
+        ["peerKey", peerKey],
         ["hostSessionId", hostSessionId],
         ["peerSessionId", peerSessionId],
         ["joinId", joinId]
     ]);
-    server.rooms.set(roomId, room);
-    hostRooms.add(roomId);
-    peerRooms.add(roomId);
+
+    // the same room under both keys: the table answers "which room, and which
+    // side of it" in one lookup, and a room is only ever taken out of it by both
+    server.rooms.set(hostKey, room);
+    server.rooms.set(peerKey, room);
+    hostRooms.add(hostKey);
+    peerRooms.add(peerKey);
 
     // which side a socket is on is what decides who offers, so it is told rather
-    // than worked out from what it happens to remember about the flow
-    notify(server, hostSessionId, {"type": "room-open", "roomId": roomId, "joinId": joinId, "isHost": true});
-    notify(server, peerSessionId, {"type": "room-open", "roomId": roomId, "joinId": joinId, "isHost": false});
+    // than worked out from what it happens to remember about the flow - and it
+    // is told its own key and never the other's
+    notify(server, hostSessionId, {"type": "room-open", "roomKey": hostKey, "joinId": joinId, "isHost": true});
+    notify(server, peerSessionId, {"type": "room-open", "roomKey": peerKey, "joinId": joinId, "isHost": false});
     return room;
 };
 
-// the room a socket is in, from the memory table alone, and which side it is on
-const heldRoom = function(server, sessionId, roomId) {
-    const room = server.rooms.get(roomId);
+// The room a key opens, and the side of it the key is for.
+//
+// Two things are asked and both have to hold: the key is one this server handed
+// out, and the socket presenting it is the side it was handed to. The first
+// makes a guessed key worthless, the second makes a *stolen* one worthless to
+// anybody but its owner - and because the two sides have different keys, the
+// far end of a room holds nothing it could present here at all.
+const heldRoom = function(server, sessionId, roomKey) {
+    const room = server.rooms.get(roomKey);
     if (room === undefined) {
         return undefined;
     }
-    if (room.get("hostSessionId") === sessionId) {
-        return {"room": room, "isHost": true};
+    const isHost = (room.get("hostKey") === roomKey);
+    if (room.get(isHost === true ? "hostSessionId" : "peerSessionId") !== sessionId) {
+        return undefined;
     }
-    if (room.get("peerSessionId") === sessionId) {
-        return {"room": room, "isHost": false};
-    }
-    return undefined;
+    return {"room": room, "isHost": isHost, "roomKey": roomKey};
 };
 
 const otherSessionId = function(room, isHost) {
     return room.get(isHost === true ? "peerSessionId" : "hostSessionId");
+};
+
+// what the other side knows this room by, which is what anything carried across
+// has to arrive under: the far end has never seen the sender's key and would
+// not recognise it, and handing it over is the one thing the split is against
+const otherRoomKey = function(room, isHost) {
+    return room.get(isHost === true ? "peerKey" : "hostKey");
 };
 
 // What this connection may spend the server's bandwidth on, as it was answered
@@ -145,16 +185,23 @@ const isRelayAllowed = function(server, sessionId) {
 // a room ends for both when it ends for one - there is no room with one side in
 // it - and whoever did not ask for the ending is told why
 const closeRoom = function(server, room, reason, exceptSessionId) {
-    const roomId = room.get("roomId");
-    if (server.rooms.delete(roomId) === false) {
+    // the host key is what says whether this room is still standing: both keys
+    // go in together and come out together, so one of them answers for both
+    if (server.rooms.delete(room.get("hostKey")) === false) {
         return;     // already closed, by the other side or by the same socket
     }
-    for (const sessionId of [room.get("hostSessionId"), room.get("peerSessionId")]) {
-        server.clients.get(sessionId)?.get("roomIds")?.delete(roomId);
+    server.rooms.delete(room.get("peerKey"));
+
+    for (const isHost of [true, false]) {
+        const sessionId = room.get(isHost === true ? "hostSessionId" : "peerSessionId");
+        const roomKey = room.get(isHost === true ? "hostKey" : "peerKey");
+
+        server.clients.get(sessionId)?.get("roomKeys")?.delete(roomKey);
         if (sessionId === exceptSessionId) {
             continue;
         }
-        notify(server, sessionId, {"type": "room-close", "roomId": roomId, "reason": reason});
+        // each side hears about the room in the only words it knows it by
+        notify(server, sessionId, {"type": "room-close", "roomKey": roomKey, "reason": reason});
     }
 };
 
@@ -162,12 +209,12 @@ const closeRoom = function(server, room, reason, exceptSessionId) {
 // connection it was negotiating cannot be finished without it, and the other end
 // is waiting on a message that is not coming.
 const detachRooms = function(server, sessionId) {
-    const roomIds = server.clients.get(sessionId)?.get("roomIds");
-    if (roomIds === undefined) {
+    const roomKeys = server.clients.get(sessionId)?.get("roomKeys");
+    if (roomKeys === undefined) {
         return;
     }
-    for (const roomId of new Set(roomIds)) {
-        const room = server.rooms.get(roomId);
+    for (const roomKey of new Set(roomKeys)) {
+        const room = server.rooms.get(roomKey);
         if (room === undefined) {
             continue;
         }
@@ -190,7 +237,7 @@ const releaseRooms = function(server) {
 const relayTo = function(ctx, relay) {
     const server = ctx["server"];
     const message = ctx["message"];
-    const held = heldRoom(server, ctx["sessionId"], message["roomId"]);
+    const held = heldRoom(server, ctx["sessionId"], message["roomKey"]);
     if (held === undefined) {
         ctx["messageObj"].send({"success": false, "error": "unknown-room"});
         return;
@@ -214,7 +261,7 @@ const relayTo = function(ctx, relay) {
 
     notify(server, targetSessionId, {
         "type": relay["type"],
-        "roomId": held["room"].get("roomId"),
+        "roomKey": otherRoomKey(held["room"], held["isHost"]),
         [relay["field"]]: payload
     });
     ctx["messageObj"].send({"success": true});
@@ -249,7 +296,7 @@ const DATA_RELAY = {
 // nothing between them.
 const roomSignal = function(ctx) {
     /*{
-        "roomId": string,
+        "roomKey": string,      (this caller's own - see heldRoom)
         "signal": object        (opaque: the SDP or the candidate)
     }*/
     /*{
@@ -263,13 +310,13 @@ const roomSignal = function(ctx) {
 // an error - the room is gone either way, which is what the caller wanted.
 const roomLeave = function(ctx) {
     /*{
-        "roomId": string
+        "roomKey": string
     }*/
     /*{
         "success": boolean
     }*/
     const server = ctx["server"];
-    const held = heldRoom(server, ctx["sessionId"], ctx["message"]["roomId"]);
+    const held = heldRoom(server, ctx["sessionId"], ctx["message"]["roomKey"]);
     if (held !== undefined) {
         closeRoom(server, held["room"], "left", ctx["sessionId"]);
     }
@@ -286,7 +333,7 @@ const roomLeave = function(ctx) {
 // until a configuration says otherwise.
 const roomData = function(ctx) {
     /*{
-        "roomId": string,
+        "roomKey": string,      (this caller's own - see heldRoom)
         "data": any             (opaque: whatever the two ends are saying)
     }*/
     /*{
@@ -321,18 +368,25 @@ const roomFrame = function(ctx) {
     if (FRAME_KINDS.has(header[0]) === false) {
         return;
     }
-    let roomId = "";
+    let roomKey = "";
     for (let i = 1; i < FRAME_HEADER; i++) {
-        roomId += String.fromCharCode(header[i]);
+        roomKey += String.fromCharCode(header[i]);
     }
 
     // the same three questions the call above asks, in the same order
     if (isRelayAllowed(server, ctx["sessionId"]) === false) {
         return;
     }
-    const held = heldRoom(server, ctx["sessionId"], roomId);
+    const held = heldRoom(server, ctx["sessionId"], roomKey);
     if (held === undefined) {
         return;
+    }
+
+    // and the far end's key over the sender's, in place: it knows the room by
+    // that one and by no other, and it must not be handed this one
+    const targetKey = otherRoomKey(held["room"], held["isHost"]);
+    for (let i = 0; i < ROOM_KEY_LENGTH; i++) {
+        header[1 + i] = targetKey.charCodeAt(i);
     }
 
     pushData(server, otherSessionId(held["room"], held["isHost"]), buffer);
@@ -345,5 +399,5 @@ const handlers = {
     "room-leave": roomLeave
 };
 
-export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, isRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER };
+export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH };
 export default handlers;

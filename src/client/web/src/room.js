@@ -51,7 +51,7 @@ const createRoom = function(ctx) {
     let connection = null;      // RTCPeerConnection
     let channel = null;         // RTCDataChannel
     let channelCom = null;      // the Communicator over that channel
-    let roomId = "";
+    let roomKey = "";           // this side's own key for the room - never the other side's
     let joinId = "";            // the join this room is on, "" for a pairing nobody remembered
     let name = "";              // what this side calls it while it stands - see setName
     let isHost = false;
@@ -63,25 +63,25 @@ const createRoom = function(ctx) {
     // to go yet: ICE starts on both ends at once and the two messages cross
     const earlyCandidates = [];
 
-    // and a signal that arrives before this side's own room-open, kept by room
-    // id because that is all this side knows about it until one comes
-    const earlySignals = new Map();     // roomId -> [signal]
+    // and a signal that arrives before this side's own room-open, kept by the
+    // room key in it because that is all this side knows about it until one comes
+    const earlySignals = new Map();     // roomKey -> [signal]
 
     // enough for an offer and the candidates that chase it, and no more: what is
     // held here is held for a room this side may never be in
     const EARLY_MAX = 64;
 
     const holdSignal = function(detail) {
-        const earlyRoomId = detail?.["roomId"];
-        if (typeof earlyRoomId !== "string" || earlyRoomId === "") {
+        const earlyRoomKey = detail?.["roomKey"];
+        if (typeof earlyRoomKey !== "string" || earlyRoomKey === "") {
             return;
         }
-        const held = earlySignals.get(earlyRoomId) ?? [];
+        const held = earlySignals.get(earlyRoomKey) ?? [];
         if (held.length >= EARLY_MAX) {
             return;
         }
         held.push(detail["signal"]);
-        earlySignals.set(earlyRoomId, held);
+        earlySignals.set(earlyRoomKey, held);
     };
 
     const emit = function(type, detail) {
@@ -101,11 +101,11 @@ const createRoom = function(ctx) {
     // negotiation failing, and the connection state is what says so - there is
     // nothing to retry here that ICE does not retry itself.
     const send = async function(signal) {
-        if (roomId === "") {
+        if (roomKey === "") {
             return false;
         }
         try {
-            await ctx["server"].roomSignal(roomId, signal);
+            await ctx["server"].roomSignal(roomKey, signal);
             return true;
         } catch (error) {
             console.error("Cannot send a signal:", error);
@@ -126,7 +126,7 @@ const createRoom = function(ctx) {
                 "sdp": connection.localDescription.sdp
             }
         });
-        console.log("Room " + roomId + " sent " + connection.localDescription.type + (isSent === true ? "" : " (failed)"));
+        console.log("Room " + roomKey + " sent " + connection.localDescription.type + (isSent === true ? "" : " (failed)"));
         if (isSent === false) {
             leave("failed");
         }
@@ -169,7 +169,7 @@ const createRoom = function(ctx) {
             if (messageObj.error !== "") {
                 return;
             }
-            emit("message", {"roomId": roomId, "data": messageObj.data});
+            emit("message", {"roomKey": roomKey, "data": messageObj.data});
         });
 
         channel.addEventListener("message", function(event) {
@@ -181,7 +181,7 @@ const createRoom = function(ctx) {
         });
 
         channel.addEventListener("open", async function() {
-            const openRoomId = roomId;
+            const openRoomKey = roomKey;
 
             // both ends sync, as they do over the socket: which side owns which
             // message ids is what is being agreed, and one side doing it alone
@@ -196,14 +196,14 @@ const createRoom = function(ctx) {
                 console.error("Cannot sync the channel:", error);
                 return;
             }
-            if (roomId !== openRoomId || mode !== MODE_DIRECT) {
+            if (roomKey !== openRoomKey || mode !== MODE_DIRECT) {
                 return;         // the room went, or the relay was taken meanwhile
             }
 
             clearTimeout(directTimeoutId);
             directTimeoutId = -1;
             state = "connected";
-            emit("connected", {"roomId": roomId, "isHost": isHost, "isRelay": false});
+            emit("connected", {"roomKey": roomKey, "isHost": isHost, "isRelay": false});
         });
 
         // a channel that closes while it *is* the room is the connection being
@@ -213,10 +213,10 @@ const createRoom = function(ctx) {
                 return;
             }
             setTimeout(function() {
-                if (roomId === "" || mode !== MODE_DIRECT || state === "closed") {
+                if (roomKey === "" || mode !== MODE_DIRECT || state === "closed") {
                     return;     // the socket has since said what happened
                 }
-                console.log("Room " + roomId + " lost its direct connection");
+                console.log("Room " + roomKey + " lost its direct connection");
                 startRelay(false);
             }, CLOSE_GRACE);
         });
@@ -235,12 +235,12 @@ const createRoom = function(ctx) {
     // moment: whoever gets there first says so, and the other follows on the
     // spot rather than waiting out its own clock.
     const startRelay = function(isTold) {
-        if (mode === MODE_RELAY || roomId === "") {
+        if (mode === MODE_RELAY || roomKey === "") {
             return;
         }
         if (isRelayAllowed() === false) {
             if (isTold !== true) {
-                console.log("Room " + roomId + " has no relay to fall back on");
+                console.log("Room " + roomKey + " has no relay to fall back on");
                 teardown("failed");
             }
             return;
@@ -258,8 +258,8 @@ const createRoom = function(ctx) {
             send({"kind": "relay"});
         }
         state = "connected";
-        console.log("Room " + roomId + " is connected through the server");
-        emit("connected", {"roomId": roomId, "isHost": isHost, "isRelay": true});
+        console.log("Room " + roomKey + " is connected through the server");
+        emit("connected", {"roomKey": roomKey, "isHost": isHost, "isRelay": true});
     };
 
     // the direct attempt, given a clock of its own. ICE reports "failed" where it
@@ -268,10 +268,10 @@ const createRoom = function(ctx) {
     const startDirectClock = function() {
         clearTimeout(directTimeoutId);
         directTimeoutId = setTimeout(function() {
-            if (state === "connected" || roomId === "") {
+            if (state === "connected" || roomKey === "") {
                 return;
             }
-            console.log("Room " + roomId + " could not connect directly");
+            console.log("Room " + roomKey + " could not connect directly");
             startRelay(false);
         }, DIRECT_TIMEOUT);
     };
@@ -280,16 +280,16 @@ const createRoom = function(ctx) {
         // one room at a time on this client. The server does not impose that -
         // a host may be in several - but one screen shows one connection, so a
         // second is what the first is replaced by rather than hidden behind.
-        if (roomId !== "") {
+        if (roomKey !== "") {
             leave("replaced");
         }
 
-        roomId = detail?.["roomId"] ?? "";
+        roomKey = detail?.["roomKey"] ?? "";
         joinId = detail?.["joinId"] ?? "";
         name = "";
         isHost = (detail?.["isHost"] === true);
         mode = MODE_DIRECT;
-        if (roomId === "") {
+        if (roomKey === "") {
             return;
         }
         startDirectClock();
@@ -307,7 +307,7 @@ const createRoom = function(ctx) {
             // "disconnected" is not an ending - ICE is allowed to come back from
             // it - so only the two that are wait for nothing
             const current = connection?.connectionState;
-            console.log("Room " + roomId + " is " + current);
+            console.log("Room " + roomKey + " is " + current);
 
             // a direct connection that failed is what the relay is for; one that
             // was closed on purpose is not
@@ -332,20 +332,20 @@ const createRoom = function(ctx) {
         }
 
         state = "connecting";
-        emit("connecting", {"roomId": roomId, "isHost": isHost});
-        console.log("Room " + roomId + " open as " + (isHost === true ? "host" : "peer"));
+        emit("connecting", {"roomKey": roomKey, "isHost": isHost});
+        console.log("Room " + roomKey + " open as " + (isHost === true ? "host" : "peer"));
 
         // whatever arrived before this side knew there was a room. Every other
         // room id held here belongs to one this client is not in.
-        const held = earlySignals.get(roomId) ?? [];
+        const held = earlySignals.get(roomKey) ?? [];
         earlySignals.clear();
         for (const signal of held) {
-            onSignal({"roomId": roomId, "signal": signal});
+            onSignal({"roomKey": roomKey, "signal": signal});
         }
     };
 
     const onSignal = async function(detail) {
-        if (connection === null || detail?.["roomId"] !== roomId) {
+        if (connection === null || detail?.["roomKey"] !== roomKey) {
             holdSignal(detail);
             return;
         }
@@ -401,8 +401,8 @@ const createRoom = function(ctx) {
     // everything this client holds of the connection, and nothing about the
     // server's half of it - which is why the two ways out below are different
     const teardown = function(reason) {
-        const closedRoomId = roomId;
-        roomId = "";
+        const closedRoomKey = roomKey;
+        roomKey = "";
         joinId = "";
         name = "";
         mode = MODE_DIRECT;
@@ -416,17 +416,17 @@ const createRoom = function(ctx) {
             return "";
         }
         state = "closed";
-        console.log("Room " + closedRoomId + " closed (" + reason + ")");
-        emit("closed", {"roomId": closedRoomId, "reason": reason});
-        return closedRoomId;
+        console.log("Room " + closedRoomKey + " closed (" + reason + ")");
+        emit("closed", {"roomKey": closedRoomKey, "reason": reason});
+        return closedRoomKey;
     };
 
     // this side is done with it, so the other one is told through the server -
     // the room goes with it and nothing is left holding a socket open
     const leave = function(reason = "left") {
-        const closedRoomId = teardown(reason);
-        if (closedRoomId !== "") {
-            ctx["server"].roomLeave(closedRoomId);
+        const closedRoomKey = teardown(reason);
+        if (closedRoomKey !== "") {
+            ctx["server"].roomLeave(closedRoomKey);
         }
     };
 
@@ -443,20 +443,20 @@ const createRoom = function(ctx) {
     // what the other end said, carried by the server because the two of them
     // could not say it to each other
     ctx["server"].addEventListener("room-data", function(event) {
-        if (event.detail?.["roomId"] !== roomId) {
+        if (event.detail?.["roomKey"] !== roomKey) {
             return;
         }
 
         // the first relayed message is also the other end saying it gave up, for
         // the case where the signal that says so is the one that went missing
         startRelay(true);
-        emit("message", {"roomId": roomId, "data": event.detail?.["data"]});
+        emit("message", {"roomKey": roomKey, "data": event.detail?.["data"]});
     });
 
     // the other end left, or its socket did: the room is already gone on the
     // server, so this one only takes itself down
     ctx["server"].addEventListener("room-close", function(event) {
-        if (event.detail?.["roomId"] !== roomId) {
+        if (event.detail?.["roomKey"] !== roomKey) {
             return;
         }
         teardown(event.detail?.["reason"] ?? "closed");
@@ -480,10 +480,10 @@ const createRoom = function(ctx) {
                 // everything goes as a frame, bytes or not: the communicator
                 // splits those into packets, so this is the one path with no
                 // size to stay under and there is no reason to keep a second
-                if (roomId === "") {
+                if (roomKey === "") {
                     return false;
                 }
-                return await ctx["server"].roomDataSend(roomId, data);
+                return await ctx["server"].roomDataSend(roomKey, data);
             }
             // the direct leg is the same protocol as the relay: the communicator
             // splits it, acknowledges it and puts it together at the other end,
@@ -513,8 +513,8 @@ const createRoom = function(ctx) {
         "isConnected": function() {
             return state === "connected";
         },
-        "getRoomId": function() {
-            return roomId;
+        "getRoomKey": function() {
+            return roomKey;
         },
 
         // the join this room stands on, when it stands on one. A pairing the
@@ -538,7 +538,7 @@ const createRoom = function(ctx) {
         },
         "setName": function(value) {
             name = (typeof value === "string" ? value : "");
-            emit("name", {"roomId": roomId, "name": name});
+            emit("name", {"roomKey": roomKey, "name": name});
         },
 
         // whether this client is sharing itself out right now. It is the room

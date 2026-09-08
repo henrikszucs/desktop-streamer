@@ -80,14 +80,54 @@ test("a room tells both sides which of them it is", () => {
     const peerOpen = pushesOf(server, "peer", "room-open")[0];
     assert.equal(hostOpen["isHost"], true);
     assert.equal(peerOpen["isHost"], false);
-    assert.equal(hostOpen["roomId"], room.get("roomId"));
-    assert.equal(peerOpen["roomId"], room.get("roomId"));
+    assert.equal(hostOpen["roomKey"], room.get("hostKey"));
+    assert.equal(peerOpen["roomKey"], room.get("peerKey"));
     assert.equal(peerOpen["joinId"], "join-1");
 
+    // and each is told its own key and never the other's
+    assert.notEqual(room.get("hostKey"), room.get("peerKey"));
+    assert.equal(hostOpen["peerKey"], undefined);
+    assert.equal(peerOpen["hostKey"], undefined);
+
     // and both are in it, whichever way round it is asked
-    assert.equal(heldRoom(server, "host", room.get("roomId"))["isHost"], true);
-    assert.equal(heldRoom(server, "peer", room.get("roomId"))["isHost"], false);
-    assert.equal(heldRoom(server, "other", room.get("roomId")), undefined);
+    assert.equal(heldRoom(server, "host", room.get("hostKey"))["isHost"], true);
+    assert.equal(heldRoom(server, "peer", room.get("peerKey"))["isHost"], false);
+    assert.equal(heldRoom(server, "other", room.get("hostKey")), undefined);
+
+    releaseRooms(server);
+});
+
+// what the two keys are for: one of them is worth nothing in the other's hands
+test("a room key opens its own side and no other", () => {
+    const server = buildServer();
+    const room = createRoom(server, "host", "peer", "");
+
+    // the key of the side you are not is not a key at all here
+    assert.equal(heldRoom(server, "peer", room.get("hostKey")), undefined);
+    assert.equal(heldRoom(server, "host", room.get("peerKey")), undefined);
+
+    // so a socket holding the far end's key cannot act with it
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("hostKey"), "signal": {"kind": "description"}});
+    roomSignal(ctx);
+    assert.equal(ctx.answers[0]["error"], "unknown-room");
+    assert.equal(pushesOf(server, "host", "room-signal").length, 0);
+    assert.equal(pushesOf(server, "peer", "room-signal").length, 0);
+
+    releaseRooms(server);
+});
+
+// and what crosses is addressed in the words the far end knows
+test("a relayed message arrives under the receiver's own key", () => {
+    const server = buildServer();
+    const room = createRoom(server, "host", "peer", "");
+
+    roomSignal(buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "signal": {"kind": "candidate"}}));
+    const atHost = pushesOf(server, "host", "room-signal")[0];
+    assert.equal(atHost["roomKey"], room.get("hostKey"));
+
+    roomData(buildCtx(server, "host", {"roomKey": room.get("hostKey"), "data": {"n": 1}}));
+    const atPeer = pushesOf(server, "peer", "room-data")[0];
+    assert.equal(atPeer["roomKey"], room.get("peerKey"));
 
     releaseRooms(server);
 });
@@ -105,16 +145,16 @@ test("a room needs two sockets that are still there", () => {
 test("a signal is carried to the other end and to nobody else", () => {
     const server = buildServer();
     const room = createRoom(server, "host", "peer", "");
-    const roomId = room.get("roomId");
+    const peerKey = room.get("peerKey");
 
-    const ctx = buildCtx(server, "peer", {"roomId": roomId, "signal": {"kind": "description"}});
+    const ctx = buildCtx(server, "peer", {"roomKey": peerKey, "signal": {"kind": "description"}});
     roomSignal(ctx);
 
     assert.equal(ctx.answers[0]["success"], true);
     const carried = pushesOf(server, "host", "room-signal");
     assert.equal(carried.length, 1);
     assert.deepEqual(carried[0]["signal"], {"kind": "description"});
-    assert.equal(carried[0]["roomId"], roomId);
+    assert.equal(carried[0]["roomKey"], room.get("hostKey"));
     assert.equal(pushesOf(server, "peer", "room-signal").length, 0);
     assert.equal(pushesOf(server, "other", "room-signal").length, 0);
 
@@ -125,12 +165,12 @@ test("a signal into a room the caller is not in goes nowhere", () => {
     const server = buildServer();
     const room = createRoom(server, "host", "peer", "");
 
-    const ctx = buildCtx(server, "other", {"roomId": room.get("roomId"), "signal": {"kind": "candidate"}});
+    const ctx = buildCtx(server, "other", {"roomKey": room.get("peerKey"), "signal": {"kind": "candidate"}});
     roomSignal(ctx);
     assert.equal(ctx.answers[0]["error"], "unknown-room");
     assert.equal(pushesOf(server, "host", "room-signal").length, 0);
 
-    const gone = buildCtx(server, "peer", {"roomId": "no-such-room", "signal": {}});
+    const gone = buildCtx(server, "peer", {"roomKey": "no-such-room", "signal": {}});
     roomSignal(gone);
     assert.equal(gone.answers[0]["error"], "unknown-room");
 
@@ -140,13 +180,13 @@ test("a signal into a room the caller is not in goes nowhere", () => {
 test("the envelope is checked even though the contents are not", () => {
     const server = buildServer();
     const room = createRoom(server, "host", "peer", "");
-    const roomId = room.get("roomId");
+    const peerKey = room.get("peerKey");
 
-    const notAnObject = buildCtx(server, "peer", {"roomId": roomId, "signal": "offer"});
+    const notAnObject = buildCtx(server, "peer", {"roomKey": peerKey, "signal": "offer"});
     roomSignal(notAnObject);
     assert.equal(notAnObject.answers[0]["error"], "invalid-signal");
 
-    const tooLarge = buildCtx(server, "peer", {"roomId": roomId, "signal": {"sdp": "x".repeat(SIGNAL_MAX)}});
+    const tooLarge = buildCtx(server, "peer", {"roomKey": peerKey, "signal": {"sdp": "x".repeat(SIGNAL_MAX)}});
     roomSignal(tooLarge);
     assert.equal(tooLarge.answers[0]["error"], "too-large");
 
@@ -159,7 +199,7 @@ test("a signal to a socket that is gone says so", () => {
     const room = createRoom(server, "host", "peer", "");
     server.clients.delete("host");
 
-    const ctx = buildCtx(server, "peer", {"roomId": room.get("roomId"), "signal": {}});
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "signal": {}});
     roomSignal(ctx);
     assert.equal(ctx.answers[0]["error"], "offline");
 
@@ -172,9 +212,8 @@ test("a signal to a socket that is gone says so", () => {
 test("leaving tells the other side once and answers either way", () => {
     const server = buildServer();
     const room = createRoom(server, "host", "peer", "");
-    const roomId = room.get("roomId");
 
-    const ctx = buildCtx(server, "peer", {"roomId": roomId});
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("peerKey")});
     roomLeave(ctx);
 
     assert.equal(ctx.answers[0]["success"], true);
@@ -185,7 +224,7 @@ test("leaving tells the other side once and answers either way", () => {
     assert.equal(server.rooms.size, 0);
 
     // and the room is gone for both, so a second leave is not an error
-    const again = buildCtx(server, "host", {"roomId": roomId});
+    const again = buildCtx(server, "host", {"roomKey": room.get("hostKey")});
     roomLeave(again);
     assert.equal(again.answers[0]["success"], true);
     assert.equal(pushesOf(server, "peer", "room-close").length, 0);
@@ -201,10 +240,10 @@ test("a socket that goes takes its rooms with it", () => {
     const closes = pushesOf(server, "peer", "room-close");
     assert.equal(closes.length, 1);
     assert.equal(closes[0]["reason"], "gone");
-    assert.equal(server.clients.get("peer").get("roomIds").size, 0);
+    assert.equal(server.clients.get("peer").get("roomKeys").size, 0);
 
     // the signal that was on its way has nowhere to go now
-    const ctx = buildCtx(server, "peer", {"roomId": room.get("roomId"), "signal": {}});
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "signal": {}});
     roomSignal(ctx);
     assert.equal(ctx.answers[0]["error"], "unknown-room");
 });
@@ -225,16 +264,15 @@ test("closing a room twice notifies once", () => {
 test("relayed data is carried to the other end and to nobody else", () => {
     const server = buildServer();
     const room = createRoom(server, "host", "peer", "");
-    const roomId = room.get("roomId");
 
-    const ctx = buildCtx(server, "peer", {"roomId": roomId, "data": {"hello": "host"}});
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "data": {"hello": "host"}});
     roomData(ctx);
 
     assert.equal(ctx.answers[0]["success"], true);
     const carried = pushesOf(server, "host", "room-data");
     assert.equal(carried.length, 1);
     assert.deepEqual(carried[0]["data"], {"hello": "host"});
-    assert.equal(carried[0]["roomId"], roomId);
+    assert.equal(carried[0]["roomKey"], room.get("hostKey"));
     assert.equal(pushesOf(server, "peer", "room-data").length, 0);
     assert.equal(pushesOf(server, "other", "room-data").length, 0);
 
@@ -247,12 +285,12 @@ test("a server that does not carry data says so before anything else", () => {
 
     // and it is answered for a room that does not exist either, so a client
     // cannot tell the two apart by asking
-    const ctx = buildCtx(server, "peer", {"roomId": room.get("roomId"), "data": {}});
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "data": {}});
     roomData(ctx);
     assert.equal(ctx.answers[0]["error"], "not-allowed");
     assert.equal(pushesOf(server, "host", "room-data").length, 0);
 
-    const unknown = buildCtx(server, "peer", {"roomId": "no-such-room", "data": {}});
+    const unknown = buildCtx(server, "peer", {"roomKey": "no-such-room", "data": {}});
     roomData(unknown);
     assert.equal(unknown.answers[0]["error"], "not-allowed");
 
@@ -262,17 +300,17 @@ test("a server that does not carry data says so before anything else", () => {
 test("relayed data is bounded and belongs to a room the caller is in", () => {
     const server = buildServer();
     const room = createRoom(server, "host", "peer", "");
-    const roomId = room.get("roomId");
+    const peerKey = room.get("peerKey");
 
-    const outside = buildCtx(server, "other", {"roomId": roomId, "data": {}});
+    const outside = buildCtx(server, "other", {"roomKey": peerKey, "data": {}});
     roomData(outside);
     assert.equal(outside.answers[0]["error"], "unknown-room");
 
-    const nothing = buildCtx(server, "peer", {"roomId": roomId});
+    const nothing = buildCtx(server, "peer", {"roomKey": peerKey});
     roomData(nothing);
     assert.equal(nothing.answers[0]["error"], "invalid-data");
 
-    const tooLarge = buildCtx(server, "peer", {"roomId": roomId, "data": "x".repeat(DATA_MAX)});
+    const tooLarge = buildCtx(server, "peer", {"roomKey": peerKey, "data": "x".repeat(DATA_MAX)});
     roomData(tooLarge);
     assert.equal(tooLarge.answers[0]["error"], "too-large");
 
@@ -285,7 +323,7 @@ test("relayed data to a socket that is gone says so", () => {
     const room = createRoom(server, "host", "peer", "");
     server.clients.delete("host");
 
-    const ctx = buildCtx(server, "peer", {"roomId": room.get("roomId"), "data": {}});
+    const ctx = buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "data": {}});
     roomData(ctx);
     assert.equal(ctx.answers[0]["error"], "offline");
 
@@ -299,16 +337,15 @@ test("the relay permission is the connection's own, not the server's at that mom
     // the configuration object says now
     server.clients.get("peer").set("isRelayAllowed", false);
     const room = createRoom(server, "host", "peer", "");
-    const roomId = room.get("roomId");
 
-    const refused = buildCtx(server, "peer", {"roomId": roomId, "data": {"from": "peer"}});
+    const refused = buildCtx(server, "peer", {"roomKey": room.get("peerKey"), "data": {"from": "peer"}});
     roomData(refused);
     assert.equal(refused.answers[0]["error"], "not-allowed");
     assert.equal(pushesOf(server, "host", "room-data").length, 0);
 
     // and the other end, taken while it was allowed, still may - the answer
     // belongs to the connection and not to the room the two of them share
-    const allowed = buildCtx(server, "host", {"roomId": roomId, "data": {"from": "host"}});
+    const allowed = buildCtx(server, "host", {"roomKey": room.get("hostKey"), "data": {"from": "host"}});
     roomData(allowed);
     assert.equal(allowed.answers[0]["success"], true);
     assert.equal(pushesOf(server, "peer", "room-data").length, 1);

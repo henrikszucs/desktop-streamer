@@ -26,8 +26,8 @@ tables below do not describe — where that is so, the section says which.
 | `join-rename` | `handlers/joins.js` | `{"joinId", "name"}` | `{"success", "name"}` |
 | `join-request` / `join-accept` / `join-reject` | `handlers/joins.js` | `{"joinId"}` | the same accept-or-reject, on a pairing already made |
 | `join-delete` | `handlers/joins.js` | `{"joinId"}` | `{"success"}` |
-| `room-signal` / `room-data` / `room-leave` | `handlers/rooms.js` | `{"roomId", …}` | the relay, one message per call |
-| a **binary** message | `handlers/rooms.js` | `[kind][roomId][payload]` | forwarded, unanswered |
+| `room-signal` / `room-data` / `room-leave` | `handlers/rooms.js` | `{"roomKey", …}` | the relay, one message per call - the key is the caller's own side |
+| a **binary** message | `handlers/rooms.js` | `[kind][room key][payload]` | forwarded, unanswered, the key rewritten to the receiver's |
 
 `ping`, `session-get`, `join-list`, `join-request`/`join-accept`/`join-reject`
 and the three `room-*` calls are newer than the cut — they were never in

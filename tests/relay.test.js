@@ -132,11 +132,11 @@ const framesOf = function(client) {
 
 // the client half of the frame, written here rather than imported: a test that
 // builds the bytes itself is what catches the two halves drifting apart
-const buildFrame = function(roomId, payload) {
+const buildFrame = function(roomKey, payload) {
     const bytes = new Uint8Array(FRAME_HEADER + payload.byteLength);
     bytes[0] = FRAME_DATA;
-    for (let i = 0; i < roomId.length; i++) {
-        bytes[1 + i] = roomId.charCodeAt(i);
+    for (let i = 0; i < roomKey.length; i++) {
+        bytes[1 + i] = roomKey.charCodeAt(i);
     }
     bytes.set(new Uint8Array(payload), FRAME_HEADER);
     return bytes.buffer;
@@ -211,12 +211,24 @@ const dropRoom = function() {
 // the room the two ends are put in
 //
 test("an accepted pairing puts both machines in one room, each told its side", async () => {
-    const {hostOpen, peerOpen} = await buildRoom();
+    const {host, peer, hostOpen, peerOpen} = await buildRoom();
 
-    assert.equal(typeof hostOpen["roomId"], "string");
-    assert.equal(hostOpen["roomId"], peerOpen["roomId"]);
+    assert.equal(typeof hostOpen["roomKey"], "string");
     assert.equal(hostOpen["isHost"], true);
     assert.equal(peerOpen["isHost"], false);
+
+    // one room, but never one credential: each machine is told a key of its own
+    // and is handed nothing of the other's, so a key that gets out can only do
+    // the half its holder was already doing
+    assert.equal(typeof peerOpen["roomKey"], "string");
+    assert.notEqual(hostOpen["roomKey"], peerOpen["roomKey"]);
+    assert.equal(serverWS.rooms.size, 2);        // the one room, under both keys
+
+    // and the far end's key is refused from this end, which is the whole point
+    const wrongWay = await call(peer, {"type": "room-signal", "roomKey": hostOpen["roomKey"], "signal": {"kind": "description"}});
+    assert.equal(wrongWay["error"], "unknown-room");
+    await settle();
+    assert.equal(pushesOf(host, "room-signal").length, 0);
 
     dropRoom();
 });
@@ -225,22 +237,24 @@ test("an accepted pairing puts both machines in one room, each told its side", a
 // the relay itself
 //
 test("the peer reaches the host through the server, and the host reaches back", async () => {
-    const {host, peer, peerOpen} = await buildRoom(true);
-    const roomId = peerOpen["roomId"];
+    const {host, peer, hostOpen, peerOpen} = await buildRoom(true);
 
     // peer -> server -> host
-    const up = await call(peer, {"type": "room-data", "roomId": roomId, "data": {"from": "peer", "n": 1}});
+    const up = await call(peer, {"type": "room-data", "roomKey": peerOpen["roomKey"], "data": {"from": "peer", "n": 1}});
     assert.equal(up["success"], true);
     await settle();
 
     const atHost = pushesOf(host, "room-data");
     assert.equal(atHost.length, 1);
     assert.deepEqual(atHost[0]["data"], {"from": "peer", "n": 1});
-    assert.equal(atHost[0]["roomId"], roomId);
+
+    // in the host's own words: what crosses is re-addressed on the way, so
+    // neither end ever sees the key the other one holds
+    assert.equal(atHost[0]["roomKey"], hostOpen["roomKey"]);
     assert.equal(pushesOf(peer, "room-data").length, 0);
 
     // host -> server -> peer, the same relay the other way round
-    const down = await call(host, {"type": "room-data", "roomId": roomId, "data": {"from": "host", "n": 2}});
+    const down = await call(host, {"type": "room-data", "roomKey": hostOpen["roomKey"], "data": {"from": "host", "n": 2}});
     assert.equal(down["success"], true);
     await settle();
 
@@ -252,14 +266,14 @@ test("the peer reaches the host through the server, and the host reaches back", 
 });
 
 test("the negotiation crosses the same way, so the relay is the fallback and not a second protocol", async () => {
-    const {host, peer, peerOpen} = await buildRoom(true);
+    const {host, peer, hostOpen, peerOpen} = await buildRoom(true);
 
-    await call(peer, {"type": "room-signal", "roomId": peerOpen["roomId"], "signal": {"kind": "description"}});
+    await call(peer, {"type": "room-signal", "roomKey": peerOpen["roomKey"], "signal": {"kind": "description"}});
     await settle();
     assert.equal(pushesOf(host, "room-signal").length, 1);
 
     // and the client's way of saying it gave up on a direct connection
-    await call(host, {"type": "room-signal", "roomId": peerOpen["roomId"], "signal": {"kind": "relay"}});
+    await call(host, {"type": "room-signal", "roomKey": hostOpen["roomKey"], "signal": {"kind": "relay"}});
     await settle();
     assert.deepEqual(pushesOf(peer, "room-signal")[0]["signal"], {"kind": "relay"});
 
@@ -268,9 +282,9 @@ test("the negotiation crosses the same way, so the relay is the fallback and not
 
 test("a server that does not carry data refuses it, and carries the negotiation anyway", async () => {
     const {host, peer, peerOpen} = await buildRoom(false);
-    const roomId = peerOpen["roomId"];
+    const roomKey = peerOpen["roomKey"];
 
-    const refused = await call(peer, {"type": "room-data", "roomId": roomId, "data": {"from": "peer"}});
+    const refused = await call(peer, {"type": "room-data", "roomKey": roomKey, "data": {"from": "peer"}});
     assert.equal(refused["success"], false);
     assert.equal(refused["error"], "not-allowed");
     await settle();
@@ -278,7 +292,7 @@ test("a server that does not carry data refuses it, and carries the negotiation 
 
     // the two ends can still try to reach each other directly: only the fallback
     // is what the configuration took away
-    const signalled = await call(peer, {"type": "room-signal", "roomId": roomId, "signal": {"kind": "description"}});
+    const signalled = await call(peer, {"type": "room-signal", "roomKey": roomKey, "signal": {"kind": "description"}});
     assert.equal(signalled["success"], true);
 
     dropRoom();
@@ -293,10 +307,10 @@ test("a server that does not carry data refuses it, and carries the negotiation 
 // everything else. These carry a payload with a shape in it and check every byte
 // that comes out, because "it arrived" and "it arrived intact" are two claims.
 test("the relay carries a message far bigger than any packet, byte for byte", async () => {
-    const {host, peer, peerOpen} = await buildRoom(true);
+    const {host, peer, hostOpen, peerOpen} = await buildRoom(true);
     const size = 512 * 1024;        // 512 KB, some five hundred packets
 
-    peer["com"].send(buildFrame(peerOpen["roomId"], buildPayload(size)), [], 60000);
+    peer["com"].send(buildFrame(peerOpen["roomKey"], buildPayload(size)), [], 60000);
     for (let i = 0; i < 100 && framesOf(host).length === 0; i++) {
         await settle();
     }
@@ -304,10 +318,13 @@ test("the relay carries a message far bigger than any packet, byte for byte", as
     const frames = framesOf(host);
     assert.equal(frames.length, 1);
 
-    // the header the other end reads is the one this end wrote
+    // the header the other end reads is the one this end wrote, *except* for
+    // the key: the sender's is written over with the receiver's on the way
+    // through, so a frame carries no credential across the room
     const header = new Uint8Array(frames[0], 0, FRAME_HEADER);
     assert.equal(header[0], FRAME_DATA);
-    assert.equal(String.fromCharCode(...header.subarray(1)), peerOpen["roomId"]);
+    assert.equal(String.fromCharCode(...header.subarray(1)), hostOpen["roomKey"]);
+    assert.notEqual(String.fromCharCode(...header.subarray(1)), peerOpen["roomKey"]);
     assert.equal(isSamePayload(frames[0].slice(FRAME_HEADER), size), true);
     assert.equal(framesOf(peer).length, 0);
 
@@ -319,7 +336,7 @@ test("a frame is refused on the same three grounds a message is", async () => {
 
     // no permission: the frame is dropped and nothing is answered back, because
     // there is no answer on a one way frame to wait for
-    peer["com"].send(buildFrame(peerOpen["roomId"], buildPayload(64)), [], 5000);
+    peer["com"].send(buildFrame(peerOpen["roomKey"], buildPayload(64)), [], 5000);
     await settle();
     assert.equal(framesOf(host).length, 0);
 
@@ -349,7 +366,7 @@ test("what a connection may relay is answered when it is taken, not when it asks
     // already here.
     serverWS.confPublic = buildPublicConf(buildConf(true), "0.0.0");
 
-    const refused = await call(peer, {"type": "room-data", "roomId": peerOpen["roomId"], "data": {"from": "peer"}});
+    const refused = await call(peer, {"type": "room-data", "roomKey": peerOpen["roomKey"], "data": {"from": "peer"}});
     assert.equal(refused["error"], "not-allowed");
     await settle();
     assert.equal(pushesOf(host, "room-data").length, 0);
@@ -376,13 +393,13 @@ test("a machine that goes takes the room with it and the other one is told", asy
 
 test("a room that is over carries nothing more", async () => {
     const {host, peer, peerOpen} = await buildRoom(true);
-    const roomId = peerOpen["roomId"];
+    const roomKey = peerOpen["roomKey"];
 
-    await call(peer, {"type": "room-leave", "roomId": roomId});
+    await call(peer, {"type": "room-leave", "roomKey": roomKey});
     await settle();
     assert.equal(pushesOf(host, "room-close").length, 1);
 
-    const after = await call(peer, {"type": "room-data", "roomId": roomId, "data": {"late": true}});
+    const after = await call(peer, {"type": "room-data", "roomKey": roomKey, "data": {"late": true}});
     assert.equal(after["error"], "unknown-room");
     assert.equal(pushesOf(host, "room-data").length, 0);
 

@@ -34,7 +34,7 @@ const ServerWS = class {
     clients = new Map();            // key-sessionId, value-state object of the client
     pairs = new Map();              // key-pairCode, value-state object of the pair (see ./handlers/pairing.js)
     joins = new Map();              // key-joinId, value-state of a join a socket holds open (see ./handlers/joins.js)
-    rooms = new Map();              // key-roomId, value-the two sockets an accept put together (see ./handlers/rooms.js)
+    rooms = new Map();              // key-one side's room key, value-the two sockets an accept put together - one room is in here twice, once per side (see ./handlers/rooms.js)
 
     // the rows behind the joins, and the only thing here that outlives the
     // process - see ./database.js

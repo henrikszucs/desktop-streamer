@@ -347,14 +347,25 @@ socket is. **Which side decides who offers**: the peer asked for the connection,
 so the peer opens it and the host answers. One rule, rather than a negotiation
 about who negotiates.
 
+**What that message carries is a key, not an id**, and it is this side's alone.
+The two ends of one room hold different keys and neither is ever told the
+other's: every room call presents the caller's own (`roomKey`), the server checks
+both that it minted it and that this socket is the side it gave it to, and
+everything it carries across - a signal, a relayed message, the close - is
+re-addressed to the receiver's key on the way, the binary frame included. So a
+key that leaks names one side and works from one socket, and a client that has
+somehow kept more than it should still cannot do the other half. `getRoomKey()`
+is what this client knows the room by; there is no id behind it that both sides
+share.
+
 What crosses the server is SDP and ICE and nothing else, one message per call
 (`room-signal`), so the server holds nothing between two of them. Three details
 are worth keeping, and two of them are the same mistake at different heights:
 
 - an ICE candidate that arrives **before the description it belongs to** is held
   until one is set - both ends start gathering at once and the messages cross;
-- a signal that arrives **before this side's own `room-open`** is held by room id
-  and replayed when it comes. The two ends are told about the room in two
+- a signal that arrives **before this side's own `room-open`** is held by the room
+  key in it and replayed when it comes. The two ends are told about the room in two
   separate messages and the offer chases them, so on a slow or backgrounded
   socket the first signal can land first - and a dropped offer is a negotiation
   that never starts, which is a wait that never ends;

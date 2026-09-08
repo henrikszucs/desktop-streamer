@@ -174,24 +174,25 @@ below. What landed:
 
 | type | request | answer |
 | --- | --- | --- |
-| `room-signal` | `{"roomId", "signal"}` | `{"success", "error"}` |
-| `room-data` | `{"roomId", "data"}` | `{"success", "error"}` |
-| `room-leave` | `{"roomId"}` | `{"success"}` |
+| `room-signal` | `{"roomKey", "signal"}` | `{"success", "error"}` |
+| `room-data` | `{"roomKey", "data"}` | `{"success", "error"}` |
+| `room-leave` | `{"roomKey"}` | `{"success"}` |
 
 Server-initiated, on both sockets:
 
 ```
-{"timestamp", "type": "room-open", "roomId": string, "joinId": string, "isHost": boolean}
-{"timestamp", "type": "room-signal", "roomId": string, "signal": object}
-{"timestamp", "type": "room-data", "roomId": string, "data": any}
-{"timestamp", "type": "room-close", "roomId": string, "reason": "left"|"gone"}
+{"timestamp", "type": "room-open", "roomKey": string, "joinId": string, "isHost": boolean}
+{"timestamp", "type": "room-signal", "roomKey": string, "signal": object}
+{"timestamp", "type": "room-data", "roomKey": string, "data": any}
+{"timestamp", "type": "room-close", "roomKey": string, "reason": "left"|"gone"}
 ```
 
 Differences from the plan below, all deliberate:
 
 - **A room, not a `join` branch.** A pairing that was not remembered leaves no
   join behind, so a relay keyed on one could not carry the connection it just
-  made. `rooms` is `Map<roomId, {hostSessionId, peerSessionId, joinId}>`, made by
+  made. `rooms` is `Map<roomKey, {hostKey, peerKey, hostSessionId, peerSessionId, joinId}>`
+  - one room under both of its keys, each side told only its own - made by
   `pair-accept`, by `join-accept` and by the unsupervised `join-request`, and it
   dies with either socket: there is nothing in a half-negotiated connection worth
   keeping.
@@ -230,7 +231,7 @@ Differences from the plan below, all deliberate:
   hold, so it needs no second address, no second port and no second thing to run.
 - **It carries bytes, and there is no size to stay under.** The communicator
   splits an ArrayBuffer into packets and reassembles it at the far end, and does
-  none of that for JSON - so a binary frame (`[kind][roomId][payload]`) is the
+  none of that for JSON - so a binary frame (`[kind][room key][payload]`) is the
   relay's own path and `room-data` is left as the small answered one. 16 MB
   crosses it intact in about 600 ms through the real stack
   (`tests/relay.test.js`), and the direct leg carries the same sizes because its
