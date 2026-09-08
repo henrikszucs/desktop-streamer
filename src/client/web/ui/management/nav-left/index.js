@@ -54,6 +54,10 @@ const NavLeft = class extends View {
         this.onOnline();
 
         ctx["joins"].addEventListener("change", this.onJoinsChange);
+
+        // the room is the other half of that dot, so its two edges draw it too
+        ctx["room"].addEventListener("connecting", this.onJoinsChange);
+        ctx["room"].addEventListener("closed", this.onJoinsChange);
         this.onJoinsChange();
     };
 
@@ -61,8 +65,13 @@ const NavLeft = class extends View {
     // screen is the one whose user is not looking at this bar. The badge is a
     // dot rather than a count: what it has to say is that the device is not
     // alone, and the screen behind the entry is where who is.
+    //
+    // Two things make one: a remembered device that is there, and the room this
+    // client is hosting - a pairing nobody remembered has no record to count and
+    // is the loudest share there is while it stands.
     onJoinsChange = () => {
-        this.badgeShares.classList.toggle("hide", this.ctx["joins"].countOnline(true) === 0);
+        const isShared = (this.ctx["joins"].countOnline(true) > 0 || this.ctx["room"].isSharing() === true);
+        this.badgeShares.classList.toggle("hide", isShared === false);
     };
 
     // services are a server feature, so the entry is only there once the

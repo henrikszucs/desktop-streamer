@@ -293,7 +293,9 @@ the same code again is handed it back: `rename()` writes both, and `connectAll()
 adopts what `join-connect` answers when that is not empty - an empty one is a
 connection nobody has named, not a name somebody cleared, so the local record
 stands. `management/connection` is the dialog, and a rename made while the socket
-is down is local only, since the call cannot be made.
+is down is local only, since the call cannot be made. The same dialog names the
+live share, where there is no row and no call at all - see "A share is not only a
+record" below.
 
 Who is on the other side of a join arrives the same way: `join-online` is pushed
 to each side as the other's first socket appears and its last one goes, so
@@ -495,13 +497,54 @@ thing that would is the stream.
 **An accepted request now moves both sides, and they move to different places.**
 The peer goes into the room it was asking for (`room/joining`, which handles the
 pairing, the remembered join and the unsupervised one that the server answers in
-the first call). The host goes to its own list: a yes it asked to *remember* is a
-connection it now keeps, so `room/create` lands on `management/shares` with that
-connection's settings open on it, because naming it is the one thing worth doing
-to a connection the moment it is made. A yes that was not remembered leaves
-nothing behind, so that host stays where it is - and a device let back in through
-`join-request` does not move the host either, since it was not deciding anything
-new. An unsupervised join never reaches the host at all.
+the first call). The host goes to its own list: `management/shares` opens, with
+that connection's settings on it where there is a connection to settle, because
+naming it is the one thing worth doing to a connection the moment it is made.
+
+**The host is moved by the room rather than by the flow that made it**, and that
+is the whole reason the listener is on `management/shares` and not in the dialogs
+the flows end in. There are three ways a connection is made on a host and only
+one of them ends in a dialog of its own: a pairing accepted in `room/request`, a
+remembered device let back in through `join-request` - and the unsupervised join,
+which the server answers itself, so nothing on that host is ever asked and there
+is no dialog there to move anybody. What all three do have is `room-open`, told
+to both sides alike (`handlers/rooms.js`), so the screen the host is sent to is
+the one that listens for it. `room/create` therefore only stores its half of the
+join and closes itself - it navigates nowhere, and it closes *before* it stores,
+since opening a screen closes the dialogs over it.
+
+Two things that listener has to be careful about. A pairing the host did not ask
+to remember carries **no join id**: the host is moved all the same - it is
+sharing itself out, which is what that screen is - but there is nothing to name
+and nothing to forget, so no settings dialog is opened over it. And the record
+may be a moment *behind* the room - the accept answer that carries the new join
+and this push cross on the same socket - so a room whose record is not there yet
+waits for the `change` that stores it rather than deciding it is a room about
+nothing.
+
+**A share is not only a record.** `ctx["joins"]` is what a device *keeps*, and a
+pairing nobody remembered is kept by nothing: the room is the whole of it. Drawn
+from the records alone, the one flow that shares nothing but the moment showed
+the host an empty screen and an unlit bar at the exact moment it began sharing
+its machine - so `room.isSharing()` (this client is the host of a room that
+stands) is the second half of both. The shares screen draws a card from it, first
+in the grid; the shares badge of the rail and of the small layout's menu is lit by
+`countOnline(true) > 0 || isSharing()`, and both bars listen to the room's own
+edges (`connecting`, `closed`) beside the records' `change`. Where the live room
+*is* on a remembered join, `getJoinId()` matches it to the card that is already
+there and marks that one instead - one connection is one card, and the `Sharing`
+chip is what says it is up right now.
+
+**Every card carries the same menu, and the live one answers it from the room.**
+A card whose menu was missing would be the one card on the screen that could not
+be acted on, so both entries are there for the live share too and both mean what
+they mean everywhere else, as far as a connection kept nowhere can: *settings*
+opens `management/connection` with `isLive`, where the name is the room's
+(`setName`/`getName`, and the card follows the room's `name` event) and stands
+only while the connection does - the hint under the field says so - and *delete*
+is `room.leave()`, because deleting a share that **is** only a connection is
+ending it. One dialog for both, since a host that has just let somebody in should
+not have to learn a second screen for the connection it did not tick a box for.
 
 The wait carries a **quit** button, and it is a button rather than a question:
 the case it exists for is a host that is answering nothing, so asking one more
@@ -577,7 +620,7 @@ longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |
-| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and an accepted request now opens the room on the peer and the connection's settings on the host; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
+| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
 | the *settings* entry of a `devices` card opens nothing yet — `management/connection`, which names and forgets a connection, is the dialog it wants | `dev/plans/ws-pairing-joins.md` |
 | `management/account/*` (information, sessions, delete) | `dev/plans/ws-accounts.md` |

@@ -52,6 +52,8 @@ const createRoom = function(ctx) {
     let channel = null;         // RTCDataChannel
     let channelCom = null;      // the Communicator over that channel
     let roomId = "";
+    let joinId = "";            // the join this room is on, "" for a pairing nobody remembered
+    let name = "";              // what this side calls it while it stands - see setName
     let isHost = false;
     let state = "closed";       // closed | connecting | connected
     let mode = MODE_DIRECT;     // direct | relay - what is carrying it
@@ -283,6 +285,8 @@ const createRoom = function(ctx) {
         }
 
         roomId = detail?.["roomId"] ?? "";
+        joinId = detail?.["joinId"] ?? "";
+        name = "";
         isHost = (detail?.["isHost"] === true);
         mode = MODE_DIRECT;
         if (roomId === "") {
@@ -399,6 +403,8 @@ const createRoom = function(ctx) {
     const teardown = function(reason) {
         const closedRoomId = roomId;
         roomId = "";
+        joinId = "";
+        name = "";
         mode = MODE_DIRECT;
         clearTimeout(directTimeoutId);
         directTimeoutId = -1;
@@ -510,8 +516,37 @@ const createRoom = function(ctx) {
         "getRoomId": function() {
             return roomId;
         },
+
+        // the join this room stands on, when it stands on one. A pairing the
+        // host did not remember has none: the room is the whole of it, and it
+        // dies with either socket.
+        "getJoinId": function() {
+            return joinId;
+        },
         "isHost": function() {
             return isHost;
+        },
+
+        // what this side calls the connection it is in. A room that stands on no
+        // join has nowhere to put a name - the row that would keep one is the
+        // thing it does not have - so this is a name for as long as the
+        // connection is, and it goes when the connection does. A room that *is*
+        // on a join is named on the row instead (join-rename), which is the name
+        // the other device is handed back the next time it presents its code.
+        "getName": function() {
+            return name;
+        },
+        "setName": function(value) {
+            name = (typeof value === "string" ? value : "");
+            emit("name", {"roomId": roomId, "name": name});
+        },
+
+        // whether this client is sharing itself out right now. It is the room
+        // and not the record that answers: a pairing nobody remembered leaves
+        // no record to ask, and it is a share for as long as it stands - which
+        // is what the shares screen and the badge of the two bars draw.
+        "isSharing": function() {
+            return isHost === true && state !== "closed";
         },
 
         // the two objects the media work will hang off, rather than building a

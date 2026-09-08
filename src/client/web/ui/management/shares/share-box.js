@@ -35,6 +35,10 @@ const ShareBox = class extends EventTarget {
                     <div class="small-padding">
                         <nav>
                             <div>
+                                <button class="chip small-elevate error-text share-tag-live hide">
+                                    <i>screen_record</i>
+                                    <span data-localization="shares.live">Sharing</span>
+                                </button>
                                 <button class="chip small-elevate error-text share-tag-local hide">
                                     <i>screen_record</i>
                                     <span data-localization="shares.local">Local</span>
@@ -66,6 +70,7 @@ const ShareBox = class extends EventTarget {
         this.nameEl = this.el.querySelector(".share-name");
         this.settingsBtn = this.el.querySelector(".btn-share-settings");
         this.deleteBtn = this.el.querySelector(".btn-share-delete");
+        this.tagLive = this.el.querySelector(".share-tag-live");
         this.tagLocal = this.el.querySelector(".share-tag-local");
         this.tagOnline = this.el.querySelector(".share-tag-online");
         this.tagUnattended = this.el.querySelector(".share-tag-unattended");
@@ -88,7 +93,9 @@ const ShareBox = class extends EventTarget {
     };
     setTag(tag, isActive=true) {
         let interactEl = null;
-        if (tag === "local") {
+        if (tag === "live") {
+            interactEl = this.tagLive;
+        } else if (tag === "local") {
             interactEl = this.tagLocal;
         } else if (tag === "online") {
             interactEl = this.tagOnline;

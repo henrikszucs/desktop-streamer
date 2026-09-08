@@ -12,6 +12,10 @@
             "en": "Only you see this name. The other device keeps its own.",
             "hu": "Ezt a nevet csak te látod. A másik eszköz a sajátját tartja meg."
         },
+        "liveHint": {
+            "en": "This connection is not remembered, so the name stands only while it lasts.",
+            "hu": "Ez a kapcsolat nincs megjegyezve, így a név csak addig marad meg, amíg tart."
+        },
         "delete": {
             "en": "Delete",
             "hu": "Törlés"
@@ -27,6 +31,10 @@
         "deleted": {
             "en": "The connection was deleted.",
             "hu": "A kapcsolat törölve."
+        },
+        "disconnected": {
+            "en": "The connection was ended.",
+            "hu": "A kapcsolat lezárva."
         },
         "unknown": {
             "en": "This connection is not held by this device any more.",

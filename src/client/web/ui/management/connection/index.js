@@ -1,11 +1,19 @@
 "use strict";
 
-// the settings of one remembered connection, from either list that shows one -
-// what this client calls it, and forgetting it for good.
+// the settings of one connection, from either list that shows one - what this
+// client calls it, and forgetting it for good.
 //
 // Both are the whole of what a connection can be told to do today: a name is
 // this side's own column on the row (join-rename), and deleting drops the row
 // itself, so the two codes stop opening anything and the other side is told.
+//
+// **The live share is the same two answers about a connection that is kept
+// nowhere** (`isLive`, from the card the shares screen draws of the room
+// itself). There is no row under it: the name is the room's and stands only
+// while the connection does, and deleting a share that *is* only a connection
+// is ending it. The dialog is the same one either way - the same field and the
+// same button - because a host that has just let somebody in should not have to
+// learn a second screen for the connection it did not tick a box for.
 
 // first-party dependencies
 import { Dialog } from "../../../src/view.js";
@@ -15,10 +23,13 @@ const ConnectionDialog = class extends Dialog {
     static rootId = "dialog-connection";
 
     joinId = "";
+    isLive = false;
     nameInput = null;
+    hint = null;
 
     async mount(ctx) {
         this.nameInput = document.getElementById("input-connection-name");
+        this.hint = document.getElementById("connection-name-hint");
 
         document.getElementById("btn-connection-close").addEventListener("click", () => {
             this.requestClose();
@@ -36,6 +47,16 @@ const ConnectionDialog = class extends Dialog {
     async save() {
         const ctx = this.ctx;
         const localization = ctx["localization"];
+
+        // nothing to write it on, and nothing that has to be told: the name is
+        // the room's own for as long as the room is, and the card behind this
+        // dialog follows the room's `name` event
+        if (this.isLive === true) {
+            ctx["room"].setName(this.nameInput.value.trim());
+            ctx["ui"].snackbar.show(localization.get("connection.saved"));
+            this.requestClose();
+            return;
+        }
         try {
             const record = await ctx["joins"].rename(this.joinId, this.nameInput.value.trim());
             if (typeof record === "undefined") {
@@ -55,6 +76,15 @@ const ConnectionDialog = class extends Dialog {
     // nothing any more
     async remove() {
         const ctx = this.ctx;
+
+        // there is no row to drop, so what is deleted is the connection itself -
+        // the other side is told through the server, as it is for any leaving
+        if (this.isLive === true) {
+            ctx["room"].leave();
+            ctx["ui"].snackbar.show(ctx["localization"].get("connection.disconnected"));
+            this.requestClose();
+            return;
+        }
         try {
             await ctx["joins"].remove(this.joinId);
             ctx["ui"].snackbar.show(ctx["localization"].get("connection.deleted"));
@@ -71,7 +101,20 @@ const ConnectionDialog = class extends Dialog {
 
     open(params) {
         this.joinId = params?.["joinId"] ?? "";
-        this.nameInput.value = this.ctx["joins"].get(this.joinId)?.["name"] ?? "";
+
+        // a connection with no id is the live one, and only the caller knows
+        // that - an empty id from anywhere else is a connection this device no
+        // longer holds, which is what save() answers with
+        this.isLive = (params?.["isLive"] === true && this.joinId === "");
+
+        this.nameInput.value = (this.isLive === true
+            ? this.ctx["room"].getName()
+            : this.ctx["joins"].get(this.joinId)?.["name"] ?? "");
+
+        // the line under the field says what the name is worth, and that is not
+        // the same sentence for a name on a row and one on a connection
+        this.hint.innerText = this.ctx["localization"].get(this.isLive === true ? "connection.liveHint" : "connection.nameHint");
+
         super.open(params);
         this.nameInput.focus();
     };

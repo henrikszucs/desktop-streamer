@@ -147,24 +147,19 @@ const RoomCreateDialog = class extends Dialog {
     // are now on, and this side stores its own half of it: the code in that
     // answer is what this device will be reached by, and nothing on the server
     // can give it back once this dialog is gone.
+    //
+    // Where the host goes next is not decided here. The room this answer makes
+    // is told to both sides on its own, and every other way one is made says
+    // nothing to this dialog - so the screen that lists the connections is what
+    // moves on it, for all of them at once (ui/management/shares/). This flow
+    // closes itself first, since opening a screen closes the dialogs over it.
     onRequestDone = async (event) => {
         if (event.detail?.["isAccepted"] !== true) {
             this.show();
             return;
         }
-        const record = await this.ctx["joins"].remember(event.detail?.["answer"], true);
         this.ctx["ui"].closeDialogs();
-
-        // A yes that was not remembered leaves nothing behind to show, so this
-        // side stays where it is. One that was is a connection this host now
-        // keeps, and the screen that lists them is where it belongs - with its
-        // settings open on it, since naming it is the one thing that is worth
-        // doing to a connection the moment it is made.
-        if (typeof record === "undefined") {
-            return;
-        }
-        await this.ctx["ui"].navigate("shares");
-        this.ctx["ui"].openDialog("connection", {"joinId": record["joinId"]});
+        await this.ctx["joins"].remember(event.detail?.["answer"], true);
     };
 
     // the request went away without this side answering: the one waiting gave

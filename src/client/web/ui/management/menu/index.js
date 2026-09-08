@@ -23,6 +23,10 @@ const MenuDialog = class extends Dialog {
         // the same dot the rail carries, on the entry that is this rail for a
         // window too small to show it - see nav-left
         ctx["joins"].addEventListener("change", this.onJoinsChange);
+
+        // the room is the other half of that dot, so its two edges draw it too
+        ctx["room"].addEventListener("connecting", this.onJoinsChange);
+        ctx["room"].addEventListener("closed", this.onJoinsChange);
         this.onJoinsChange();
 
         // the same two entries the shell hides for itself
@@ -34,7 +38,8 @@ const MenuDialog = class extends Dialog {
     };
 
     onJoinsChange = () => {
-        this.badgeShares.classList.toggle("hide", this.ctx["joins"].countOnline(true) === 0);
+        const isShared = (this.ctx["joins"].countOnline(true) > 0 || this.ctx["room"].isSharing() === true);
+        this.badgeShares.classList.toggle("hide", isShared === false);
     };
 
     onOnline = () => {

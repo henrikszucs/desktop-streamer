@@ -12,6 +12,14 @@
             "en": "Remembered device",
             "hu": "Megjegyzett eszköz"
         },
+        "live": {
+            "en": "Sharing",
+            "hu": "Megosztva"
+        },
+        "live-name": {
+            "en": "This connection",
+            "hu": "Ez a kapcsolat"
+        },
         "unattended": {
             "en": "Unattended",
             "hu": "Felügyelet nélkül"
