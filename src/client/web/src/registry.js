@@ -137,6 +137,16 @@ const routes = new Map([
         "css": "/ui/management/account/delete/view.css",
         "localization": "/ui/management/account/delete/localization.json"
     }],
+    ["account.guest", {
+        "load": () => import("../ui/management/account/guest/index.js"),
+        "html": "/ui/management/account/guest/view.html",
+        "localization": "/ui/management/account/guest/localization.json"
+    }],
+    ["account.reset", {
+        "load": () => import("../ui/management/account/reset/index.js"),
+        "html": "/ui/management/account/reset/view.html",
+        "localization": "/ui/management/account/reset/localization.json"
+    }],
 
     // the room segment: the screen that takes the whole window, and the
     // dialogs of the flows that lead into it

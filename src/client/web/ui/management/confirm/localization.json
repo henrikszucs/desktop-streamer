@@ -23,6 +23,10 @@
         "endRoom": {
             "en": "The connection standing right now is ended, and the other device is disconnected.",
             "hu": "A most élő kapcsolat lezárul, és a másik eszköz lecsatlakozik."
+        },
+        "resetGuest": {
+            "en": "Everything this device keeps as the guest - its name and every remembered connection - is deleted and cannot be recovered. It starts again as a new guest.",
+            "hu": "Minden, amit ez az eszköz vendégként tárol - a neve és minden megjegyzett kapcsolat - törlődik, és nem állítható vissza. Új vendégként indul újra."
         }
     }
 }

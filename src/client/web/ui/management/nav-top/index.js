@@ -24,6 +24,7 @@ const NavTop = class extends View {
 
     accounts = [];                  // [{"id", "name", "avatar"}], the guest first
     currentId = GUEST["id"];        // the one this client is
+    guestName = "";                 // what the guest called itself, "" for the key
 
     async mount(ctx) {
         this.userBtn = document.getElementById("btn-user-circle");
@@ -62,12 +63,17 @@ const NavTop = class extends View {
 
     // the switch-account submenu, the guest first and the accounts after it. The
     // rows are rebuilt every time, so the add entry is all that stays.
-    setAccounts(accounts=[], currentId=this.currentId) {
+    async setAccounts(accounts=[], currentId=this.currentId) {
         this.accounts = [GUEST, ...accounts];
         const isKnown = this.accounts.some(function(account) {
             return account["id"] === currentId;
         });
         this.currentId = isKnown === true ? currentId : GUEST["id"];
+
+        // the guest's name is on its row, the one thing the account dialog
+        // lets it set - a row that is not there is the localization key
+        const guest = await this.ctx["getUser"](GUEST["id"]);
+        this.guestName = typeof guest["name"] === "string" ? guest["name"].trim() : "";
 
         while (this.addEntry.nextElementSibling !== null) {
             this.addEntry.nextElementSibling.remove();
@@ -78,6 +84,11 @@ const NavTop = class extends View {
 
         // the bar shows the picture of the user it is
         this.avatarEl.setAttribute("src", this.currentAccount()["avatar"] || DEFAULT_AVATAR);
+    };
+
+    // the same list again, for a record that changed under it
+    refresh() {
+        return this.setAccounts(this.accounts.slice(1));
     };
 
     currentAccount() {
@@ -99,9 +110,11 @@ const NavTop = class extends View {
 
         const name = document.createElement("span");
         name.className = "max";
-        if (account === GUEST) {
+        if (account === GUEST && this.guestName === "") {
             name.setAttribute("data-localization", account["name"]);
             name.textContent = this.ctx["localization"].get(account["name"]);
+        } else if (account === GUEST) {
+            name.textContent = this.guestName;
         } else {
             name.textContent = account["name"] || "";
         }
@@ -131,14 +144,33 @@ const NavTop = class extends View {
     };
 
     // an account ends the session the server keeps; the guest has none, so its
-    // sign out is forgetting the records this client holds for it
+    // sign out is forgetting everything this client holds for it - the name,
+    // the connections - and starting over as a new one. Nothing brings that
+    // back, so it is asked about first. The socket stays: joins.reset() takes
+    // it off the codes on the server, and the route is drawn again under the
+    // dialogs that go, so a screen listing the old records does not keep them.
+    // Answers whether the sign out happened, since the account dialog's delete
+    // is the same call.
     async logout() {
         this.userBtn.blur();
         const id = this.currentId;
         if (id === GUEST["id"]) {
+            const isConfirmed = await this.ctx["ui"].confirm({"message": "confirm.resetGuest"});
+            if (isConfirmed === false) {
+                return false;
+            }
             await this.ctx["resetUser"](id);
+            try {
+                await this.ctx["joins"].reset();
+            } catch (error) {
+                console.error(error);
+            }
+            await this.refresh();
+            this.ctx["ui"].closeDialogs();
+            await this.ctx["ui"].reload();
         }
         this.dispatchEvent(new CustomEvent("logout", {"detail": {"id": id}}));
+        return true;
     };
 };
 

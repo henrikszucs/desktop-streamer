@@ -1,0 +1,30 @@
+{
+    "account": {
+        "guest": {
+            "title": {
+                "en": "Guest",
+                "hu": "Vendég"
+            },
+            "hint": {
+                "en": "The guest is this device alone. The name is kept here and reaches no server; signing out forgets it with everything else.",
+                "hu": "A vendég maga ez az eszköz. A név itt marad, és nem jut el egyetlen szerverre sem; a kijelentkezés minden mással együtt elfelejti."
+            },
+            "name": {
+                "en": "Name",
+                "hu": "Név"
+            },
+            "save": {
+                "en": "Save",
+                "hu": "Mentés"
+            },
+            "saved": {
+                "en": "Name saved.",
+                "hu": "Név mentve."
+            },
+            "failed": {
+                "en": "The name could not be saved.",
+                "hu": "A nevet nem sikerült menteni."
+            }
+        }
+    }
+}

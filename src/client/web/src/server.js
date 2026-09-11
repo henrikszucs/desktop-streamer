@@ -369,6 +369,17 @@ const Server = class extends EventTarget {
         return messageObj.error === "" && messageObj.data?.["success"] === true;
     };
 
+    // off every join this connection presented, the rows left alone - what a
+    // guest signing out calls, so the socket it keeps stops answering for codes
+    // it no longer holds
+    async joinDisconnect() {
+        if (this.isOnline === false) {
+            return;
+        }
+        const messageObj = this.communicator.invoke({"type": "join-disconnect"});
+        await messageObj.wait();
+    };
+
     //
     // the room
     //

@@ -166,7 +166,29 @@ user's row, which is why a guest reset leaves the theme and the language alone.
 Sign out means `resetUser("")` for the guest — forget the local connection
 records, there is no session to end on the server — and a server session for an
 account. The guest's name is a localization key rather than a value, so its menu
-row follows a language change like the rest of the bar.
+row follows a language change like the rest of the bar — unless the guest gave
+itself one in the account dialog, which is kept on its row (`name`, beside the
+joins) and shown as text instead.
+
+The guest's sign out cannot be taken back, so `logout()` in `nav-top` asks
+through the confirm dialog first, and a yes is three things: the row dropped,
+`joins.reset()` — the memory records cleared and `join-disconnect` sent, since
+the server had this socket presented on the old codes (`join-connect`) and
+would otherwise go on answering for a device that dropped them until the socket
+actually closed — and the route drawn again (`ui.reload()`) under the dialogs
+that go, because the devices screen reads its records once on open rather than
+following `change`. The socket is kept: closing it would have done the same
+through the shell's `offline`/`online` handlers, at the cost of the reconnect
+wait under the loading layer.
+
+The account dialog is not the same column for every user. `open()` asks
+`permissions.isGuest()` and shows the buttons marked with that `data-user`: the
+guest has its name (`account.guest`) and a delete (`account.reset`) that is the
+bar's `logout()` reached through `loadModule("nav-top")` — one call, so the
+menu's sign out and the dialog's delete cannot drift apart — where an account
+has the information, sessions and delete windows. Both guest windows reach the
+bar the same way, since the bar owns the user model: the name window calls
+`refresh()` after a save so the row follows it.
 
 `OLD_GUEST_TABLE` is dropped on every open; a client that ran the two-table build
 still carries it. Dropping a table that is not there is free, so it costs a
@@ -659,7 +681,7 @@ longer serves — do not paste it back untouched.
 | `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
 | the *settings* entry of a `devices` card opens nothing yet — `management/connection`, which names and forgets a connection, is the dialog it wants | `dev/plans/ws-pairing-joins.md` |
-| `management/account/*` (information, sessions, delete) | `dev/plans/ws-accounts.md` |
+| `management/account/*` (information, sessions, delete) — the guest's two windows, `guest` and `reset`, are live | `dev/plans/ws-accounts.md` |
 | `nav-top` `setAccounts()` — the list is the guest alone | `dev/plans/ws-accounts.md` |
 
 `management/search` is a separate case: the field it mirrors and the button that

@@ -161,6 +161,15 @@ const createJoins = function(ctx) {
 
         "get": function(joinId) {
             return records.get(joinId);
+        },
+
+        // this client is a new guest: the rows are gone, so nothing is held or
+        // drawn for them here, and the server is told to stop answering for
+        // this socket on codes it no longer holds
+        async reset() {
+            records.clear();
+            emitChange();
+            await ctx["server"].joinDisconnect();
         }
     };
 

@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
+import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
 
 // a remembered join is a row, so these run against a real SQLite file - which
 // makes them the only cover database.js has as well
@@ -332,6 +332,34 @@ test("join-delete drops the row and tells the other side", async () => {
     await joinConnect(ctx);
     assert.equal(ctx.answers[0]["error"], "unknown-join");
 
+    await dropDatabase(db, file);
+});
+
+test("join-disconnect takes the caller off its joins and keeps the row", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    const ctx = buildCtx(server, "peer");
+    joinDisconnect(ctx);
+    assert.deepEqual(ctx.answers, [{"success": true}]);
+
+    // gone for the host, and not on the join itself any more
+    assert.equal(pushesOf(server, "host", "join-online").at(-1)["isOnline"], false);
+    assert.equal(heldJoin(server, "peer", join["joinId"]), undefined);
+    assert.equal(server.clients.get("peer").has("joinIds"), false);
+
+    // the row was not touched: the same code opens it again
+    assert.notEqual(await db("joins").where("join_id", join["joinId"]).first(), undefined);
+    const again = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(again);
+    assert.equal(again.answers[0]["success"], true);
+
+    // and a socket on no join at all is answered the same
+    const none = buildCtx(server, "other");
+    joinDisconnect(none);
+    assert.deepEqual(none.answers, [{"success": true}]);
+
+    releaseJoins(server);
     await dropDatabase(db, file);
 });
 

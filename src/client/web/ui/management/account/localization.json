@@ -21,6 +21,12 @@
                 "en": "Delete",
                 "hu": "Törlés"
             }
+        },
+        "guest": {
+            "btn": {
+                "en": "Guest",
+                "hu": "Vendég"
+            }
         }
     }
 }

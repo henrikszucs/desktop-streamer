@@ -47,7 +47,10 @@
             <!--
                 For an account this ends the session. For the guest there is
                 none to end, so it forgets what this client keeps for it - the
-                local connections - see logout() in ./index.js.
+                name and the local connections - and starts over as a new one,
+                behind a confirmation since nothing brings it back - see
+                logout() in ./index.js. The guest's delete in the account
+                dialog is this same call.
             -->
             <li id="btn-logout">
                 <i>logout</i>

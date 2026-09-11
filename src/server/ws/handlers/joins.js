@@ -566,6 +566,21 @@ const joinDelete = async function(ctx) {
     ctx["messageObj"].send({"success": true});
 };
 
+// the caller is off every join it presented, as if its socket had closed - the
+// rows stay, since forgetting them is each side's own (join-delete). It is what
+// a guest signing out calls: the codes it held are dropped on its side, and
+// without this the server would go on answering for a device that is not there
+// until the socket actually went.
+const joinDisconnect = function(ctx) {
+    /*{
+    }*/
+    /*{
+        "success": boolean
+    }*/
+    detachJoins(ctx["server"], ctx["sessionId"]);
+    ctx["messageObj"].send({"success": true});
+};
+
 // the types this group answers
 const handlers = {
     "join-connect": joinConnect,
@@ -574,8 +589,9 @@ const handlers = {
     "join-request": joinRequest,
     "join-accept": joinAccept,
     "join-reject": joinReject,
-    "join-delete": joinDelete
+    "join-delete": joinDelete,
+    "join-disconnect": joinDisconnect
 };
 
-export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
+export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
 export default handlers;

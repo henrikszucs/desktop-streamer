@@ -5,7 +5,7 @@
 
 // first-party dependencies
 import { domReady } from "./src/env.js";
-import { conf, confLoad, setLocal, resetUser } from "./src/conf.js";
+import { conf, confLoad, setLocal, getUser, setUser, resetUser } from "./src/conf.js";
 import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
 import { createJoins } from "./src/joins.js";
@@ -52,6 +52,8 @@ const main = async function() {
         "localization": localization,
         "desktop": desktop,
         "setLocal": setLocal,
+        "getUser": getUser,
+        "setUser": setUser,
         "resetUser": resetUser,
         "router": null,
         "ui": null

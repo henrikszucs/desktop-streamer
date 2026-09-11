@@ -18,7 +18,9 @@
  * module mounted into the body at runtime, after the overlay and the loading
  * layer index.html starts with. Order cannot carry the stacking any more, so
  * it is written down here: the bars stay under the overlay, every dialog sits
- * over it, and the loading layer is over all of it, snackbars included.
+ * over it, the confirmation - only ever opened nested, over whatever dialog is
+ * asking - over every other dialog, and the loading layer is over all of it,
+ * snackbars included.
  */
 #dialog-overlay {
     z-index: 101;
@@ -26,6 +28,10 @@
 
 dialog {
     z-index: 102;
+}
+
+#dialog-confirm {
+    z-index: 103;
 }
 
 #dialog-loading {
