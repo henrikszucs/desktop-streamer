@@ -113,6 +113,8 @@ const VideoWindow = class extends Panel {
                     "-probesize", "32",              // Minimum probe size
                     "-thread_queue_size", "8"       // Small queue");
                 );
+                // the capture input and the hardware encoder are the two
+                // platform halves, the rest of the line is the same everywhere
                 if (desktop["os"].platform() === "win32") {
                     ffpmegParams.push(
                         "-filter_complex",
@@ -120,19 +122,32 @@ const VideoWindow = class extends Panel {
                         ":capture_cursor=true" +
                         ":max_framerate=30" +
                         ",hwdownload,format=bgra",
+                        "-c:v", "h264_nvenc",
+                        "-b:v", "10000K",
+                        "-tune:v", "3",
+                        "-profile:v", "2",
+                        "-level:v", "51",
+                        "-rc:v", "1",
+                        "-rgb_mode:v", "1",
+                        "-delay:v", "0",
+                        "-zerolatency:v", "1"
+                    );
+                } else if (desktop["os"].platform() === "darwin") {
+                    // avfoundation lists screens after the cameras, so the
+                    // one to grab is named rather than numbered
+                    ffpmegParams.push(
+                        "-f", "avfoundation",
+                        "-capture_cursor", "1",
+                        "-framerate", "30",
+                        "-i", "Capture screen " + screenIndex + ":none",
+                        "-c:v", "h264_videotoolbox",
+                        "-realtime", "1",
+                        "-b:v", "10000K",
+                        "-profile:v", "high",
+                        "-level:v", "51"
                     );
                 }
                 ffpmegParams.push(
-                    "-c:v", "h264_nvenc",
-                    "-b:v", "10000K",
-                    "-tune:v", "3",
-                    "-profile:v", "2",
-                    "-level:v", "51",
-                    "-rc:v", "1",
-                    "-rgb_mode:v", "1",
-                    "-delay:v", "0",
-                    "-zerolatency:v", "1",
-
                     "-framerate", "30",
                     "-g", "30",             // Keyframe interval (every 30 frames = 0.5s at 60fps)
                     "-keyint_min", "30",

@@ -1,6 +1,11 @@
 "use strict";
 
 const spawn = globalThis?.require("child_process").spawn;
+const path = globalThis?.require("path");
+
+// the bundled binary by its full path - a bare name is looked up on PATH,
+// never in cwd, everywhere but windows
+const FFMPEG_EXE = (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 
 const FFmpegProcess = class {
     constructor() {
@@ -17,7 +22,7 @@ const FFmpegProcess = class {
     async start(ffmpegPath, params) {
         // wait start
         await new Promise((resolve, reject) => {
-            this.process = spawn("ffmpeg", params, {"cwd": ffmpegPath, "windowsVerbatimArguments": true});
+            this.process = spawn(path.join(ffmpegPath, FFMPEG_EXE), params, {"cwd": ffmpegPath, "windowsVerbatimArguments": true});
             this.process.stderr.on("data", (data) => {
                 console.error(`FFmpeg stderr: ${data}`);
             });
@@ -25,15 +30,24 @@ const FFmpegProcess = class {
                 this.onData(data);
                 this.isRunning = true;
                 this.process.removeListener("close", startRejecter);
+                this.process.removeListener("error", startFailer);
                 resolve();
             };
             const startRejecter = (code) => {
                 this.code = code;
                 this.process.stdout.removeListener("data", startResolver);
+                this.process.removeListener("error", startFailer);
                 reject(new Error("FFmpeg process exited before starting." + code));
+            };
+            // a binary that cannot be spawned at all emits error, not close
+            const startFailer = (error) => {
+                this.process.stdout.removeListener("data", startResolver);
+                this.process.removeListener("close", startRejecter);
+                reject(error);
             };
             this.process.stdout.once("data", startResolver);
             this.process.once("close", startRejecter);
+            this.process.once("error", startFailer);
         });
 
         // create permanent listeners

@@ -65,7 +65,7 @@ Layout: `index.html`, `index.css`, `index.js` and `index.json` at the web root, 
 
 The Electron shell registers a privileged `local://` protocol that serves the bundled web app from the app path (so the desktop client can reuse the web client verbatim), exposes a small IPC API to the renderer, and manages the tray plus a single-instance lock. Note the three known holes in `main.js`, all of them development settings that have to go before a release: **the main window is opened on `https://localhost`, not on `local://local.local/`**, so a packaged zip loads whatever a dev server is serving rather than the client inside it (`createMainWindow`'s default argument — the comment above the call still names the intended URL); `ignore-certificate-errors` is switched on, which is what makes that address work against the self-signed certificate in `conf/`; and the `local://` handler does not guard against paths escaping the bundle.
 
-`src/client/native/<os>-<arch>/` holds prebuilt ffmpeg binaries and the `easy-control` input addon (ViGEmClient on Windows). Only `win32-x64` exists today, which is why it is the only buildable desktop target.
+`src/client/native/<os>-<arch>/` holds prebuilt ffmpeg binaries and the `easy-control` input addon (ViGEmClient on Windows, CoreGraphics/IOKit on macOS, where `easy-control.node` links `GamepadImplement.a` — a dylib despite the name — through `@loader_path`). `win32-x64` and `darwin-arm64` exist today, so those are the two buildable desktop targets; a dist in `bin/` is matched by Node's platform name (`darwin-arm64.zip`, never `macos-…`). `.DS_Store` and the like are dropped by `isJunkFile` in `building.js` from every copied folder.
 
 ### `model/`
 

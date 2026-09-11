@@ -37,6 +37,12 @@ const CONF_FILE = "index.json";
 // written by the build, never copied from the sources
 const GENERATED_FILES = new Set([CONF_FILE]);
 
+// what a desktop leaves in a folder it browsed, never part of a client
+const JUNK_FILES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
+const isJunkFile = function(file) {
+    return JUNK_FILES.has(path.basename(file));
+};
+
 const WHITESPACE = " \t\r\n\f";
 
 // zip entries are always separated by "/", never by the platform separator
@@ -258,7 +264,7 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
     const built = [];
     const files = await fs.readdir(srcPath, {"recursive": true});
     for (const file of files) {
-        if (skip.has(file)) {
+        if (skip.has(file) || isJunkFile(file)) {
             continue;
         }
         const filePath = path.join(srcPath, file);
@@ -478,6 +484,9 @@ const compileClients = async function(conf) {
         const nativeLibPath = path.join(nativePath, target);
         const nativeLibFiles = await fs.readdir(nativeLibPath, {"recursive": true});
         for (const file of nativeLibFiles) {
+            if (isJunkFile(file)) {
+                continue;
+            }
             const filePath = path.join(nativeLibPath, file);
             const stat = await fs.stat(filePath);
             if (stat.isDirectory()) {
