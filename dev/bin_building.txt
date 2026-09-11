@@ -1,3 +1,4 @@
 delete: default_app.asar
 modify icon on windows
 
+add "xattr -cr Electron.app" on macos to run binary
