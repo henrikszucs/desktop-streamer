@@ -20,6 +20,10 @@ import nodemailer from "nodemailer";
 
 const DICTIONARY_PATH = path.join(import.meta.dirname, "..", "localization.json");
 
+// the name the mail is signed with, so the person can tell where it came
+// from; the client names itself the same way (src/client/web/src/desktop.js)
+const APP_NAME = "Desktop Streamer";
+
 // the language a mail falls back to when the client asked in one the
 // dictionary does not hold
 const DEFAULT_LANGUAGE = "en";
@@ -49,11 +53,11 @@ const languagesOf = function(dict) {
     return Object.keys(dict?.["delete"]?.["subject"] ?? {});
 };
 
-// the subject and body of the key mail. `{domain}` names the server the
-// account is on and `{key}` is what the person types back.
+// the subject and body of the key mail. `{app}` is the application, `{domain}`
+// names the server the account is on and `{key}` is what the person types back.
 const buildDeleteMail = function(dict, lang, domain, key) {
     const put = function(text) {
-        return text.replaceAll("{domain}", domain).replaceAll("{key}", key);
+        return text.replaceAll("{app}", APP_NAME).replaceAll("{domain}", domain).replaceAll("{key}", key);
     };
     return {
         "subject": put(textOf(dict, "delete.subject", lang)),
@@ -105,7 +109,7 @@ const createMailer = async function(conf) {
         async sendDeleteKey(to, lang, key) {
             const mail = buildDeleteMail(dict, lang, domain, key);
             await transport.sendMail({
-                "from": email["user"],
+                "from": {"name": APP_NAME, "address": email["user"]},
                 "to": to,
                 "subject": mail["subject"],
                 "text": mail["text"]
@@ -118,5 +122,5 @@ const createMailer = async function(conf) {
     };
 };
 
-export { createMailer, buildDeleteMail, loadDictionary, languagesOf, DEFAULT_LANGUAGE };
-export default { createMailer, buildDeleteMail, loadDictionary, languagesOf, DEFAULT_LANGUAGE };
+export { createMailer, buildDeleteMail, loadDictionary, languagesOf, APP_NAME, DEFAULT_LANGUAGE };
+export default { createMailer, buildDeleteMail, loadDictionary, languagesOf, APP_NAME, DEFAULT_LANGUAGE };

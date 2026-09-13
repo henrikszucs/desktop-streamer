@@ -1,12 +1,12 @@
 {
     "delete": {
         "subject": {
-            "en": "Deleting your {domain} account",
-            "hu": "A(z) {domain} fiókod törlése"
+            "en": "{app}: deleting your {domain} account",
+            "hu": "{app}: a(z) {domain} fiókod törlése"
         },
         "body": {
-            "en": "Somebody asked to delete your account on {domain}.\n\nTo delete it for good, enter this code on the device the request was made from:\n\n{key}\n\nThe code is valid for 24 hours and only on that device. If you did not ask for this, ignore this e-mail - nothing happens without the code.",
-            "hu": "Valaki a(z) {domain} oldalon lévő fiókod törlését kérte.\n\nA végleges törléshez add meg ezt a kódot azon az eszközön, amelyről a kérés érkezett:\n\n{key}\n\nA kód 24 óráig és csak azon az eszközön érvényes. Ha nem te kérted, hagyd figyelmen kívül ezt az e-mailt - a kód nélkül semmi sem történik."
+            "en": "Somebody asked to delete your {app} account on {domain}.\n\nTo delete it for good, enter this code on the device the request was made from:\n\n{key}\n\nThe code is valid for 24 hours and only on that device. If you did not ask for this, ignore this e-mail - nothing happens without the code.\n\n{app}\n{domain}",
+            "hu": "Valaki a(z) {domain} oldalon lévő {app} fiókod törlését kérte.\n\nA végleges törléshez add meg ezt a kódot azon az eszközön, amelyről a kérés érkezett:\n\n{key}\n\nA kód 24 óráig és csak azon az eszközön érvényes. Ha nem te kérted, hagyd figyelmen kívül ezt az e-mailt - a kód nélkül semmi sem történik.\n\n{app}\n{domain}"
         }
     },
     "room": {
