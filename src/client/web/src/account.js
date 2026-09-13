@@ -86,6 +86,21 @@ const createAccount = function(ctx) {
         }
     };
 
+    // the address a Google credential names, read off its payload. Nothing is
+    // trusted from it - the server checks the credential - it is only used to
+    // find which held account the person is signing in as again.
+    const emailOfCredential = function(credential) {
+        try {
+            const payload = credential.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+            const email = JSON.parse(decodeURIComponent(atob(payload).split("").map(function(c) {
+                return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join("")))["email"];
+            return typeof email === "string" ? email.toLowerCase() : "";
+        } catch (error) {
+            return "";
+        }
+    };
+
     // the device this is, as the sessions window of another device shows it
     const userAgent = function() {
         const desktop = ctx["desktop"];
@@ -131,9 +146,16 @@ const createAccount = function(ctx) {
         },
 
         // a credential from Google's button: the server makes the account and
-        // the session, and this client is that account from here on
+        // the session, and this client is that account from here on. Signing
+        // in again as an account this client already holds sends the session
+        // it has along, so the server hands that one back rather than making
+        // a second - one device, one entry in the sessions list.
         async loginGoogle(credential) {
-            const answer = await ctx["server"].loginGoogle(credential, userAgent());
+            const email = emailOfCredential(credential);
+            const held = stored().find(function(record) {
+                return email !== "" && (record["email"] ?? "").toLowerCase() === email;
+            });
+            const answer = await ctx["server"].loginGoogle(credential, userAgent(), held?.["sessionKey"]);
             const record = await putRecord(recordOf(answer, answer["sessionKey"]));
             liveId = record["userId"];
             await setLocal("userId", liveId);
@@ -239,6 +261,18 @@ const createAccount = function(ctx) {
         // another device of the current account is signed out
         async endSession(sessionId) {
             await ctx["server"].logout(sessionId);
+        },
+
+        // every session of the account a credential names is ended, this
+        // client's own among them if it held one - and none is started, so
+        // whoever wants back in signs in again. Answers how many went and
+        // whether this client was that account a moment ago.
+        async recover(credential) {
+            const answer = await ctx["server"].sessionsRevoke(credential);
+            const wasLive = (liveId === answer["userId"]);
+            await dropRecord(answer["userId"]);
+            emitChange();
+            return {"count": answer["count"] ?? 0, "wasLive": wasLive};
         }
     };
 

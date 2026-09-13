@@ -400,9 +400,14 @@ const Server = class extends EventTarget {
     };
 
     // a Google credential becomes an account on this connection, and the
-    // session the answer carries is what signs it in again without Google
-    async loginGoogle(credential, userAgent) {
-        return await this.invokeChecked({"type": "login-google", "credential": credential, "userAgent": userAgent});
+    // session the answer carries is what signs it in again without Google - the
+    // one sent along, when this client already holds one for that account
+    async loginGoogle(credential, userAgent, sessionKey) {
+        const message = {"type": "login-google", "credential": credential, "userAgent": userAgent};
+        if (typeof sessionKey === "string" && sessionKey !== "") {
+            message["sessionKey"] = sessionKey;
+        }
+        return await this.invokeChecked(message);
     };
 
     // a session this client kept, presented again - on every connection, since
@@ -432,6 +437,12 @@ const Server = class extends EventTarget {
     async userUpdate(firstName, lastName) {
         const answer = await this.invokeChecked({"type": "user-update", "firstName": firstName, "lastName": lastName});
         return answer["user"];
+    };
+
+    // the recovery: a fresh credential ends every session of the account it
+    // names and signs nobody in - the caller included, whoever it was
+    async sessionsRevoke(credential) {
+        return await this.invokeChecked({"type": "sessions-revoke", "credential": credential});
     };
 
     // every device signed in as this user

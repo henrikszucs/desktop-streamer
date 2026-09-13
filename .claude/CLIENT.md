@@ -165,7 +165,24 @@ failure shows `login.unavailable` with a retry instead of the button. A failed
 tag is removed so the retry fetches again rather than finding a dead element,
 and the button is rendered through `google.accounts.id.renderButton` rather
 than the declarative `g_id_onload` markup, which Google's script only parses
-once at its own load and so would never draw a button created after it.
+once at its own load and so would never draw a button created after it. The
+button is rendered at `size: "medium"` on purpose: Google personalizes the
+button ("Sign in as *Name*", with the picture) whenever the browser holds a
+session that approved this client id, there is no option against it, and the
+only documented way not to get it is a button below `large` — so the screen
+always reads "Sign in with Google" and shows nobody's account.
+
+Beneath the sign-in is the account recovery, for somebody locked out of their
+own account by a session that keeps ending theirs. It is kept quiet — well
+below the sign-in, a plain bordered button in the middle rather than a red one
+— so the eye lands on the sign-in first. Google's button is the only
+way to get a credential, so the recovery button does not call anything — it opens a
+panel with a Google button of its own and hides the sign-in one, and `mode` on
+the screen says what the one credential that can now arrive is for. `recover()`
+calls `account.recover()`, which sends `sessions-revoke`: every session of the
+account ends, none starts, the local record goes, and the route is redrawn as
+the guest if this client was that account. The screen stays, since signing in
+again is what comes next.
 
 ## Users
 
@@ -183,6 +200,11 @@ the record on the spot. A reconnect does not flip the bar to the guest and back:
 `liveId` is left alone while the loading layer is up and `resume()` sets it
 again. The Google credential goes from the login screen's `login` event to
 `loginGoogle()`, and a yes navigates home — the bar follows the `change` event.
+Signing in again as an account this client already holds sends that record's
+`sessionKey` along — the e-mail is read off the credential's payload only to
+find the record, never trusted — and the server hands the same session back,
+so the record is refreshed rather than doubled and the sessions list shows one
+device once.
 `switchTo("")` is `login-guest`, which leaves the session for the device to come
 back to; `logout()` is `logout`, which ends it on every socket presenting it.
 A `logout` pushed by the server — this device signed out from another one — is

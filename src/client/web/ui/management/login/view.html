@@ -21,4 +21,39 @@
             <span data-localization="login.retry">Try again</span>
         </button>
     </article>
+    <!--
+        The way back for somebody locked out of their own account. The red
+        button opens the panel below, which has a Google button of its own: a
+        credential is the only thing that proves who is asking, and the
+        sign-in button is hidden while the panel is open so that the one
+        credential that arrives is a recovery and not a sign-in - see
+        index.js. Ending every session starts none.
+    -->
+    <!--
+        Kept quiet on purpose: the sign-in is what the eye should land on, so
+        the recovery stands well below it and its button is plain rather than
+        red - what it does is said in the text, and asked again in the panel.
+    -->
+    <div class="large-space"></div>
+    <div class="large-space"></div>
+    <article class="border round hide" id="login-recovery">
+        <h6 data-localization="login.recovery.title">Account recovery</h6>
+        <p data-localization="login.recovery.hint">If somebody else holds a session of your account and keeps signing you out, you can end every session of the account at once. Nothing is signed in afterwards - sign in again to get back in.</p>
+        <nav class="center-align" id="login-recovery-start-row">
+            <button class="border" id="login-recovery-start">
+                <i>security</i>
+                <span data-localization="login.recovery.start">Sign out everywhere</span>
+            </button>
+        </nav>
+        <div class="hide" id="login-recovery-panel">
+            <p data-localization="login.recovery.confirm">Sign in with Google to prove the account is yours. Every session of it will be ended, including the one on this device.</p>
+            <div class="center-align" id="google-recover"></div>
+            <nav class="center-align">
+                <button class="border" id="login-recovery-cancel">
+                    <i>close</i>
+                    <span data-localization="login.recovery.cancel">Cancel</span>
+                </button>
+            </nav>
+        </div>
+    </article>
 </div>

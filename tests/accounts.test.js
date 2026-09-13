@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, NAME_MAX } from "../src/server/ws/handlers/accounts.js";
+import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, NAME_MAX } from "../src/server/ws/handlers/accounts.js";
 
 // an account is a row, so these run against a real SQLite file, the same way
 // the joins tests do
@@ -93,8 +93,12 @@ const pushesOf = function(server, sessionId, type) {
     });
 };
 
-const signIn = async function(server, sessionId, who) {
-    const ctx = buildCtx(server, sessionId, {"credential": who, "userAgent": {"os": "darwin"}});
+const signIn = async function(server, sessionId, who, sessionKey) {
+    const message = {"credential": who, "userAgent": {"os": "darwin"}};
+    if (typeof sessionKey !== "undefined") {
+        message["sessionKey"] = sessionKey;
+    }
+    const ctx = buildCtx(server, sessionId, message);
     await loginGoogle(ctx);
     return ctx["answers"][0];
 };
@@ -172,6 +176,63 @@ test("the same person signing in again is the same account, on a second session"
         assert.equal((await db("users")).length, 1);
         assert.equal((await db("sessions")).length, 2);
         assert.equal(server.accounts.get(first["user"]["userId"])["sessionIds"].size, 2);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("the same person again, with the key they hold, is the same session", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const first = await signIn(server, "one", "alice");
+        const before = (await db("sessions").where("session_id", first["sessionId"]).first());
+        await db("sessions").where("session_id", first["sessionId"]).update({"expire": before["expire"] - 1000, "last_used": before["last_used"] - 1000});
+
+        // another socket of the same device presents the key it kept
+        const again = await signIn(server, "two", "alice", first["sessionKey"]);
+        assert.equal(again["success"], true);
+        assert.equal(again["sessionId"], first["sessionId"]);
+        assert.equal(again["sessionKey"], first["sessionKey"]);
+        assert.equal((await db("sessions")).length, 1);
+        assert.equal(heldUser(server, "two")["accountSessionId"], first["sessionId"]);
+
+        // brought up to date rather than left as it was
+        const row = await db("sessions").where("session_id", first["sessionId"]).first();
+        assert.equal(row["expire"] >= before["expire"], true);
+        assert.equal(row["last_used"] >= before["last_used"], true);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a connection that is already this person keeps its session on a second sign-in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const first = await signIn(server, "one", "alice");
+        const again = await signIn(server, "one", "alice");
+        assert.equal(again["sessionId"], first["sessionId"]);
+        assert.equal((await db("sessions")).length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a key of somebody else, or one that ran out, does not stand in for a session", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const bob = await signIn(server, "three", "bob");
+        const withBobs = await signIn(server, "one", "alice", bob["sessionKey"]);
+        assert.notEqual(withBobs["sessionId"], bob["sessionId"]);
+        assert.equal(heldUser(server, "three")["accountSessionId"], bob["sessionId"]);
+
+        await db("sessions").where("session_id", withBobs["sessionId"]).update({"expire": Date.now() - 1});
+        const afterExpiry = await signIn(server, "two", "alice", withBobs["sessionKey"]);
+        assert.equal(afterExpiry["success"], true);
+        assert.notEqual(afterExpiry["sessionId"], withBobs["sessionId"]);
+        assert.equal((await db("sessions").where("user_id", withBobs["user"]["userId"])).length, 1);
     } finally {
         await dropDatabase(db, file);
     }
@@ -445,6 +506,78 @@ test("session-list answers every live session of the user, the caller's marked",
         for (const session of answer["sessions"]) {
             assert.equal("sessionKey" in session, false, "the key is the credential and never listed");
         }
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+//
+// recovery
+//
+test("sessions-revoke ends every session of the account and starts none", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice1 = await signIn(server, "one", "alice");
+        const alice2 = await signIn(server, "two", "alice");
+        const bob = await signIn(server, "three", "bob");
+
+        // a guest socket with a fresh credential - the caller is nobody
+        const guest = buildClient();
+        server.clients.set("four", guest);
+        const ctx = buildCtx(server, "four", {"credential": "alice"});
+        await sessionsRevoke(ctx);
+        assert.equal(ctx["answers"][0]["success"], true);
+        assert.equal(ctx["answers"][0]["userId"], alice1["user"]["userId"]);
+        assert.equal(ctx["answers"][0]["count"], 2);
+
+        assert.equal(heldUser(server, "four"), undefined, "nobody is signed in by it");
+        assert.equal(heldUser(server, "one"), undefined);
+        assert.equal(heldUser(server, "two"), undefined);
+        assert.equal((await db("sessions").where("user_id", alice1["user"]["userId"])).length, 0);
+        assert.equal(pushesOf(server, "one", "logout")[0]["sessionId"], alice1["sessionId"]);
+        assert.equal(pushesOf(server, "two", "logout")[0]["sessionId"], alice2["sessionId"]);
+
+        // and bob is untouched
+        assert.equal(heldUser(server, "three")["accountSessionId"], bob["sessionId"]);
+        assert.equal(pushesOf(server, "three", "logout").length, 0);
+
+        // the keys open nothing any more
+        const back = buildCtx(server, "one", {"sessionKey": alice1["sessionKey"]});
+        await loginSession(back);
+        assert.equal(back["answers"][0]["error"], "unknown-session");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("sessions-revoke by the account itself answers the caller rather than pushing to it", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        await signIn(server, "one", "alice");
+        const ctx = buildCtx(server, "one", {"credential": "alice"});
+        await sessionsRevoke(ctx);
+        assert.equal(ctx["answers"][0]["count"], 1);
+        assert.equal(heldUser(server, "one"), undefined);
+        assert.equal(pushesOf(server, "one", "logout").length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("sessions-revoke refuses a bad credential and an account it has never seen, and makes neither", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const bad = buildCtx(server, "one", {"credential": "nobody"});
+        await sessionsRevoke(bad);
+        assert.equal(bad["answers"][0]["error"], "invalid-credential");
+
+        const unknown = buildCtx(server, "one", {"credential": "alice"});
+        await sessionsRevoke(unknown);
+        assert.equal(unknown["answers"][0]["error"], "unknown-user");
+        assert.equal((await db("users")).length, 0);
     } finally {
         await dropDatabase(db, file);
     }

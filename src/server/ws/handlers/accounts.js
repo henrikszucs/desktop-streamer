@@ -334,13 +334,40 @@ const sessionOf = function(row, ownSessionId) {
 //
 // the calls
 //
+// a session of this user the caller already holds, if it names one that still
+// stands: the key it sent along, or the one this connection is signed in on.
+// Signing in again is then the same session and not a second row - a device
+// that presses the button twice is one device, and one entry in the list.
+const findOwnSession = async function(server, sessionId, userId, sessionKey) {
+    const db = server.db;
+    if (typeof sessionKey === "string" && sessionKey !== "") {
+        const session = await findSession(db, sessionKey);
+        if (typeof session !== "undefined" && session["user_id"] === userId) {
+            return session;
+        }
+    }
+    const held = heldUser(server, sessionId);
+    if (held?.["userId"] === userId) {
+        const session = await db("sessions")
+            .where({"session_id": held["accountSessionId"], "user_id": userId})
+            .andWhere("expire", ">", Date.now())
+            .first();
+        if (typeof session !== "undefined") {
+            return session;
+        }
+    }
+    return undefined;
+};
+
 // a Google credential becomes an account and a session on this socket. The
 // session is what the client keeps: it is answered once, here, and presented
-// through login-session from then on.
+// through login-session from then on - and handed back rather than made again
+// when the client already holds one for this user.
 const loginGoogle = async function(ctx) {
     /*{
         "credential": string,
-        "userAgent": {"os": string, ...}
+        "userAgent": {"os": string, ...},
+        "sessionKey": string        (optional - a session the client holds for this user)
     }*/
     /*{
         "success": boolean,
@@ -369,32 +396,43 @@ const loginGoogle = async function(ctx) {
         return;
     }
     const user = found["user"];
-
     const db = server.db;
-    const newSessionId = await generateUnique(db, "sessions", "session_id");
-    const sessionKey = await generateUnique(db, "sessions", "session_key");
-    if (newSessionId === undefined || sessionKey === undefined) {
-        messageObj.send({"success": false, "error": "failed"});
-        return;
-    }
     const now = Date.now();
-    const session = {
-        "session_id": newSessionId,
-        "user_id": user["user_id"],
-        "session_key": sessionKey,
+    const change = {
         "expire": now + SESSION_LIFETIME,
         "last_used": now,
         "ip_address": addressOf(server, sessionId),
         "user_agent": userAgentOf(ctx["message"])
     };
-    await db("sessions").insert(session);
+
+    // the same person again: the session they have, pushed out and brought up
+    // to date, is the one answered
+    let session = await findOwnSession(server, sessionId, user["user_id"], ctx["message"]["sessionKey"]);
+    if (typeof session !== "undefined") {
+        await db("sessions").where("session_id", session["session_id"]).update(change);
+        session = {...session, ...change};
+    } else {
+        const newSessionId = await generateUnique(db, "sessions", "session_id");
+        const sessionKey = await generateUnique(db, "sessions", "session_key");
+        if (newSessionId === undefined || sessionKey === undefined) {
+            messageObj.send({"success": false, "error": "failed"});
+            return;
+        }
+        session = {
+            "session_id": newSessionId,
+            "user_id": user["user_id"],
+            "session_key": sessionKey,
+            ...change
+        };
+        await db("sessions").insert(session);
+    }
 
     attachAccount(server, sessionId, user, session);
     const picture = await loadPicture(server, user["user_id"], found["pictureUrl"]);
     messageObj.send({
         "success": true,
-        "sessionId": newSessionId,
-        "sessionKey": sessionKey,
+        "sessionId": session["session_id"],
+        "sessionKey": session["session_key"],
         "user": profileOf(user, picture)
     });
 };
@@ -557,6 +595,59 @@ const userUpdate = async function(ctx) {
     }
 };
 
+// the way back for a person locked out of their own account: a hijacked
+// session that keeps ending every new one would win against logout, which
+// only a signed-in socket may call. This one is called by nobody in particular
+// - a guest, most likely - with a fresh credential, and ends every session of
+// the account it names without starting one: whoever wants in again signs in
+// again, on equal terms.
+const sessionsRevoke = async function(ctx) {
+    /*{
+        "credential": string
+    }*/
+    /*{
+        "success": boolean,
+        "userId": string,
+        "count": number,
+        "error": string
+    }*/
+    const server = ctx["server"];
+    const sessionId = ctx["sessionId"];
+    const messageObj = ctx["messageObj"];
+    if (server.db === null || server.auth === null) {
+        messageObj.send({"success": false, "error": "auth-disabled"});
+        return;
+    }
+
+    const info = await server.auth["verifyGoogle"](ctx["message"]["credential"]);
+    if (typeof info === "undefined") {
+        messageObj.send({"success": false, "error": "invalid-credential"});
+        return;
+    }
+
+    // an account this server has never seen has no sessions to end, and this
+    // is not the call that makes one
+    const link = await server.db("users_google").where("sub", info["sub"]).first();
+    if (typeof link === "undefined") {
+        messageObj.send({"success": false, "error": "unknown-user"});
+        return;
+    }
+    const userId = link["user_id"];
+    const count = await server.db("sessions").where("user_id", userId).del();
+
+    // every socket that was this person is a guest again - the caller among
+    // them, if it was one, and answered rather than told
+    const account = server.accounts.get(userId);
+    for (const otherId of [...(account?.["sessionIds"] ?? [])]) {
+        const ended = server.clients.get(otherId)?.get("accountSessionId");
+        detachAccount(server, otherId);
+        if (otherId !== sessionId) {
+            notify(server, otherId, {"type": "logout", "sessionId": ended});
+        }
+    }
+    messageObj.send({"success": true, "userId": userId, "count": count});
+};
+
 // every device signed in as this user, for the sessions window
 const sessionList = async function(ctx) {
     /*{
@@ -591,8 +682,9 @@ const handlers = {
     "login-guest": loginGuest,
     "logout": logout,
     "user-update": userUpdate,
-    "session-list": sessionList
+    "session-list": sessionList,
+    "sessions-revoke": sessionsRevoke
 };
 
-export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, SESSION_LIFETIME, NAME_MAX, USER_AGENT_MAX };
+export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, SESSION_LIFETIME, NAME_MAX, USER_AGENT_MAX };
 export default handlers;

@@ -66,10 +66,16 @@ const GoogleLogin = class extends EventTarget {
             "ux_mode": "popup",
             "auto_prompt": false
         });
+        // Google draws a "Sign in as <name>" button of its own accord when the
+        // browser has a session that approved this client id, and there is no
+        // switch against it - what there is, is that the personalized form is
+        // not rendered at all below "large", so the button is "medium" to
+        // always read "Sign in with Google" and show nobody's picture
         window["google"]["accounts"]["id"].renderButton(el.firstElementChild, {
             "logo_alignment": "left",
             "shape": "pill",
-            "size": "large",
+            "size": "medium",
+            "width": 400,           // the widest Google draws; view.css scales the rest
             "text": "signin_with",
             "theme": "filled_blue",
             "type": "standard"
