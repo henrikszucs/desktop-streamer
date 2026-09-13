@@ -95,7 +95,8 @@ Plan: [ws-pairing-joins.md](ws-pairing-joins.md).
 | `join-connect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success", "values": {"name", "isOnline", "isRemember"}}` **(done, one code and no `values`)** |
 | `join-rename` | `{"joinId", "name", "peerCode"\|"hostCode"}` | `{"success"}` **(done, one code, and the name is answered back)** |
 | `join-delete` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success"}` **(done, one code)** |
-| `join-disconnect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success"}` |
+| `join-disconnect` | `{"joinId", "peerCode"\|"hostCode"}` | `{"success"}` **(done: bare, or `{"joinIds"}` for a subset)** |
+| `join-sync` | – | `{"success", "joins": [{"joinId", "joinCode", "name", "isUnsupervised"}]}` **(done, not in the original: an account's devices by `peer_user_id`)** |
 | `join-remember` | `{"joinId", "isRemember", "hostCode"}` | `{"success"}` |
 | `join-rehost` | `{"joinId"}` | `{"success", "hostCode"}` |
 
@@ -232,4 +233,4 @@ From [README.md](README.md): client config → database → accounts →
 pairing/joins. **The last one went first** — pairing, then joins, then the relay
 — because none of it needed an account to work: the join code is the credential
 until one exists. What is left is the account half, and the three join calls
-(`join-disconnect`, `join-remember`, `join-rehost`) worth doing beside it.
+(~~`join-disconnect`~~, `join-remember`, `join-rehost`) worth doing beside it.

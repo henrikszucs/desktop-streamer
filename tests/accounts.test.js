@@ -13,6 +13,7 @@ import fs from "node:fs/promises";
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
 import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME } from "../src/server/ws/handlers/accounts.js";
+import { createJoin } from "../src/server/ws/handlers/joins.js";
 
 // an account is a row, so these run against a real SQLite file, the same way
 // the joins tests do
@@ -66,6 +67,7 @@ const buildServer = function(db, permissions = {}) {
     return {
         "clients": clients,
         "accounts": new Map(),
+        "joins": new Map(),
         "db": db,
         "auth": auth,
         "mailer": null,
@@ -716,19 +718,25 @@ test("delete takes the key back on the device it was mailed for and removes the 
         server.mailer = buildMailer();
         const alice = await signIn(server, "one", "alice");
         await signIn(server, "two", "alice");           // a second device of hers
-        await signIn(server, "three", "bob");
+        const bob = await signIn(server, "three", "bob");
         await requestDelete(server, "one");
         const key = server.mailer["sent"][0]["key"];
+
+        // the devices she remembered, and one of bob's beside them
+        await createJoin(server, false, alice["user"]["userId"]);
+        await createJoin(server, false, bob["user"]["userId"]);
 
         const answer = await confirmDelete(server, "one", " " + key + " ");
         assert.equal(answer["success"], true);
 
-        // the row and everything hanging off it
+        // the row and everything hanging off it, her devices included
         assert.equal((await db("users").where("user_id", alice["user"]["userId"])).length, 0);
         assert.equal((await db("users_google").where("user_id", alice["user"]["userId"])).length, 0);
         assert.equal((await db("sessions").where("user_id", alice["user"]["userId"])).length, 0);
         assert.equal((await db("delete")).length, 0);
+        assert.equal((await db("joins").where("peer_user_id", alice["user"]["userId"])).length, 0);
         assert.equal((await db("users")).length, 1);      // bob stays
+        assert.equal((await db("joins")).length, 1);      // and so does his device
 
         // every socket that was her is a guest, the other one told
         assert.equal(heldUser(server, "one"), undefined);

@@ -4,7 +4,8 @@
 // connection it is hosting right now. The host answers nothing here - a device
 // that comes back is answered by the request dialog wherever the shell happens
 // to be - so this screen lists them, says which are online, and lets one be
-// forgotten for good.
+// forgotten for good. A share is the machine's rather than a user's (see
+// src/joins.js), so the list is the same whoever is signed in.
 //
 // **A share is not only a record.** A pairing the host did not ask to remember
 // leaves no row anywhere, and it is still this device being shared out for as
@@ -13,11 +14,13 @@
 // the one flow that shares nothing *but* the moment would show nothing here at
 // all.
 //
-// It is also where a connection *arrives*. Every way one is made ends in the
-// same room-open on the host, so this screen listens for that one message
-// rather than being sent here by each flow in turn - which is the only way the
-// unsupervised join is covered at all, since nothing on the host is asked about
-// that one and there is no dialog of its own for it to end in.
+// It is also where a *new* connection arrives. A pairing ends in the same
+// room-open on the host as a remembered device coming back does, so this
+// screen listens for that one message and reads `isNew` off it: a connection
+// made this moment is worth naming, so the host is brought here with its
+// settings open; a device the host already knows, let back in from the request
+// dialog or walking in unsupervised, changes nothing about where the host is
+// standing - it answered from wherever it was and stays there.
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";
@@ -36,21 +39,15 @@ const SharesScreen = class extends Screen {
 
     isOpen = false;
 
-    // build() asks for the records, and asking changes them - who is online is
-    // part of what comes back - so the change it makes itself is not one to
-    // rebuild for
+    // a change that arrives while the grid is being built - a record's or the
+    // room's - is not dropped: the build runs again when it is done, since what
+    // it drew may already be behind. list() itself emits nothing, which is what
+    // keeps that from being a build that asks for another for ever.
     isBuilding = false;
-
-    // and a change that arrived while it was building anyway. Only the room's
-    // are held: a room does not move because this screen asked something, so
-    // answering one cannot start a build that asks for another.
     isPending = false;
 
     async mount(ctx) {
-        this.areaUser = document.getElementById("screen-shares-user");
-        this.areaGuest = document.getElementById("screen-shares-guest");
         this.area = document.getElementById("shares-area");
-        this.area2 = document.getElementById("shares-area-2");
 
         // a card is only right while what it was built from is: a device that
         // arrives or goes, a name that was changed in the dialog over this
@@ -70,21 +67,14 @@ const SharesScreen = class extends Screen {
     };
 
     onSharesChange = () => {
-        if (this.isOpen === false || this.isBuilding === true) {
+        if (this.isOpen === false) {
             return;
         }
         this.build();
     };
 
-    // the room going while the grid was being built is a card that would stand
-    // there after the connection under it is gone, so it is built again rather
-    // than dropped the way a record's own change is
     onRoomChange = () => {
         if (this.isOpen === false) {
-            return;
-        }
-        if (this.isBuilding === true) {
-            this.isPending = true;
             return;
         }
         this.build();
@@ -95,13 +85,15 @@ const SharesScreen = class extends Screen {
     //
     // the host is brought to its own list with that connection's settings open
     // on it, because naming it is the one thing worth doing to a connection the
-    // moment it is made. A pairing the host did not remember carries no join
-    // id: it leaves nothing behind to name or to forget, so that host stays
-    // where it is.
+    // moment it is made. A remembered device coming back is not that: it was
+    // named when it was made, and the host is left where it answered.
     onRoomOpen = async (event) => {
         const detail = event.detail ?? {};
         if (detail["isHost"] !== true) {
             return;     // the peer goes into the room instead - see ui/room/joining/
+        }
+        if (detail["isNew"] !== true) {
+            return;     // a device the host already knows, back again
         }
         const joinId = detail["joinId"] ?? "";
 
@@ -154,6 +146,10 @@ const SharesScreen = class extends Screen {
     };
 
     async build() {
+        if (this.isBuilding === true) {
+            this.isPending = true;
+            return;
+        }
         this.isBuilding = true;
         try {
             do {
@@ -187,7 +183,7 @@ const SharesScreen = class extends Screen {
         // and only now: the grid emptied before the answer arrives is a screen
         // that blinks on every rebuild, and one that stays empty when the call
         // fails
-        this.area2.innerHTML = "";
+        this.area.innerHTML = "";
 
         const localization = ctx["localization"];
         for (const record of records) {
@@ -212,7 +208,11 @@ const SharesScreen = class extends Screen {
                 if (isConfirmed === false) {
                     return;
                 }
-                await ctx["joins"].remove(event.detail["joinId"]);
+                try {
+                    await ctx["joins"].remove(event.detail["joinId"]);
+                } catch (error) {
+                    console.error(error);
+                }
                 box.el.remove();
             });
 
@@ -222,13 +222,13 @@ const SharesScreen = class extends Screen {
             box.addEventListener("settings", function(event) {
                 ctx["ui"].openDialog("connection", {"joinId": event.detail["joinId"]});
             });
-            this.area2.appendChild(box.el);
+            this.area.appendChild(box.el);
         }
 
         // and the one that is nothing but the connection. It goes first: it is
         // the only card on this screen that is about right now.
         if (isSharing === true && liveJoinId === "") {
-            this.area2.prepend(this.buildLiveCard());
+            this.area.prepend(this.buildLiveCard());
         }
     };
 
@@ -264,22 +264,13 @@ const SharesScreen = class extends Screen {
 
     open(params) {
         this.area.innerHTML = "";
-        this.area2.innerHTML = "";
         this.isOpen = true;
-
         super.open(params);
-
-        // there is no account either, so the area that lists its shares stays
-        // out of the way
-        this.areaUser.classList.add("hide");
-        this.areaGuest.classList.remove("hide");
-
         this.build();
     };
     close() {
         this.isOpen = false;
         this.area.innerHTML = "";
-        this.area2.innerHTML = "";
         super.close();
     };
 };

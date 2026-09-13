@@ -350,10 +350,12 @@ const pairAccept = async function(ctx) {
     // a join is written before either side is told, so neither is handed a code
     // that is not in the table yet. Failing to remember does not fail the
     // pairing: the two are connected either way, just not next time.
+    // the device is the peer's account's where it has one - see handlers/joins.js
     let join = undefined;
     if (message["remember"] === true) {
         try {
-            join = await createJoin(server, message["unsupervised"] === true);
+            join = await createJoin(server, message["unsupervised"] === true,
+                server.clients.get(peerSessionId)?.get("userId") ?? "");
         } catch (error) {
             console.log("Cannot remember the pairing:", error);
         }
@@ -389,7 +391,7 @@ const pairAccept = async function(ctx) {
     // rather than carried in these two answers: the host of an unsupervised join
     // is never asked anything, so there is no answer to put it in there, and one
     // way in is one way for a client to handle it - see handlers/rooms.js.
-    createRoom(server, sessionId, peerSessionId, join?.["joinId"] ?? "");
+    createRoom(server, sessionId, peerSessionId, join?.["joinId"] ?? "", true);
 };
 
 // no, from either side of it. From the host it is a decision and the code is

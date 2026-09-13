@@ -305,11 +305,14 @@ test("pair-accept tells the peer and uses the code up", async () => {
     const {server, pairCode, hostCtx} = await buildRequest();
 
     const answerCtx = buildCtx(server, "host");
-    pairAccept(answerCtx);
+    await pairAccept(answerCtx);
 
     assert.equal(answerCtx.answers[0]["success"], true);
     assert.equal(pushesOf(server, "peer", "pair-accept").length, 1);
     assert.equal(server.pairs.has(pairCode), false);
+
+    // the room a pairing opens is a connection made this moment
+    assert.equal(pushesOf(server, "host", "room-open")[0]["isNew"], true);
     assert.equal(server.clients.get("host").has("pairCode"), false);
     assert.equal(server.clients.get("peer").has("pairCode"), false);
 

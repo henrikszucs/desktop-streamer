@@ -111,6 +111,20 @@ const ConnectionDialog = class extends Dialog {
     // change event in src/joins.js - so closing is the base's requestClose(),
     // which leaves the router the one that knows what is open.
 
+    currentName() {
+        const localization = this.ctx["localization"];
+        if (this.isLive === true) {
+            const name = this.ctx["room"].getName();
+            return (name !== "" ? name : localization.get("connection.liveName"));
+        }
+        const record = this.ctx["joins"].get(this.joinId);
+        const name = (record?.["name"] ?? "").trim();
+        if (name !== "") {
+            return name;
+        }
+        return localization.get(record?.["isHost"] === true ? "connection.shareName" : "connection.deviceName");
+    };
+
     open(params) {
         this.joinId = params?.["joinId"] ?? "";
 
@@ -119,9 +133,10 @@ const ConnectionDialog = class extends Dialog {
         // longer holds, which is what save() answers with
         this.isLive = (params?.["isLive"] === true && this.joinId === "");
 
-        this.nameInput.value = (this.isLive === true
-            ? this.ctx["room"].getName()
-            : this.ctx["joins"].get(this.joinId)?.["name"] ?? "");
+        // the field opens on what the card shows: the name this side gave, or
+        // the label the card falls back to when nobody has - the same words,
+        // kept in this slice so the dialog does not lean on either screen's
+        this.nameInput.value = this.currentName();
 
         // the line under the field says what the name is worth, and that is not
         // the same sentence for a name on a row and one on a connection. The key
@@ -133,7 +148,11 @@ const ConnectionDialog = class extends Dialog {
         this.hint.innerText = this.ctx["localization"].get(hintKey);
 
         super.open(params);
+
+        // selected rather than merely focused: the usual thing to do with a
+        // name that is already there is to type over it
         this.nameInput.focus();
+        this.nameInput.select();
     };
 };
 

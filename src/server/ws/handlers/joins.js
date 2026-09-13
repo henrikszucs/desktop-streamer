@@ -1,13 +1,20 @@
 "use strict";
 
 // what a host remembers about a device it let in once: the `joins` row that
-// outlives both sockets, the two codes that stand in for an account until
-// dev/plans/ws-accounts.md lands, and the way back in for a device that returns.
+// outlives both sockets, the two codes that decide which side a socket is on,
+// and the way back in for a device that returns.
 //
 // A join is made by `pair-accept` when the host ticks "remember". After that the
 // peer needs no code from anybody: it presents the one it was given, and either
 // the host is asked again (supervised) or it is not (unsupervised) - which is
 // the whole difference between the two flags.
+//
+// **The two sides are kept differently.** A share is the machine's: the host
+// code lives in that client alone and `host_user_id` stays empty, whoever is
+// signed in there. A device is the person's: `peer_user_id` is the account the
+// peer was signed in as when the pair was made, and `join-sync` hands that
+// account its devices on any client it signs in on - so for an account the
+// sign-in is the credential, and for a guest the code still is.
 
 // first-party dependencies
 import { generateId } from "../../common.js";
@@ -57,8 +64,10 @@ const generateJoinId = async function(db) {
 };
 
 // the row of a remembered pair, written once and read back by either code.
-// Called by pair-accept, which is the only thing that makes one.
-const createJoin = async function(server, isUnsupervised) {
+// Called by pair-accept, which is the only thing that makes one. `peerUserId`
+// is the account the peer is signed in as, "" for a guest - the host side has
+// no owner on purpose, see the top of this file.
+const createJoin = async function(server, isUnsupervised, peerUserId="") {
     const db = server.db;
     if (db === null) {
         return undefined;       // nothing to remember it in
@@ -78,7 +87,7 @@ const createJoin = async function(server, isUnsupervised) {
         "join_id": joinId,
         "peer_code": codes["peerCode"],
         "host_code": codes["hostCode"],
-        "peer_user_id": "",
+        "peer_user_id": typeof peerUserId === "string" ? peerUserId : "",
         "host_user_id": "",
         "peer_name": "",
         "host_name": "",
@@ -197,16 +206,27 @@ const dropIfEmpty = function(server, join) {
     server.joins.delete(join.get("joinId"));
 };
 
-// one socket leaves every join it was on. Called from the close handler, so a
-// device that goes offline stops being reachable and a request it was waiting on
-// does not outlive it.
-const detachJoins = function(server, sessionId) {
+// one socket leaves every join it was on, or only the ones named. Called from
+// the close handler, so a device that goes offline stops being reachable and a
+// request it was waiting on does not outlive it - and by join-disconnect, where
+// a client switching accounts drops the old one's devices and nothing else.
+const detachJoins = function(server, sessionId, onlyJoinIds=undefined) {
     const client = server.clients.get(sessionId);
-    const joinIds = client?.get("joinIds");
-    if (joinIds === undefined) {
+    const held = client?.get("joinIds");
+    if (held === undefined) {
         return;
     }
-    client.delete("joinIds");
+    let joinIds = held;
+    if (Array.isArray(onlyJoinIds) === true) {
+        joinIds = new Set(onlyJoinIds.filter(function(joinId) {
+            return held.has(joinId);
+        }));
+        for (const joinId of joinIds) {
+            held.delete(joinId);
+        }
+    } else {
+        client.delete("joinIds");
+    }
 
     for (const joinId of joinIds) {
         const join = server.joins.get(joinId);
@@ -443,7 +463,7 @@ const joinRequest = async function(ctx) {
         "joinId": join.get("joinId"),
         "details": {
             "ipAddress": client?.get("ws")?._socket?.remoteAddress ?? "",
-            "isUser": false
+            "isUser": typeof client?.get("userId") === "string"
         },
         "timeout": ANSWER_TIMEOUT
     }, ANSWER_TIMEOUT).then(function(isDelivered) {
@@ -532,9 +552,36 @@ const joinReject = function(ctx) {
     ctx["messageObj"].send({"success": true});
 };
 
+// a join is gone for good: the row, the memory entry, and a card on every
+// socket that was on it - except the ones that asked, which have an answer
+// coming. Shared by join-delete and by an account being deleted.
+const dropJoin = async function(server, joinId, exceptSessionIds=new Set()) {
+    const join = server.joins.get(joinId);
+    const sessionIds = (join === undefined
+        ? new Set()
+        : new Set([...join.get("hostSessionIds"), ...join.get("peerSessionIds")]));
+    if (join !== undefined) {
+        rejectRequest(server, join, "removed");
+    }
+
+    if (server.db !== null) {
+        await server.db("joins").where("join_id", joinId).del();
+    }
+    for (const sessionId of sessionIds) {
+        server.clients.get(sessionId)?.get("joinIds")?.delete(joinId);
+    }
+    server.joins.delete(joinId);
+
+    const others = new Set([...sessionIds].filter(function(sessionId) {
+        return exceptSessionIds.has(sessionId) === false;
+    }));
+    notifyAll(server, others, {"type": "join-remove", "joinId": joinId});
+};
+
 // either side forgets the other. The row goes, so both codes stop opening
 // anything, and whoever is connected is told rather than left with a card that
-// answers nothing.
+// answers nothing - the caller's own other windows included, since the record
+// they draw from is the account's or the machine's, not the window's.
 const joinDelete = async function(ctx) {
     /*{
         "joinId": string
@@ -549,35 +596,77 @@ const joinDelete = async function(ctx) {
         ctx["messageObj"].send({"success": true});
         return;
     }
-
-    const join = held["join"];
-    const others = new Set(otherSide(join, held["isHost"]));
-    rejectRequest(server, join, "removed");
-
-    if (server.db !== null) {
-        await server.db("joins").where("join_id", joinId).del();
-    }
-    for (const sessionId of new Set([...join.get("hostSessionIds"), ...join.get("peerSessionIds")])) {
-        server.clients.get(sessionId)?.get("joinIds")?.delete(joinId);
-    }
-    server.joins.delete(joinId);
-
-    notifyAll(server, others, {"type": "join-remove", "joinId": joinId});
+    await dropJoin(server, joinId, new Set([ctx["sessionId"]]));
     ctx["messageObj"].send({"success": true});
 };
 
-// the caller is off every join it presented, as if its socket had closed - the
-// rows stay, since forgetting them is each side's own (join-delete). It is what
-// a guest signing out calls: the codes it held are dropped on its side, and
-// without this the server would go on answering for a device that is not there
-// until the socket actually went.
+// the devices of an account go with it: every join it is the peer of is
+// dropped, and each host is told the way a join-delete tells it. Called by
+// the account deletion in handlers/accounts.js before the users row goes.
+const removeUserJoins = async function(server, userId) {
+    if (server.db === null || typeof userId !== "string" || userId === "") {
+        return 0;
+    }
+    const rows = await server.db("joins").where("peer_user_id", userId).select("join_id");
+    for (const row of rows) {
+        await dropJoin(server, row["join_id"]);
+    }
+    return rows.length;
+};
+
+// the devices of the account this socket is signed in as, codes included: a
+// device is the person's rather than the client's, so an account signing in
+// on a new machine is handed them here and presents each with join-connect,
+// exactly as a client that had them stored would. A guest is answered nothing
+// - its devices are the codes it holds, and the server cannot tell one guest
+// from another.
+const joinSync = async function(ctx) {
+    /*{
+    }*/
+    /*{
+        "success": boolean,
+        "joins": [{"joinId", "joinCode", "name", "isUnsupervised"}],
+        "error": string
+    }*/
+    const server = ctx["server"];
+    const userId = server.clients.get(ctx["sessionId"])?.get("userId");
+    if (typeof userId !== "string" || userId === "") {
+        ctx["messageObj"].send({"success": false, "error": "not-signed-in"});
+        return;
+    }
+    if (server.db === null) {
+        ctx["messageObj"].send({"success": true, "joins": []});
+        return;
+    }
+    const rows = await server.db("joins").where("peer_user_id", userId);
+    ctx["messageObj"].send({
+        "success": true,
+        "joins": rows.map(function(row) {
+            return {
+                "joinId": row["join_id"],
+                "joinCode": row["peer_code"],
+                "name": row["host_name"],
+                "isUnsupervised": recordOf(row)["isUnsupervised"]
+            };
+        })
+    });
+};
+
+// the caller is off every join it presented - or only the ones it names - as if
+// its socket had closed for them. The rows stay, since forgetting them is each
+// side's own (join-delete). A guest signing out calls it bare; a client
+// switching accounts calls it with the old account's devices, so its shares
+// stay reachable while the devices change hands. Without this the server would
+// go on answering for a device that is not there until the socket actually went.
 const joinDisconnect = function(ctx) {
     /*{
+        "joinIds": [string]     (optional: only these)
     }*/
     /*{
         "success": boolean
     }*/
-    detachJoins(ctx["server"], ctx["sessionId"]);
+    const joinIds = ctx["message"]["joinIds"];
+    detachJoins(ctx["server"], ctx["sessionId"], Array.isArray(joinIds) === true ? joinIds : undefined);
     ctx["messageObj"].send({"success": true});
 };
 
@@ -590,8 +679,9 @@ const handlers = {
     "join-accept": joinAccept,
     "join-reject": joinReject,
     "join-delete": joinDelete,
-    "join-disconnect": joinDisconnect
+    "join-disconnect": joinDisconnect,
+    "join-sync": joinSync
 };
 
-export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
+export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, dropJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
 export default handlers;

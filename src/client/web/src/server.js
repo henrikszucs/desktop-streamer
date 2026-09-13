@@ -374,12 +374,31 @@ const Server = class extends EventTarget {
     // off every join this connection presented, the rows left alone - what a
     // guest signing out calls, so the socket it keeps stops answering for codes
     // it no longer holds
-    async joinDisconnect() {
+    // off every join this socket presented, or only the ones named
+    async joinDisconnect(joinIds=undefined) {
         if (this.isOnline === false) {
             return;
         }
-        const messageObj = this.communicator.invoke({"type": "join-disconnect"});
+        const message = {"type": "join-disconnect"};
+        if (Array.isArray(joinIds) === true) {
+            message["joinIds"] = joinIds;
+        }
+        const messageObj = this.communicator.invoke(message);
         await messageObj.wait();
+    };
+
+    // the devices of the account this socket is signed in as, codes included -
+    // what a client that has none stored is handed on sign-in
+    async joinSync() {
+        const messageObj = this.communicator.invoke({"type": "join-sync"});
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+        return messageObj.data["joins"] ?? [];
     };
 
     //

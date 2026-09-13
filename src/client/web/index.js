@@ -56,8 +56,9 @@ const main = async function() {
         "router": null,
         "ui": null
     };
-    ctx["joins"] = createJoins(ctx);
+    // the account first: the joins follow who the client is
     ctx["account"] = createAccount(ctx);
+    ctx["joins"] = createJoins(ctx);
 
     // the live connection between this device and the other one. It is built
     // here rather than by the room screen because it outlives one: the host that

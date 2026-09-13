@@ -271,8 +271,13 @@ communicator timeout.
 
 ## Work
 
-1. Restore `joinsUser` (`pairs` and `joins` are live) when accounts land - the
-   device list of a signed-in user cannot be found by walking sockets.
+1. ~~Restore `joinsUser` (`pairs` and `joins` are live) when accounts land~~ -
+   done without the index: `peer_user_id` is written by `pair-accept` and
+   `join-sync` reads an account's devices from the table by it, since a
+   sign-in is one query and not one per message. `host_user_id` is left empty
+   on purpose - a share is the machine's, whoever is signed in on it - and the
+   account deletion drops the devices (`removeUserJoins`) because the column
+   carries no foreign key.
 2. ~~Give `pair-accept` the join it should make~~ - done, with `unsupervised`
    beside `remember`. ~~What is missing from it is the naming~~ - `join-rename`
    is done too. `pair-accept` still writes both name columns empty, so a

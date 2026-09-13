@@ -1,8 +1,14 @@
 "use strict";
 
-// the devices this client may connect to: the joins it holds the peer side of.
-// The records are local (src/joins.js) and only who is online comes from the
-// server, so the list is built when somebody opens this screen and not before.
+// the devices this client may connect to: the joins it holds the peer side of,
+// for the user it is right now. The records are the user's (src/joins.js) -
+// the guest's are its codes, an account's follow it to every client it signs
+// in on - and only who is online comes from the server, so the list is built
+// when somebody opens this screen and kept right while it is open.
+//
+// Every card carries the same menu as a share: settings, which is the one
+// dialog a connection is named and forgotten in (management/connection), and
+// delete, which asks first because it goes on both sides for good.
 
 // first-party dependencies
 import { Screen } from "../../../src/view.js";
@@ -12,16 +18,49 @@ const DeviceScreen = class extends Screen {
     static id = "devices";
     static rootId = "screen-devices";
 
+    isOpen = false;
+
+    // a change that arrives while the grid is being built is not dropped: the
+    // build runs again when it is done, since what it drew may already be
+    // behind - the codes presented after an account switch are the usual case
+    isBuilding = false;
+    isPending = false;
+
     async mount(ctx) {
-        this.areaUser = document.getElementById("screen-devices-user");
-        this.areaGuest = document.getElementById("screen-devices-guest");
         this.area = document.getElementById("devices-area");
-        this.area2 = document.getElementById("devices-area-2");
+
+        // a card is only right while what it was built from is: a device that
+        // arrives or goes, a name that was changed in the dialog over this
+        // screen, a connection that was deleted from it, a user that switched
+        ctx["joins"].addEventListener("change", this.onJoinsChange);
+    };
+
+    onJoinsChange = () => {
+        if (this.isOpen === false) {
+            return;
+        }
+        this.build();
     };
 
     async build() {
+        if (this.isBuilding === true) {
+            this.isPending = true;
+            return;
+        }
+        this.isBuilding = true;
+        try {
+            do {
+                this.isPending = false;
+                await this.buildCards();
+            } while (this.isPending === true && this.isOpen === true);
+        } finally {
+            this.isBuilding = false;
+            this.isPending = false;
+        }
+    };
+
+    async buildCards() {
         const ctx = this.ctx;
-        this.area2.innerHTML = "";
 
         let records = [];
         try {
@@ -30,6 +69,11 @@ const DeviceScreen = class extends Screen {
             console.error(error);
             return;
         }
+
+        // and only now: the grid emptied before the answer arrives is a screen
+        // that blinks on every rebuild, and one that stays empty when the call
+        // fails
+        this.area.innerHTML = "";
 
         const localization = ctx["localization"];
         for (const record of records) {
@@ -49,31 +93,41 @@ const DeviceScreen = class extends Screen {
                     "joinId": event.detail["joinId"]
                 });
             });
+
+            // the name and the delete of one connection, in one place. The grid
+            // follows what it did through the change above rather than being
+            // told twice.
+            box.addEventListener("settings", function(event) {
+                ctx["ui"].openDialog("connection", {"joinId": event.detail["joinId"]});
+            });
+
+            // forgetting one goes both ways and cannot be undone, so it is
+            // asked about first - see confirm() in ui/ui.js
             box.addEventListener("delete", async function(event) {
-                await ctx["joins"].remove(event.detail["joinId"]);
+                const isConfirmed = await ctx["ui"].confirm({"message": "confirm.deleteJoin"});
+                if (isConfirmed === false) {
+                    return;
+                }
+                try {
+                    await ctx["joins"].remove(event.detail["joinId"]);
+                } catch (error) {
+                    console.error(error);
+                }
                 box.el.remove();
             });
-            this.area2.appendChild(box.el);
+            this.area.appendChild(box.el);
         }
     };
 
     open(params) {
-        super.open(params);
-
-        // clear areas
         this.area.innerHTML = "";
-        this.area2.innerHTML = "";
-
-        // there is no account either, so the area that lists its devices stays
-        // out of the way
-        this.areaUser.classList.add("hide");
-        this.areaGuest.classList.remove("hide");
-
+        this.isOpen = true;
+        super.open(params);
         this.build();
     };
     close() {
+        this.isOpen = false;
         this.area.innerHTML = "";
-        this.area2.innerHTML = "";
         super.close();
     };
 };

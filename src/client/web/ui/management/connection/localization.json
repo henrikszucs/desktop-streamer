@@ -8,6 +8,18 @@
             "en": "Name",
             "hu": "Név"
         },
+        "deviceName": {
+            "en": "Shared device",
+            "hu": "Megosztott eszköz"
+        },
+        "shareName": {
+            "en": "Remembered device",
+            "hu": "Megjegyzett eszköz"
+        },
+        "liveName": {
+            "en": "This connection",
+            "hu": "Ez a kapcsolat"
+        },
         "nameHint": {
             "en": "Only you see this name. The other device keeps its own.",
             "hu": "Ezt a nevet csak te látod. A másik eszköz a sajátját tartja meg."

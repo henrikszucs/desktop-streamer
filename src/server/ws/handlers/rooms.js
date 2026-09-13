@@ -99,7 +99,10 @@ const roomKeysOf = function(server, sessionId) {
 // they are told the same way whoever said yes: the host that accepts a request
 // gets one, and so does the host of an unsupervised join, which is never asked
 // anything at all. One message, one path through the client - see src/room.js.
-const createRoom = function(server, hostSessionId, peerSessionId, joinId = "") {
+// `isNew` says whether the connection was made this moment (a pairing) or is a
+// remembered device coming back: the host's shell moves for the first and not
+// the second, and only the server knows which flow it came out of.
+const createRoom = function(server, hostSessionId, peerSessionId, joinId = "", isNew = false) {
     const hostRooms = roomKeysOf(server, hostSessionId);
     const peerRooms = roomKeysOf(server, peerSessionId);
     if (hostRooms === undefined || peerRooms === undefined) {
@@ -134,8 +137,8 @@ const createRoom = function(server, hostSessionId, peerSessionId, joinId = "") {
     // which side a socket is on is what decides who offers, so it is told rather
     // than worked out from what it happens to remember about the flow - and it
     // is told its own key and never the other's
-    notify(server, hostSessionId, {"type": "room-open", "roomKey": hostKey, "joinId": joinId, "isHost": true});
-    notify(server, peerSessionId, {"type": "room-open", "roomKey": peerKey, "joinId": joinId, "isHost": false});
+    notify(server, hostSessionId, {"type": "room-open", "roomKey": hostKey, "joinId": joinId, "isHost": true, "isNew": isNew === true});
+    notify(server, peerSessionId, {"type": "room-open", "roomKey": peerKey, "joinId": joinId, "isHost": false, "isNew": isNew === true});
     return room;
 };
 

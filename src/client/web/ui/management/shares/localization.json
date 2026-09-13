@@ -1,12 +1,8 @@
 {
     "shares": {
-        "user": {
-            "en": "User Shares",
-            "hu": "Felhasználói megosztások"
-        },
-        "guest": {
-            "en": "Guest Shares",
-            "hu": "Vendég megosztások"
+        "title": {
+            "en": "Shares",
+            "hu": "Megosztások"
         },
         "unnamed": {
             "en": "Remembered device",

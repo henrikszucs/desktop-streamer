@@ -31,7 +31,7 @@ against an older configuration shape and never ran against the current schema
 | `handlers/conf.js` | `conf-get` |
 | `handlers/connection.js` | `ping`, `session-get` |
 | `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
-| `handlers/joins.js` | `join-connect`, `join-list`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
+| `handlers/joins.js` | `join-connect`, `join-list`, `join-sync`, `join-rename`, `join-request`, `join-accept`, `join-reject`, `join-delete`, `join-disconnect` |
 | `handlers/rooms.js` | `room-signal`, `room-data`, `room-leave` |
 
 Each is one function in a group file under `src/server/ws/handlers/`, reached

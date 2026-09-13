@@ -84,6 +84,12 @@ test("a room tells both sides which of them it is", () => {
     assert.equal(peerOpen["roomKey"], room.get("peerKey"));
     assert.equal(peerOpen["joinId"], "join-1");
 
+    // a room made without saying so is a remembered device back, not a new one
+    assert.equal(hostOpen["isNew"], false);
+    assert.equal(peerOpen["isNew"], false);
+    createRoom(server, "host", "peer", "", true);
+    assert.equal(pushesOf(server, "host", "room-open")[1]["isNew"], true);
+
     // and each is told its own key and never the other's
     assert.notEqual(room.get("hostKey"), room.get("peerKey"));
     assert.equal(hostOpen["peerKey"], undefined);

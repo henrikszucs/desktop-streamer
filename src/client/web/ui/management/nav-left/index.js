@@ -53,25 +53,20 @@ const NavLeft = class extends View {
         ctx["server"].addEventListener("online", this.onOnline);
         this.onOnline();
 
-        ctx["joins"].addEventListener("change", this.onJoinsChange);
-
-        // the room is the other half of that dot, so its two edges draw it too
-        ctx["room"].addEventListener("connecting", this.onJoinsChange);
-        ctx["room"].addEventListener("closed", this.onJoinsChange);
-        this.onJoinsChange();
+        // the dot is the room this client is hosting, so its two edges draw it
+        ctx["room"].addEventListener("connecting", this.onRoomChange);
+        ctx["room"].addEventListener("closed", this.onRoomChange);
+        this.onRoomChange();
     };
 
-    // somebody is on a share this device hands out, and the machine sharing its
+    // this device is being shared out right now, and the machine sharing its
     // screen is the one whose user is not looking at this bar. The badge is a
-    // dot rather than a count: what it has to say is that the device is not
-    // alone, and the screen behind the entry is where who is.
-    //
-    // Two things make one: a remembered device that is there, and the room this
-    // client is hosting - a pairing nobody remembered has no record to count and
-    // is the loudest share there is while it stands.
-    onJoinsChange = () => {
-        const isShared = (this.ctx["joins"].countOnline(true) > 0 || this.ctx["room"].isSharing() === true);
-        this.badgeShares.classList.toggle("hide", isShared === false);
+    // dot rather than a count: what it has to say is that somebody is on this
+    // machine, and the screen behind the entry is where who is. A remembered
+    // device that is merely online is not that - nothing is crossing to it
+    // until it asks - so only the live room lights it.
+    onRoomChange = () => {
+        this.badgeShares.classList.toggle("hide", this.ctx["room"].isSharing() !== true);
     };
 
     // services are a server feature, so the entry is only there once the

@@ -1,12 +1,8 @@
 {
     "devices": {
-        "user": {
-            "en": "User Clients",
-            "hu": "Felhasználói kliensek"
-        },
-        "guest": {
-            "en": "Guest Clients",
-            "hu": "Vendég kliensek"
+        "title": {
+            "en": "Devices",
+            "hu": "Eszközök"
         },
         "unnamed": {
             "en": "Shared device",

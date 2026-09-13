@@ -114,9 +114,10 @@ const setUser = async function(id, data) {
     await IDB.RowSet(table(USER_TABLE), [[id, data]]);
 };
 
-// the joins one user holds, kept in that user record: the code is the whole of
-// what this client is - there is no account behind it - so losing the record is
-// losing the device, and a guest reset drops every one of them.
+// the joins one user holds, kept in that user record. The guest row holds the
+// machine's shares beside the guest's own devices; an account row holds only
+// that account's devices, which the server hands back at a sign-in on another
+// client - src/joins.js is what decides the row a record goes in.
 /*{
     <joinId>: {"joinCode", "isHost", "name", "isUnsupervised"}
 }*/

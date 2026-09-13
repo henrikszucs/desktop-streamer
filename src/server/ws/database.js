@@ -15,10 +15,13 @@ import fs from "node:fs/promises";
 // third-party dependencies
 import knex from "knex";
 
-// A remembered join has no owner yet: `peer_user_id` and `host_user_id` are
-// there because a join will one day belong to an account, and they carry no
-// foreign key until the client keeps its joins per user. What identifies a side
-// today is the code it holds - see dev/plans/ws-pairing-joins.md.
+// A remembered join is owned on one side only: `peer_user_id` is the account
+// the device was signed in as when the pair was made ("" for a guest), and
+// `host_user_id` stays empty because a share is the machine's rather than
+// anybody's. Neither carries a foreign key - the table predates `users`, and
+// the schema is only ever created, never altered - so the account deletion in
+// handlers/accounts.js drops the devices itself. What identifies a side is
+// still the code a socket presents - see handlers/joins.js.
 //
 // Every table is checked on its own: a database that ran the joins-only build
 // has that table and none of the account ones, and a boot that returned at the

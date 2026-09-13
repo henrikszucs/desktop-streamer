@@ -11,7 +11,7 @@
 // stored preference says who it wants to be, the server's answer says who it is.
 
 // first-party dependencies
-import { conf, setLocal } from "./conf.js";
+import { conf, setLocal, resetUser } from "./conf.js";
 import { getPlatform } from "./env.js";
 
 // the shell builds one of these and hands it to every module in ctx
@@ -72,12 +72,14 @@ const createAccount = function(ctx) {
         await store(stored());
     };
 
-    // an account this client no longer holds: the record goes, and the client
-    // is the guest if it was that one
+    // an account this client no longer holds: the record goes, the devices it
+    // kept here go with it (the server hands them back at the next sign-in, see
+    // src/joins.js), and the client is the guest if it was that one
     const dropRecord = async function(userId) {
         await store(stored().filter(function(account) {
             return account["userId"] !== userId;
         }));
+        await resetUser(userId);
         if (conf["local"]["userId"] === userId) {
             await setLocal("userId", "");
         }

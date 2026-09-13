@@ -16,6 +16,7 @@
 // first-party dependencies
 import { generateId, httpsGetText, httpsGetImage } from "../../common.js";
 import { notify } from "../notify.js";
+import { removeUserJoins } from "./joins.js";
 
 // how long a session stands without being presented; every login-session pushes
 // it out again, so a device that comes back within the week never signs in twice
@@ -806,6 +807,9 @@ const deleteAccount = async function(ctx) {
         messageObj.send({"success": false, "error": "invalid-key"});
         return;
     }
+    // the devices go first, while the row still says whose they are: each
+    // host is told, the way a join-delete would tell it
+    await removeUserJoins(server, held["userId"]);
     await db("users").where("user_id", held["userId"]).del();
 
     const account = server.accounts.get(held["userId"]);

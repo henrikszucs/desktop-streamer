@@ -380,19 +380,46 @@ each holding its own code. **Unattended** appears only once remember is ticked,
 because it says something about a device you are keeping - that it may come back
 without anybody being asked - and means nothing about one you are not.
 
-`src/joins.js` (`ctx["joins"]`) is this client's half of that, and the local
-record is the whole of it: there is no account behind a join, so **the code is
-the credential** and a client that loses its records has lost the devices. They
-live in the guest row of the local database (`getJoins`/`setJoin`/`removeJoin` in
-`src/conf.js`), which is why signing the guest out drops them with everything
-else.
+`src/joins.js` (`ctx["joins"]`) is this client's half of that, and **the two
+sides are kept in different places**. A share is the machine's: its record lives
+in the guest row of the local database (`getJoins`/`setJoin`/`removeJoin` in
+`src/conf.js`, under `GUEST_ID`) whoever is signed in, so the host code never
+leaves this client and the shares screen shows every user of it the same list.
+A device is the person's: its record lives in the row of the user the client is
+right now, so the devices screen shows only that user's - the guest's are the
+codes it holds and go with the guest row when it is reset, and an account's are
+handed to any client it signs in on by `join-sync`, since the server wrote the
+account on the row when the pair was made. `rowOf(isHost)` in `joins.js` is the
+one place that decides which row a record goes in, and an account forgotten here
+(`dropRecord` in `src/account.js`) takes its row with it - the server has the
+devices back at the next sign-in.
 
 `connectAll()` runs on every `online`, before the screen is even up: a host is
 only reachable on the joins it has connected, and nothing on screen asks for
-that. A code the server does not know is dropped locally on the spot - the other
-side deleted it while this one was away. The devices and shares screens then read
-the local records and ask the server only for who is online, which is the one
-thing a local record cannot know.
+that. It loads the rows, asks `join-sync` for an account, and presents every code
+that this socket has not presented yet (`isConnected`, cleared on `offline`). A
+code the server does not know is dropped locally on the spot - the other side
+deleted it while this one was away. **A switch of user is a switch of devices**:
+`joins` listens to the account's `change`, and when the id differs from the one
+whose devices are held it drops those records and starts one sync that takes the
+socket off them with a scoped `join-disconnect`, loads the new user's rows and
+presents their codes - the shares are left exactly where they were. **The sync
+is one wait, started before the change is told**: `list()` waits on a sync in
+flight, so a screen that answers the switch is drawn from the new user's records
+only once the server holds this socket on them; drawn any earlier, every device
+would come out offline and stay that way. A second `connectAll()` for the same
+user while one is in flight joins it rather than presenting every code twice,
+which is what makes the boot's own call and the listener's coexist, and a
+generation counter is what an answer from before a switch is checked against, so
+a code presented for the old user cannot put a record back that the switch took
+out. The devices and shares screens then read the records and ask the server
+only for who is online, which is the one thing a local record cannot know.
+`list()` emits nothing, and that is what lets both screens re-run a build that a
+`change` interrupted (`isPending`) instead of dropping the change - the codes
+presented after a switch land while the screen is mid-build more often than not. What is not pushed between two clients of one account: a device
+remembered or renamed on one reaches the other at its next `connectAll()`, a
+device deleted on one reaches the other at once (`join-remove` goes to every
+socket on the join).
 
 **A connection has a name, and it is this side's own.** `join-rename` writes it
 to the caller's own column on the row (`peer_name` for a host, `host_name` for a
@@ -413,14 +440,18 @@ looked. `ctx["joins"]` keeps it on the record, drops all of it on `offline` -
 nobody is reachable until `connectAll()` has presented the codes on the next
 socket - and fires `change` for whatever draws it.
 
-**The shares entry of the two bars is what draws it today.** `countOnline(true)`
-is the devices on the host side of this client that are there right now, and the
-badge is shown while that is not zero: a machine sharing its screen is one whose
-user is looking at something else, so the bar says it is not alone and the screen
+**The shares screen is what draws it; the badge on the two bars does not.**
+`countOnline(true)` is the devices on the host side of this client that are
+there right now, and it stays a question for the screen: a remembered device
+being online means it *could* ask, not that anything is crossing to it. The
+badge is lit by `room.isSharing()` alone - this client is the host of a room
+that stands - because a machine sharing its screen is one whose user is looking
+at something else, so the bar says somebody is on this machine and the screen
 behind the entry says who. It is a dot rather than a count - a beercss badge is
 `var(--error)` and `min` clips it to one - which is also why `nav-left` and the
 `menu` dialog of the small layout carry the same two lines against their own
-badge.
+badge, each listening to the room's `connecting` and `closed` edges and to
+nothing of the records.
 
 **A device that comes back is answered wherever the shell happens to be.** That
 is the difference between a join request and a pair request: the pairing dialog
@@ -623,15 +654,19 @@ naming it is the one thing worth doing to a connection the moment it is made.
 
 **The host is moved by the room rather than by the flow that made it**, and that
 is the whole reason the listener is on `management/shares` and not in the dialogs
-the flows end in. There are three ways a connection is made on a host and only
-one of them ends in a dialog of its own: a pairing accepted in `room/request`, a
-remembered device let back in through `join-request` - and the unsupervised join,
-which the server answers itself, so nothing on that host is ever asked and there
-is no dialog there to move anybody. What all three do have is `room-open`, told
-to both sides alike (`handlers/rooms.js`), so the screen the host is sent to is
-the one that listens for it. `room/create` therefore only stores its half of the
-join and closes itself - it navigates nowhere, and it closes *before* it stores,
-since opening a screen closes the dialogs over it.
+the flows end in. There are three ways a connection is made on a host: a pairing
+accepted in `room/request`, a remembered device let back in through
+`join-request`, and the unsupervised join, which the server answers itself, so
+nothing on that host is ever asked. What all three have is `room-open`, told to
+both sides alike (`handlers/rooms.js`), and it carries **`isNew`** - set by
+`pair-accept` alone - because only the server knows which flow a room came out
+of. **Only a new connection moves the host**: a pairing is a connection worth
+naming the moment it is made, so the host is brought to the shares screen with
+its settings open; a remembered device coming back, asked or unattended, was
+named when it was made, and the host that answered it from wherever it was is
+left there. `room/create` therefore only stores its half of the join and closes
+itself - it navigates nowhere, and it closes *before* it stores, since opening a
+screen closes the dialogs over it.
 
 Two things that listener has to be careful about. A pairing the host did not ask
 to remember carries **no join id**: the host is moved and the settings are opened
@@ -650,10 +685,11 @@ pairing nobody remembered is kept by nothing: the room is the whole of it. Drawn
 from the records alone, the one flow that shares nothing but the moment showed
 the host an empty screen and an unlit bar at the exact moment it began sharing
 its machine - so `room.isSharing()` (this client is the host of a room that
-stands) is the second half of both. The shares screen draws a card from it, first
-in the grid; the shares badge of the rail and of the small layout's menu is lit by
-`countOnline(true) > 0 || isSharing()`, and both bars listen to the room's own
-edges (`connecting`, `closed`) beside the records' `change`. Where the live room
+stands) is the second half of the screen and the whole of the badge. The shares
+screen draws a card from it, first in the grid; the shares badge of the rail and
+of the small layout's menu is lit by `isSharing()` and by nothing else, so both
+bars listen to the room's own edges (`connecting`, `closed`) and not to the
+records' `change`. Where the live room
 *is* on a remembered join, `getJoinId()` matches it to the card that is already
 there and marks that one instead - one connection is one card, and the `Sharing`
 chip is what says it is up right now.
@@ -771,9 +807,8 @@ longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |
-| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
+| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, both screens carry the settings and the confirmed delete on every card, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
-| the *settings* entry of a `devices` card opens nothing yet — `management/connection`, which names and forgets a connection, is the dialog it wants | `dev/plans/ws-pairing-joins.md` |
 
 `management/search` is a separate case: the field it mirrors and the button that
 opens it are both still commented out in the shell markup, so nothing opens it.

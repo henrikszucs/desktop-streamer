@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
+import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
 
 // a remembered join is a row, so these run against a real SQLite file - which
 // makes them the only cover database.js has as well
@@ -101,6 +101,24 @@ test("createJoin writes a row with two codes that differ", async () => {
     const row = await db("joins").where("join_id", join["joinId"]).first();
     assert.equal(row["peer_code"], join["peerCode"]);
     assert.equal(row["host_code"], join["hostCode"]);
+
+    await dropDatabase(db, file);
+});
+
+test("createJoin writes the peer's account on the row and never the host's", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+
+    const owned = await createJoin(server, false, "alice");
+    const row = await db("joins").where("join_id", owned["joinId"]).first();
+    assert.equal(row["peer_user_id"], "alice");
+    assert.equal(row["host_user_id"], "");
+
+    // a guest's device is nobody's, and so is one asked for with nonsense
+    const guest = await createJoin(server, false);
+    assert.equal((await db("joins").where("join_id", guest["joinId"]).first())["peer_user_id"], "");
+    const odd = await createJoin(server, false, 42);
+    assert.equal((await db("joins").where("join_id", odd["joinId"]).first())["peer_user_id"], "");
 
     await dropDatabase(db, file);
 });
@@ -253,6 +271,19 @@ test("a supervised join asks the host again", async () => {
     await dropDatabase(db, file);
 });
 
+test("a room opened for a remembered device is not a new one", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    await joinRequest(buildCtx(server, "peer", {"joinId": join["joinId"]}));
+    joinAccept(buildCtx(server, "host", {"joinId": join["joinId"]}));
+    assert.equal(pushesOf(server, "host", "room-open")[0]["isNew"], false);
+    assert.equal(pushesOf(server, "peer", "room-open")[0]["isNew"], false);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
 test("an unsupervised join disturbs nobody", async () => {
     const {db, file} = await buildDatabase();
     const {server, join} = await buildJoin(db, true);
@@ -358,6 +389,107 @@ test("join-disconnect takes the caller off its joins and keeps the row", async (
     const none = buildCtx(server, "other");
     joinDisconnect(none);
     assert.deepEqual(none.answers, [{"success": true}]);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("join-disconnect with ids takes the caller off those joins only", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+
+    // the same socket is the host of a second join, the way one client is on
+    // its shares and its devices at once
+    const share = await createJoin(server, false);
+    attachJoin(server, "peer", share, true);
+    attachJoin(server, "other", share, false);
+
+    const ctx = buildCtx(server, "peer", {"joinIds": [join["joinId"], "not-a-join"]});
+    joinDisconnect(ctx);
+    assert.deepEqual(ctx.answers, [{"success": true}]);
+
+    // off the one named, and told so to its host
+    assert.equal(heldJoin(server, "peer", join["joinId"]), undefined);
+    assert.equal(pushesOf(server, "host", "join-online").at(-1)["isOnline"], false);
+
+    // still on the other, whose peer heard nothing
+    assert.notEqual(heldJoin(server, "peer", share["joinId"]), undefined);
+    assert.equal(pushesOf(server, "other", "join-online").filter(function(message) {
+        return message["isOnline"] === false;
+    }).length, 0);
+    assert.deepEqual([...server.clients.get("peer").get("joinIds")], [share["joinId"]]);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+//
+// the devices of an account
+//
+test("join-sync hands an account its devices with their codes, and a guest nothing", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+
+    const mine = await createJoin(server, true, "alice");
+    const theirs = await createJoin(server, false, "bob");
+    const shared = await createJoin(server, false);      // a guest's
+    await db("joins").where("join_id", mine["joinId"]).update({"host_name": "Office", "peer_name": "Laptop"});
+
+    server.clients.get("peer").set("userId", "alice");
+    const ctx = buildCtx(server, "peer");
+    await joinSync(ctx);
+    assert.equal(ctx.answers[0]["success"], true);
+    assert.deepEqual(ctx.answers[0]["joins"], [{
+        "joinId": mine["joinId"],
+        "joinCode": mine["peerCode"],
+        "name": "Office",           // what alice calls it, not what the host does
+        "isUnsupervised": true
+    }]);
+    assert.equal(ctx.answers[0]["joins"].some(function(entry) {
+        return entry["joinId"] === theirs["joinId"] || entry["joinId"] === shared["joinId"];
+    }), false);
+
+    // the code is what a client presents next, and it opens the peer side
+    const connect = buildCtx(server, "peer", {"joinCode": ctx.answers[0]["joins"][0]["joinCode"]});
+    await joinConnect(connect);
+    assert.equal(connect.answers[0]["isHost"], false);
+
+    // a guest has no account to be handed the devices of
+    const guest = buildCtx(server, "other");
+    await joinSync(guest);
+    assert.deepEqual(guest.answers, [{"success": false, "error": "not-signed-in"}]);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("removeUserJoins drops every device of an account and tells each host", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+
+    const first = await createJoin(server, false, "alice");
+    const second = await createJoin(server, false, "alice");
+    const kept = await createJoin(server, false, "bob");
+    attachJoin(server, "host", first, true);
+    attachJoin(server, "peer", first, false);
+    attachJoin(server, "other", kept, true);
+
+    assert.equal(await removeUserJoins(server, "alice"), 2);
+
+    assert.equal((await db("joins").whereIn("join_id", [first["joinId"], second["joinId"]])).length, 0);
+    assert.notEqual(await db("joins").where("join_id", kept["joinId"]).first(), undefined);
+    assert.equal(server.joins.has(first["joinId"]), false);
+    assert.equal(server.clients.get("host").get("joinIds").has(first["joinId"]), false);
+
+    // both sockets on it are told - the account is gone, so its own client
+    // has no answer coming either
+    assert.equal(pushesOf(server, "host", "join-remove").length, 1);
+    assert.equal(pushesOf(server, "peer", "join-remove").length, 1);
+    assert.equal(pushesOf(server, "other", "join-remove").length, 0);
+
+    // nothing to do for a guest or for nonsense
+    assert.equal(await removeUserJoins(server, ""), 0);
+    assert.equal(await removeUserJoins(server, undefined), 0);
 
     releaseJoins(server);
     await dropDatabase(db, file);
