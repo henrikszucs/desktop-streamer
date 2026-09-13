@@ -2,8 +2,8 @@
 
 // the persistence of the WS server: the knex connection and the tables it
 // creates on first boot. Only the tables the server actually reads are here:
-// the joins, and the accounts with their sessions. Account deletion by e-mail
-// (the `delete` table of dev/plans/ws-accounts.md) is still to come.
+// the joins, the accounts with their sessions, and the delete keys mailed out
+// for an account somebody is about to delete.
 
 //
 // Import dependencies
@@ -89,6 +89,25 @@ const createTables = async function(db) {
         });
         await db.schema.alterTable("sessions", function(table) {
             table.unique("session_key");
+        });
+    }
+
+    // a deletion asked for and not yet confirmed: the key mailed to the
+    // account address, bound to the session that asked so that it is only good
+    // on that device, and gone with that session or the account itself
+    if (await db.schema.hasTable("delete") === false) {
+        await db.schema.createTable("delete", function(table) {
+            table.string("delete_id").primary();
+            table.string("user_id").notNullable()
+                .references("user_id").inTable("users").onDelete("CASCADE");
+            table.string("session_id").notNullable()
+                .references("session_id").inTable("sessions").onDelete("CASCADE");
+            table.string("delete_key");
+            table.bigInteger("expire").unsigned();
+            table.bigInteger("created").unsigned();
+        });
+        await db.schema.alterTable("delete", function(table) {
+            table.unique("delete_key");
         });
     }
 };

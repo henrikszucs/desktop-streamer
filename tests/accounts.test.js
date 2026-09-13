@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, NAME_MAX } from "../src/server/ws/handlers/accounts.js";
+import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME } from "../src/server/ws/handlers/accounts.js";
 
 // an account is a row, so these run against a real SQLite file, the same way
 // the joins tests do
@@ -68,8 +68,33 @@ const buildServer = function(db, permissions = {}) {
         "accounts": new Map(),
         "db": db,
         "auth": auth,
+        "mailer": null,
         "confPublic": {"permissions": {"guestAllowRelay": false}}
     };
+};
+
+// a transport that keeps what it was told to send, in place of SMTP
+const buildMailer = function() {
+    const sent = [];
+    return {
+        "sent": sent,
+        "languages": ["en", "hu"],
+        "sendDeleteKey": async function(to, lang, key) {
+            sent.push({"to": to, "lang": lang, "key": key});
+        }
+    };
+};
+
+const requestDelete = async function(server, sessionId, lang = "en") {
+    const ctx = buildCtx(server, sessionId, {"lang": lang});
+    await deleteEmail(ctx);
+    return ctx["answers"][0];
+};
+
+const confirmDelete = async function(server, sessionId, deleteKey) {
+    const ctx = buildCtx(server, sessionId, {"deleteKey": deleteKey});
+    await deleteAccount(ctx);
+    return ctx["answers"][0];
 };
 
 const buildCtx = function(server, sessionId, message = {}) {
@@ -578,6 +603,186 @@ test("sessions-revoke refuses a bad credential and an account it has never seen,
         await sessionsRevoke(unknown);
         assert.equal(unknown["answers"][0]["error"], "unknown-user");
         assert.equal((await db("users")).length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+//
+// account deletion
+//
+test("delete-email mails a key to the account address and writes the row it is checked against", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+
+        const before = Date.now();
+        const answer = await requestDelete(server, "one", "hu");
+        assert.equal(answer["success"], true);
+        assert.equal(answer["expire"] >= before + DELETE_LIFETIME, true);
+
+        assert.equal(server.mailer["sent"].length, 1);
+        const mail = server.mailer["sent"][0];
+        assert.equal(mail["to"], "alice@example.com");
+        assert.equal(mail["lang"], "hu");
+
+        const rows = await db("delete");
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]["delete_key"], mail["key"]);
+        assert.equal(rows[0]["user_id"], alice["user"]["userId"]);
+        assert.equal(rows[0]["session_id"], alice["sessionId"]);
+        assert.equal(rows[0]["expire"], answer["expire"]);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("delete-email is refused by a guest, without a mailer, and within the cooldown", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        assert.equal((await requestDelete(server, "one"))["error"], "not-signed-in");
+
+        await signIn(server, "one", "alice");
+        assert.equal((await requestDelete(server, "one"))["error"], "mail-disabled");
+
+        server.mailer = buildMailer();
+        assert.equal((await requestDelete(server, "one"))["success"], true);
+        assert.equal((await requestDelete(server, "one"))["error"], "too-soon");
+        assert.equal(server.mailer["sent"].length, 1);
+        assert.equal((await db("delete")).length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("one code stands per account: the same device is mailed it again, another device replaces it", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        await signIn(server, "one", "alice");
+        await signIn(server, "two", "alice");
+        const first = await requestDelete(server, "one");
+        const key = server.mailer["sent"][0]["key"];
+
+        // the same device again, past the cooldown: the same key, the same expiry
+        await db("delete").update({"created": Date.now() - 2 * 60 * 1000});
+        const again = await requestDelete(server, "one");
+        assert.equal(again["success"], true);
+        assert.equal(again["expire"], first["expire"]);
+        assert.equal(server.mailer["sent"][1]["key"], key);
+        assert.equal((await db("delete")).length, 1);
+
+        // and the cooldown counts from that mail
+        assert.equal((await requestDelete(server, "one"))["error"], "too-soon");
+
+        // another device of hers: the old key is gone, one row still
+        await db("delete").update({"created": Date.now() - 2 * 60 * 1000});
+        const other = await requestDelete(server, "two");
+        assert.equal(other["success"], true);
+        const rows = await db("delete");
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]["session_id"] !== undefined && rows[0]["delete_key"] !== key, true);
+        assert.equal((await confirmDelete(server, "one", key))["error"], "invalid-key");
+        assert.equal((await confirmDelete(server, "two", server.mailer["sent"][2]["key"]))["success"], true);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a key that could not be mailed is not kept", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        server.mailer["sendDeleteKey"] = async function() {
+            throw new Error("smtp down");
+        };
+        await signIn(server, "one", "alice");
+        assert.equal((await requestDelete(server, "one"))["error"], "mail-failed");
+        assert.equal((await db("delete")).length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("delete takes the key back on the device it was mailed for and removes the account whole", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+        await signIn(server, "two", "alice");           // a second device of hers
+        await signIn(server, "three", "bob");
+        await requestDelete(server, "one");
+        const key = server.mailer["sent"][0]["key"];
+
+        const answer = await confirmDelete(server, "one", " " + key + " ");
+        assert.equal(answer["success"], true);
+
+        // the row and everything hanging off it
+        assert.equal((await db("users").where("user_id", alice["user"]["userId"])).length, 0);
+        assert.equal((await db("users_google").where("user_id", alice["user"]["userId"])).length, 0);
+        assert.equal((await db("sessions").where("user_id", alice["user"]["userId"])).length, 0);
+        assert.equal((await db("delete")).length, 0);
+        assert.equal((await db("users")).length, 1);      // bob stays
+
+        // every socket that was her is a guest, the other one told
+        assert.equal(heldUser(server, "one"), undefined);
+        assert.equal(heldUser(server, "two"), undefined);
+        assert.equal(server.accounts.has(alice["user"]["userId"]), false);
+        assert.equal(pushesOf(server, "one", "logout").length, 0);
+        assert.equal(pushesOf(server, "two", "logout").length, 1);
+        assert.notEqual(heldUser(server, "three"), undefined);
+
+        // and the key she held opens nothing
+        const back = buildCtx(server, "one", {"sessionKey": alice["sessionKey"]});
+        await loginSession(back);
+        assert.equal(back["answers"][0]["error"], "unknown-session");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("delete refuses a wrong key, a key from another device, and a key that ran out", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+        await signIn(server, "two", "alice");
+        await requestDelete(server, "one");
+        const key = server.mailer["sent"][0]["key"];
+
+        assert.equal((await confirmDelete(server, "three", key))["error"], "not-signed-in");
+        assert.equal((await confirmDelete(server, "one", "nope"))["error"], "invalid-key");
+        assert.equal((await confirmDelete(server, "one", ""))["error"], "invalid-key");
+        assert.equal((await confirmDelete(server, "two", key))["error"], "invalid-key");
+        assert.equal((await db("users").where("user_id", alice["user"]["userId"])).length, 1);
+
+        await db("delete").update({"expire": Date.now() - 1});
+        assert.equal((await confirmDelete(server, "one", key))["error"], "invalid-key");
+        assert.equal((await db("delete")).length, 0);
+        assert.equal((await db("users").where("user_id", alice["user"]["userId"])).length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a delete key goes with the session that asked for it", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        await signIn(server, "one", "alice");
+        await requestDelete(server, "one");
+        assert.equal((await db("delete")).length, 1);
+
+        await logout(buildCtx(server, "one"));
+        assert.equal((await db("delete")).length, 0);
     } finally {
         await dropDatabase(db, file);
     }

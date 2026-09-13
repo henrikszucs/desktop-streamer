@@ -8,6 +8,10 @@
 // again after `login-guest` or `logout` - which are not the same thing: the
 // first leaves the session row for the device to come back to, the second ends
 // it, on this socket and on every other socket presenting the same key.
+//
+// Deleting the account is two calls a day apart at most: `delete-email` mails
+// a key to the address on the row, `delete` takes it back and the row goes,
+// with everything the foreign keys hang off it.
 
 // first-party dependencies
 import { generateId, httpsGetText, httpsGetImage } from "../../common.js";
@@ -16,6 +20,12 @@ import { notify } from "../notify.js";
 // how long a session stands without being presented; every login-session pushes
 // it out again, so a device that comes back within the week never signs in twice
 const SESSION_LIFETIME = 7 * 24 * 60 * 60 * 1000;
+
+// how long a mailed delete key stands, and how soon another may be asked for
+// from the same device - the button is one a person can press many times, and
+// every press is a mail
+const DELETE_LIFETIME = 24 * 60 * 60 * 1000;
+const DELETE_COOLDOWN = 60 * 1000;
 
 // the id and key searches give up rather than spinning, as the join codes do
 const ID_ATTEMPTS = 100;
@@ -675,6 +685,140 @@ const sessionList = async function(ctx) {
     });
 };
 
+// the first half of deleting the account: a key is mailed to the address on
+// the row, bound to the session that asked - so only the device that asked can
+// present it back, and a key read off somebody else's screen opens nothing on
+// another one. One code stands per account: asking again from the same device
+// mails that same key again, for a mail that did not arrive, and asking from
+// another device replaces it, so at no point are two codes good. Asking within
+// the cooldown of the last mail is refused rather than mailed, since the
+// button is one a person can press many times.
+const deleteEmail = async function(ctx) {
+    /*{
+        "lang": string
+    }*/
+    /*{
+        "success": boolean,
+        "expire": number,
+        "error": string
+    }*/
+    const server = ctx["server"];
+    const messageObj = ctx["messageObj"];
+    const held = heldUser(server, ctx["sessionId"]);
+    if (held === undefined) {
+        messageObj.send({"success": false, "error": "not-signed-in"});
+        return;
+    }
+    if (server.mailer === null || typeof server.mailer === "undefined") {
+        messageObj.send({"success": false, "error": "mail-disabled"});
+        return;
+    }
+    const db = server.db;
+    const user = await db("users").where("user_id", held["userId"]).first();
+    if (typeof user === "undefined") {
+        messageObj.send({"success": false, "error": "unknown-user"});
+        return;
+    }
+
+    const now = Date.now();
+    await db("delete").where("expire", "<", now).del();
+    const pending = await db("delete").where("user_id", held["userId"]).first();
+    if (typeof pending !== "undefined" && pending["created"] + DELETE_COOLDOWN > now) {
+        messageObj.send({"success": false, "error": "too-soon"});
+        return;
+    }
+
+    let request = pending;
+    if (typeof pending !== "undefined" && pending["session_id"] === held["accountSessionId"]) {
+        // the same key again; the cooldown counts from this mail
+        await db("delete").where("delete_id", pending["delete_id"]).update({"created": now});
+    } else {
+        const deleteId = await generateUnique(db, "delete", "delete_id");
+        const deleteKey = await generateUnique(db, "delete", "delete_key");
+        if (deleteId === undefined || deleteKey === undefined) {
+            messageObj.send({"success": false, "error": "failed"});
+            return;
+        }
+        request = {
+            "delete_id": deleteId,
+            "user_id": held["userId"],
+            "session_id": held["accountSessionId"],
+            "delete_key": deleteKey,
+            "expire": now + DELETE_LIFETIME,
+            "created": now
+        };
+        await db("delete").where("user_id", held["userId"]).del();
+        await db("delete").insert(request);
+    }
+
+    // a key that was not delivered is not a key: a new row goes with the
+    // failure, and one that was mailed before stands as it did
+    const lang = typeof ctx["message"]["lang"] === "string" ? ctx["message"]["lang"] : "";
+    try {
+        await server.mailer.sendDeleteKey(user["email"], lang, request["delete_key"]);
+    } catch (error) {
+        console.log("Cannot mail the delete key of " + held["userId"] + ":", error.message);
+        if (request !== pending) {
+            await db("delete").where("delete_id", request["delete_id"]).del();
+        }
+        messageObj.send({"success": false, "error": "mail-failed"});
+        return;
+    }
+    messageObj.send({"success": true, "expire": request["expire"]});
+};
+
+// the second half: the key comes back on the device it was mailed for, and
+// the account goes - the users row, and through its foreign keys the Google
+// link, every session and the key itself. Every socket that was this person
+// is a guest again and told so, the caller answered instead.
+const deleteAccount = async function(ctx) {
+    /*{
+        "deleteKey": string
+    }*/
+    /*{
+        "success": boolean,
+        "error": string
+    }*/
+    const server = ctx["server"];
+    const sessionId = ctx["sessionId"];
+    const messageObj = ctx["messageObj"];
+    const held = heldUser(server, sessionId);
+    if (held === undefined) {
+        messageObj.send({"success": false, "error": "not-signed-in"});
+        return;
+    }
+    const deleteKey = ctx["message"]["deleteKey"];
+    if (typeof deleteKey !== "string" || deleteKey.trim() === "") {
+        messageObj.send({"success": false, "error": "invalid-key"});
+        return;
+    }
+
+    // a key that ran out is swept rather than refused by its date, so that the
+    // table never holds more than what could still be presented
+    const db = server.db;
+    await db("delete").where("expire", "<", Date.now()).del();
+    const request = await db("delete").where({
+        "delete_key": deleteKey.trim(),
+        "user_id": held["userId"],
+        "session_id": held["accountSessionId"]
+    }).first();
+    if (typeof request === "undefined") {
+        messageObj.send({"success": false, "error": "invalid-key"});
+        return;
+    }
+    await db("users").where("user_id", held["userId"]).del();
+
+    const account = server.accounts.get(held["userId"]);
+    for (const otherId of [...(account?.["sessionIds"] ?? [])]) {
+        const ended = server.clients.get(otherId)?.get("accountSessionId");
+        detachAccount(server, otherId);
+        if (otherId !== sessionId) {
+            notify(server, otherId, {"type": "logout", "sessionId": ended});
+        }
+    }
+    messageObj.send({"success": true});
+};
+
 // the types this group answers
 const handlers = {
     "login-google": loginGoogle,
@@ -683,8 +827,10 @@ const handlers = {
     "logout": logout,
     "user-update": userUpdate,
     "session-list": sessionList,
-    "sessions-revoke": sessionsRevoke
+    "sessions-revoke": sessionsRevoke,
+    "delete-email": deleteEmail,
+    "delete": deleteAccount
 };
 
-export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, SESSION_LIFETIME, NAME_MAX, USER_AGENT_MAX };
+export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, SESSION_LIFETIME, DELETE_LIFETIME, DELETE_COOLDOWN, NAME_MAX, USER_AGENT_MAX };
 export default handlers;

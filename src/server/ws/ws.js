@@ -20,6 +20,7 @@ import { detachJoins, releaseJoins } from "./handlers/joins.js";
 import { detachRooms, releaseRooms } from "./handlers/rooms.js";
 import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.js";
 import { startDatabase, stopDatabase } from "./database.js";
+import { createMailer } from "./mail.js";
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
@@ -45,6 +46,10 @@ const ServerWS = class {
     // the rows behind the joins, and the only thing here that outlives the
     // process - see ./database.js
     db = null;
+
+    // the SMTP transport an account deletion is confirmed through, null when
+    // the configuration names none - see ./mail.js
+    mailer = null;
 
     // utility things
     isClosing = false;
@@ -83,6 +88,18 @@ const ServerWS = class {
         // and the half a client never sees: the Google client id a credential
         // is checked against, and whether an unknown account may be made
         this.auth = createAuth(conf);
+
+        // the mail behind an account deletion, verified now rather than at the
+        // first click: a transport that cannot sign in fails the boot the way
+        // a database that cannot be reached does
+        process.stdout.write("\n    Starting mail...    ");
+        try {
+            this.mailer = await createMailer(conf);
+        } catch (error) {
+            process.stdout.write("failed\n");
+            throw error;
+        }
+        process.stdout.write(this.mailer === null ? "skipped" : "done");
 
         // the WS server is reachable on the HTTP domain when they share a host
         let domain = conf["ws"]["domain"];
@@ -320,7 +337,9 @@ const ServerWS = class {
         this.clients.clear();
 
         // the rows stay, the pool does not: an open one keeps the process alive
-        // long after the last socket is gone
+        // long after the last socket is gone - and neither does the transport
+        this.mailer?.close();
+        this.mailer = null;
         await stopDatabase(this.db);
         this.db = null;
     };

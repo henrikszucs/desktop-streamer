@@ -101,6 +101,34 @@ const createAccount = function(ctx) {
         }
     };
 
+    // the deletion this device asked for. It is a state of this window rather
+    // than of the client: the key is only good on the session that asked and
+    // asking again costs one click, so it lives in the tab's session storage -
+    // it survives a reload here and reaches no other tab or device. Memory
+    // stands in where the storage is not there.
+    const DELETE_REQUEST = "deleteRequest";
+    let heldDeleteRequest = null;
+    const readDeleteRequest = function() {
+        try {
+            const text = sessionStorage.getItem(DELETE_REQUEST);
+            return text === null ? null : JSON.parse(text);
+        } catch (error) {
+            return heldDeleteRequest;
+        }
+    };
+    const writeDeleteRequest = function(request) {
+        heldDeleteRequest = request;
+        try {
+            if (request === null) {
+                sessionStorage.removeItem(DELETE_REQUEST);
+            } else {
+                sessionStorage.setItem(DELETE_REQUEST, JSON.stringify(request));
+            }
+        } catch (error) {
+            // memory it is
+        }
+    };
+
     // the device this is, as the sessions window of another device shows it
     const userAgent = function() {
         const desktop = ctx["desktop"];
@@ -273,6 +301,46 @@ const createAccount = function(ctx) {
             await dropRecord(answer["userId"]);
             emitChange();
             return {"count": answer["count"] ?? 0, "wasLive": wasLive};
+        },
+
+        // the first half of deleting the current account: the server mails a
+        // key to its address, and this device is noted as the one that asked
+        async requestDelete() {
+            const record = account.current();
+            if (record === null) {
+                throw new Error("not-signed-in");
+            }
+            const answer = await ctx["server"].deleteEmail(ctx["localization"].getLang());
+            writeDeleteRequest({
+                "userId": record["userId"],
+                "sessionId": record["sessionId"],
+                "expire": answer["expire"] ?? 0
+            });
+        },
+
+        // whether a key this device asked for is still worth presenting: the
+        // request is for the account this client is right now, on the session
+        // it is signed in on, and has not run out
+        hasDeleteRequest() {
+            const record = account.current();
+            const request = readDeleteRequest();
+            return record !== null && request !== null
+                && request["userId"] === record["userId"]
+                && request["sessionId"] === record["sessionId"]
+                && request["expire"] > Date.now();
+        },
+
+        // the second half: the key back, and the account is gone - on the
+        // server with every session it had, here with its record
+        async deleteAccount(deleteKey) {
+            const record = account.current();
+            if (record === null) {
+                throw new Error("not-signed-in");
+            }
+            await ctx["server"].deleteAccount(deleteKey);
+            writeDeleteRequest(null);
+            await dropRecord(record["userId"]);
+            emitChange();
         }
     };
 

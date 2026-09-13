@@ -32,6 +32,10 @@
             "en": "Reset",
             "hu": "Visszaállítás"
         },
+        "deleteAccount": {
+            "en": "Your account is deleted for good - on every device it is signed in on, with everything kept under it - and cannot be recovered.",
+            "hu": "A fiókod véglegesen törlődik - minden eszközön, ahol be van jelentkezve, mindennel együtt, amit tárol - és nem állítható vissza."
+        },
         "resetSettings": {
             "en": "Every setting of this application on this device - the appearance, the language, the tray and the exit shortcuts - goes back to its default. Accounts and remembered connections are kept.",
             "hu": "Az alkalmazás minden beállítása ezen az eszközön - a megjelenés, a nyelv, a tálca és a kilépési gyorsbillentyűk - visszaáll az alapértelmezettre. A fiókok és a megjegyzett kapcsolatok megmaradnak."

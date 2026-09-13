@@ -451,6 +451,17 @@ const Server = class extends EventTarget {
         return answer["sessions"] ?? [];
     };
 
+    // the key that confirms a deletion, mailed to the account's address in the
+    // language asked for - good on this device alone, until the answered time
+    async deleteEmail(lang) {
+        return await this.invokeChecked({"type": "delete-email", "lang": lang});
+    };
+
+    // the key back: the account goes, and every session it had with it
+    async deleteAccount(deleteKey) {
+        await this.invokeChecked({"type": "delete", "deleteKey": deleteKey});
+    };
+
     //
     // the room
     //

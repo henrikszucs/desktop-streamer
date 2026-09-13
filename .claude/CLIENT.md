@@ -249,8 +249,31 @@ bar follows on `change`; a change pushed from another device (`user-change`)
 refills the fields while the window is open. `sessions` lists
 `account.sessions()` on every open in the `SessionBox` rows, and the button on
 a row is one of two things: on this device it is the bar's `logout()` again,
-on another it is `endSession()` and the row goes. `delete` is still inert — the
-mail behind it is not built.
+on another it is `endSession()` and the row goes. `delete` is the account's
+end, in two halves. *Send delete key* is `account.requestDelete()` — the server
+mails a key to the account's address (`delete-email`, in the client's language)
+and the module notes **this device asked**: `{userId, sessionId, expire}` in the
+tab's `sessionStorage` rather than the local configuration, since the key is
+only good on the account session that asked (the server binds the row to it)
+and asking again is one click — so it survives a reload of this tab and reaches
+no other tab or device, with memory standing in where storage throws. `setStage()`
+is the gate: the key field and *Delete my account* are disabled, and the notice
+under the send button hidden, unless `hasDeleteRequest()` is true — the request
+names the current account on its current session and has not run out — checked
+on every open and again after a send, so the second half only opens on the
+device that asked. A `too-soon` answer (the server's cooldown) is its own line
+rather than the generic failure, and pressing send again is safe: the server
+holds one code per account and mails the same one again. *Delete my account*
+asks `hasDeleteRequest()` once more — the key may have run out while the field
+stood open — and a device that no longer holds a request is told so and the
+field closed, without the server being asked; only then is the confirm dialog opened (`confirm.deleteAccount`,
+the one line that says it cannot be undone), and only a yes calls
+`account.deleteAccount(key)` — the `delete` call, then the record dropped and
+`change` emitted, so the bar is the guest's. The window then does what the
+bar's sign out does after the call: `navTop.refresh()`, `closeDialogs()`,
+`reload()`, and a snackbar that says it happened. An `invalid-key` answer — a
+wrong code, another device's, one that ran out — is one notice, since the
+person's move is the same for all three: check the code or send a new one.
 
 The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
 
@@ -740,9 +763,9 @@ share with the menu dialog), and the registry hands each module's
 
 ## What is not wired yet
 
-The pairing, join and account flows are live; what is still cut out of the
-server is account deletion by e-mail and the WebRTC signaling relay, and the UI
-for those is present but inert. Each piece is planned under `dev/plans/`. The previous client
+The pairing, join and account flows are live, account deletion included; what
+is still cut out of the server is the WebRTC signaling relay, and the UI for it
+is present but inert. Each piece is planned under `dev/plans/`. The previous client
 implementation is at commit `da3921d`, and it read message types the server no
 longer serves — do not paste it back untouched.
 
@@ -751,7 +774,6 @@ longer serves — do not paste it back untouched.
 | `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
 | the *settings* entry of a `devices` card opens nothing yet — `management/connection`, which names and forgets a connection, is the dialog it wants | `dev/plans/ws-pairing-joins.md` |
-| `management/account/delete` — the guest's two windows and the account's `information` and `sessions` are live; the delete key has no mail to arrive by | `dev/plans/ws-accounts.md` |
 
 `management/search` is a separate case: the field it mirrors and the button that
 opens it are both still commented out in the shell markup, so nothing opens it.

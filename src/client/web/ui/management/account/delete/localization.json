@@ -14,8 +14,12 @@
                 "hu": "Törlési kulcs küldése"
             },
             "send-success": {
-                "en": "You will receive a delete key in your email.",
-                "hu": "A törlési kulcsot elküldtük email címedre."
+                "en": "A delete key was sent to your e-mail address. It is valid for 24 hours, on this device only.",
+                "hu": "A törlési kulcsot elküldtük az e-mail címedre. 24 óráig és csak ezen az eszközön érvényes."
+            },
+            "send-wait": {
+                "en": "A key was sent a moment ago. Check your inbox, or try again in a minute.",
+                "hu": "Az imént már küldtünk egy kulcsot. Nézd meg a postaládádat, vagy próbáld újra egy perc múlva."
             },
             "send-error": {
                 "en": "Error sending delete key. Please try again later.",
@@ -29,13 +33,17 @@
                 "en": "Delete my account",
                 "hu": "Fiókom törlése"
             },
-            "confirm-delete": {
-                "en": "Delete my account",
-                "hu": "Fiókom törlése"
+            "device-error": {
+                "en": "No delete key was requested from this device. Send one first, then enter it here.",
+                "hu": "Erről az eszközről nem kértél törlési kulcsot. Előbb küldj egyet, majd írd be ide."
             },
             "confirm-error": {
-                "en": "Error confirming delete key. Please try with other code.",
-                "hu": "Hiba történt a törlési kulcs megerősítése során. Kérlek próbáld meg más kóddal."
+                "en": "This delete key is not valid. Check the code, or send a new one.",
+                "hu": "Ez a törlési kulcs nem érvényes. Ellenőrizd a kódot, vagy küldj egy újat."
+            },
+            "done": {
+                "en": "Your account has been deleted.",
+                "hu": "A fiókod törölve lett."
             }
         }
     }

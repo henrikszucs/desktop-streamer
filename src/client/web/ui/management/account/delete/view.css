@@ -8,6 +8,11 @@
     flex-direction: column;
 }
 
+/* the bar under the send button while the key is on its way to the mail server */
+.delete-send-progress {
+    margin-top: 16px;
+}
+
 .delete-send-result {
     margin-top: 10px;
     margin-bottom: 10px;
@@ -20,23 +25,19 @@
     gap: 10px;
 }
 
+/* the field and its button, centred as one row, on one line where they fit */
 .delete-confirm-field > div:nth-child(1) {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-}
-
-@media only screen and (max-width: 500px) {
-    .delete-confirm-field > div:nth-child(1) {
-        flex-wrap: wrap;
-        justify-content: center;
-    }
-
-    #btn-account-delete-confirm {
-        margin-top: 16px;
-        margin-bottom: 16px;
-    }
+    justify-content: center;
+    gap: 16px;
 }
 
 .delete-confirm-field > div:nth-child(1) > div:nth-child(1) {
     margin-bottom: 0px;
+}
+
+.delete-confirm-field > span {
+    text-align: center;
 }

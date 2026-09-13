@@ -12,9 +12,9 @@ there is no subscription API - every socket signed in as a user is pushed
 opens; `login-guest` was added, for the user menu's switch back to the guest
 without ending the session; and the relay permission lives on the `users` row
 (`is_relay_allowed`, from `userRegisterRelay` at registration) rather than being
-looked up per message. What is **not** built is the mail: the transports, the
-`delete` table, `delete-email` and `delete` - the client's delete window still
-only reports.
+looked up per message. The mail is built too - `src/server/ws/mail.js`, the
+`delete` table, `delete-email` and `delete` - with the differences noted under
+*Account deletion* below. Nothing in this plan is outstanding.
 
 Source of the removed code: `git show 6c0d18a:src/server/ws.js` -
 `start()` 180-326 (mailers, `authGoogle`), `addSession` 327-377,
@@ -115,6 +115,20 @@ and mailed the key to the account address. `delete` took the key back, checked
 the expiry, and removed the user - the cascading foreign keys took the Google
 link, the sessions and the joins with it. The mail body was built from
 `getText("delete.0"|"delete.1"|"delete.2", lang)` plus `this.domain`.
+
+**As built** (`handlers/accounts.js`, `ws/mail.js`): the key stands for 24
+hours rather than one, and the row carries the account `session_id` that asked
+for it - `delete` matches the key against the caller's user *and* session, so
+the key is only good on the device it was mailed for, and the row cascades with
+that session, so a logout drops it. One key per account: asked again from the
+same device the same key is mailed again, from another device a new one replaces
+it, and a request within `DELETE_COOLDOWN` of the last mail is answered
+`too-soon` rather than mailed. A key SMTP refused is removed again (`mail-failed`). The mail is one
+subject and one body per language in `src/server/localization.json`, with
+`{domain}` and `{key}` substituted, instead of three fragments. Joins are not
+touched because a join has no owner yet. The client keeps which device asked in
+the tab's `sessionStorage` and asks the confirm dialog before the `delete`
+call - see `.claude/CLIENT.md`.
 
 **`getText` was never imported.** The removed file imported only
 `{ generateId, httpsGetText, httpsGetImage }` from `common.js`, and
