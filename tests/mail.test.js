@@ -8,7 +8,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { createMailer, buildDeleteMail, loadDictionary, languagesOf, APP_NAME, DEFAULT_LANGUAGE } from "../src/server/ws/mail.js";
+import localization from "../src/server/localization.js";
+import { createMailer, buildDeleteMail, loadDictionary, APP_NAME, DEFAULT_LANGUAGE } from "../src/server/ws/mail.js";
 
 // the transport itself is SMTP and is not tested here; what is, is the mail
 // that goes through it and that no mailer is built without a configuration
@@ -19,9 +20,11 @@ test("no email configuration builds no mailer", async () => {
 });
 
 test("the delete mail carries the application, the key and the domain in the language asked for", async () => {
-    const dict = await loadDictionary();
-    for (const lang of languagesOf(dict)) {
-        const mail = buildDeleteMail(dict, lang, "example.org", "AbC123xyz0");
+    await loadDictionary();
+    const languages = localization.supportedLanguages;
+    assert.equal(languages.length > 0, true, "the dictionary holds no language");
+    for (const lang of languages) {
+        const mail = buildDeleteMail(lang, "example.org", "AbC123xyz0");
         assert.equal(mail["subject"].includes(APP_NAME), true, lang + " subject names the application");
         assert.equal(mail["text"].includes(APP_NAME), true, lang + " body names the application");
         assert.equal(mail["subject"].includes("example.org"), true, lang + " subject names the domain");
@@ -32,9 +35,9 @@ test("the delete mail carries the application, the key and the domain in the lan
 });
 
 test("a language the dictionary does not hold falls back to the default one", async () => {
-    const dict = await loadDictionary();
-    const fallback = buildDeleteMail(dict, "xx", "example.org", "k");
-    const wanted = buildDeleteMail(dict, DEFAULT_LANGUAGE, "example.org", "k");
+    await loadDictionary();
+    const fallback = buildDeleteMail("xx", "example.org", "k");
+    const wanted = buildDeleteMail(DEFAULT_LANGUAGE, "example.org", "k");
     assert.deepEqual(fallback, wanted);
-    assert.deepEqual(buildDeleteMail(dict, "", "example.org", "k"), wanted);
+    assert.deepEqual(buildDeleteMail("", "example.org", "k"), wanted);
 });

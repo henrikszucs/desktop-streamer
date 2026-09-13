@@ -6,7 +6,7 @@
 // not boot rather than one that answers "sent" to a click and mails nothing.
 // The lines of the mail are the server's own dictionary, src/server/
 // localization.json, the one slice of text that is written by the server and
-// not by a client module.
+// not by a client module, read through the server's localization module.
 
 //
 // Import dependencies
@@ -17,6 +17,9 @@ import fs from "node:fs/promises";
 
 // third-party dependencies
 import nodemailer from "nodemailer";
+
+// first-party dependencies
+import localization from "../localization.js";
 
 const DICTIONARY_PATH = path.join(import.meta.dirname, "..", "localization.json");
 
@@ -32,36 +35,23 @@ const DEFAULT_LANGUAGE = "en";
 // plaintext upgraded with STARTTLS, which nodemailer does on its own
 const SMTPS_PORT = 465;
 
+// the dictionary file into the localization module, which holds it from then on
 const loadDictionary = async function() {
-    return JSON.parse(await fs.readFile(DICTIONARY_PATH, "utf8"));
+    localization.load(JSON.parse(await fs.readFile(DICTIONARY_PATH, "utf8")));
 };
 
 // one line of the dictionary, in the language asked for or the default one
-const textOf = function(dict, key, lang) {
-    let node = dict;
-    for (const part of key.split(".")) {
-        node = node?.[part];
-    }
-    if (typeof node !== "object" || node === null) {
-        return "";
-    }
-    return node[lang] ?? node[DEFAULT_LANGUAGE] ?? "";
-};
-
-// the languages the mail can be written in: the ones the subject line has
-const languagesOf = function(dict) {
-    return Object.keys(dict?.["delete"]?.["subject"] ?? {});
+const textOf = function(key, lang) {
+    return localization.get(key, lang) || localization.get(key, DEFAULT_LANGUAGE) || "";
 };
 
 // the subject and body of the key mail. `{app}` is the application, `{domain}`
 // names the server the account is on and `{key}` is what the person types back.
-const buildDeleteMail = function(dict, lang, domain, key) {
-    const put = function(text) {
-        return text.replaceAll("{app}", APP_NAME).replaceAll("{domain}", domain).replaceAll("{key}", key);
-    };
+const buildDeleteMail = function(lang, domain, key) {
+    const params = new Map([["app", APP_NAME], ["domain", domain], ["key", key]]);
     return {
-        "subject": put(textOf(dict, "delete.subject", lang)),
-        "text": put(textOf(dict, "delete.body", lang))
+        "subject": localization.putParameters(textOf("delete.subject", lang), params),
+        "text": localization.putParameters(textOf("delete.body", lang), params)
     };
 };
 
@@ -97,17 +87,18 @@ const createMailer = async function(conf) {
 
     // a transport that cannot sign in throws here, at boot, where it is read
     await transport.verify();
-    const dict = await loadDictionary();
+    await loadDictionary();
 
     // the server is named to the person by the address they reach it at
     const domain = conf?.["http"]?.["domain"] ?? conf["ws"]["domain"];
 
     return {
-        "languages": languagesOf(dict),
+        // the languages the mail can be written in
+        "languages": localization.supportedLanguages,
 
         // the key to the address of the account, in the client's language
         async sendDeleteKey(to, lang, key) {
-            const mail = buildDeleteMail(dict, lang, domain, key);
+            const mail = buildDeleteMail(lang, domain, key);
             await transport.sendMail({
                 "from": {"name": APP_NAME, "address": email["user"]},
                 "to": to,
@@ -122,5 +113,5 @@ const createMailer = async function(conf) {
     };
 };
 
-export { createMailer, buildDeleteMail, loadDictionary, languagesOf, APP_NAME, DEFAULT_LANGUAGE };
-export default { createMailer, buildDeleteMail, loadDictionary, languagesOf, APP_NAME, DEFAULT_LANGUAGE };
+export { createMailer, buildDeleteMail, loadDictionary, APP_NAME, DEFAULT_LANGUAGE };
+export default { createMailer, buildDeleteMail, loadDictionary, APP_NAME, DEFAULT_LANGUAGE };
