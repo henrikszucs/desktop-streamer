@@ -13,6 +13,7 @@ const LoginScreen = class extends Screen {
 
     google = null;
     isButtonReady = false;
+    isBusy = false;
 
     async mount(ctx) {
         this.googleBox = document.getElementById("google-login");
@@ -33,6 +34,28 @@ const LoginScreen = class extends Screen {
         super.open(params);
     };
 
+    // the credential goes to the server, and a yes makes this client that
+    // account: the bar follows on its own, and the screen it stood on is the
+    // home one. A no says why in the snackbar, since the button says nothing.
+    async login(credential) {
+        const ctx = this.ctx;
+        const localization = ctx["localization"];
+        if (typeof credential !== "string" || this.isBusy === true) {
+            return;
+        }
+        this.isBusy = true;
+        try {
+            await ctx["account"].loginGoogle(credential);
+            ctx["ui"].snackbar.show(localization.get("login.done"));
+            ctx["ui"].navigate("new");
+        } catch (error) {
+            console.error("Sign-in failed:", error);
+            const reason = ["register-disabled", "email-taken", "invalid-credential"].includes(error.message) ? error.message : "failed";
+            ctx["ui"].snackbar.show(localization.get("login.error." + reason), true);
+        }
+        this.isBusy = false;
+    };
+
     async setupGoogle() {
         const ctx = this.ctx;
         const clientId = ctx["conf"]["remote"]?.["auth"]?.["google"]?.["clientId"];
@@ -43,10 +66,8 @@ const LoginScreen = class extends Screen {
         }
         if (this.google === null) {
             this.google = new GoogleLogin(clientId);
-            this.google.addEventListener("login", function(event) {
-                // the credential has nowhere to go until the server signs in
-                // again (dev/plans/ws-accounts.md)
-                console.warn("Sign-in is not wired to the server yet");
+            this.google.addEventListener("login", (event) => {
+                this.login(event.detail?.["credential"]);
             });
         }
         this.googleBox.classList.remove("hide");

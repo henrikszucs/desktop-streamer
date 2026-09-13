@@ -143,8 +143,8 @@ the point of use, and a notice in its place says why. The checks run on every
 differently is followed.
 
 The guest flags are the permissions of the user this client *is*, so they only
-hold while it is the guest — `isGuest()` is the one place that has to learn about
-accounts later.
+hold while it is the guest — `isGuest()` asks `ctx["account"]` (see Users), and
+is the one place the permissions know about accounts.
 
 Where an entry is refused, prefer greying it over removing it: an entry that is
 gone says nothing, and what the user needs to know is that it was refused by the
@@ -171,15 +171,32 @@ once at its own load and so would never draw a button created after it.
 
 The client is always a user. It starts as the guest and signing in adds an
 account *beside* it rather than replacing it, so there is no signed-out state and
-no second menu for one. Every user's records are rows of the one `user` table in
+no second menu for one. `src/account.js` (`ctx["account"]`) is that model: the
+accounts this client holds are `accounts` in the local configuration — each with
+the `sessionKey` the server answered once to `login-google` and the profile as it
+was last seen — and `userId` is the one the client wants to be, `""` for the
+guest. Who it *is* is `liveId`, filled only by the server's answer: the server
+holds who a socket is for that socket alone, so `resume()` presents the wanted
+key through `login-session` on every `online`, before the route is drawn, and
+a key the server no longer knows (ended from another device, or run out) drops
+the record on the spot. A reconnect does not flip the bar to the guest and back:
+`liveId` is left alone while the loading layer is up and `resume()` sets it
+again. The Google credential goes from the login screen's `login` event to
+`loginGoogle()`, and a yes navigates home — the bar follows the `change` event.
+`switchTo("")` is `login-guest`, which leaves the session for the device to come
+back to; `logout()` is `logout`, which ends it on every socket presenting it.
+A `logout` pushed by the server — this device signed out from another one — is
+answered the way a sign out from here is: the record dropped, the dialogs
+closed, the route redrawn. Every user's records are rows of the one `user` table in
 IndexedDB keyed by the id of the user they belong to; the guest is the row under
 the empty id (`GUEST_ID` in `src/conf.js`), since a client is only ever one guest
 and the empty key collides with no account id. The `configuration` table is not a
 user's row, which is why a guest reset leaves the theme and the language alone.
 
 Sign out means `resetUser("")` for the guest — forget the local connection
-records, there is no session to end on the server — and a server session for an
-account. The guest's name is a localization key rather than a value, so its menu
+records, there is no session to end on the server — and `account.logout()` for an
+account; both end in `refresh()`, `closeDialogs()` and `reload()`, since the
+route was drawn for the user before. The guest's name is a localization key rather than a value, so its menu
 row follows a language change like the rest of the bar — unless the guest gave
 itself one in the account dialog, which is kept on its row (`name`, beside the
 joins) and shown as text instead.
@@ -200,9 +217,16 @@ The account dialog is not the same column for every user. `open()` asks
 guest has its name (`account.guest`) and a delete (`account.reset`) that is the
 bar's `logout()` reached through `loadModule("nav-top")` — one call, so the
 menu's sign out and the dialog's delete cannot drift apart — where an account
-has the information, sessions and delete windows. Both guest windows reach the
-bar the same way, since the bar owns the user model: the name window calls
-`refresh()` after a save so the row follows it.
+has the information, sessions and delete windows. The guest's name window
+reaches the bar the same way and calls `refresh()` after a save so the row
+follows it. The account's `information` window edits the two names through
+`account.update()` — the e-mail is the provider's and stays disabled — and the
+bar follows on `change`; a change pushed from another device (`user-change`)
+refills the fields while the window is open. `sessions` lists
+`account.sessions()` on every open in the `SessionBox` rows, and the button on
+a row is one of two things: on this device it is the bar's `logout()` again,
+on another it is `endSession()` and the row goes. `delete` is still inert — the
+mail behind it is not built.
 
 `OLD_GUEST_TABLE` is dropped on every open; a client that ran the two-table build
 still carries it. Dropping a table that is not there is free, so it costs a
@@ -690,9 +714,9 @@ share with the menu dialog), and the registry hands each module's
 
 ## What is not wired yet
 
-The pairing and join flows are live; what is still cut out of the server is the
-accounts half and the WebRTC signaling relay, and the UI for those is present but
-inert. Each piece is planned under `dev/plans/`. The previous client
+The pairing, join and account flows are live; what is still cut out of the
+server is account deletion by e-mail and the WebRTC signaling relay, and the UI
+for those is present but inert. Each piece is planned under `dev/plans/`. The previous client
 implementation is at commit `da3921d`, and it read message types the server no
 longer serves — do not paste it back untouched.
 
@@ -701,8 +725,7 @@ longer serves — do not paste it back untouched.
 | `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
 | the *settings* entry of a `devices` card opens nothing yet — `management/connection`, which names and forgets a connection, is the dialog it wants | `dev/plans/ws-pairing-joins.md` |
-| `management/account/*` (information, sessions, delete) — the guest's two windows, `guest` and `reset`, are live | `dev/plans/ws-accounts.md` |
-| `nav-top` `setAccounts()` — the list is the guest alone | `dev/plans/ws-accounts.md` |
+| `management/account/delete` — the guest's two windows and the account's `information` and `sessions` are live; the delete key has no mail to arrive by | `dev/plans/ws-accounts.md` |
 
 `management/search` is a separate case: the field it mirrors and the button that
 opens it are both still commented out in the shell markup, so nothing opens it.

@@ -14,7 +14,8 @@ const PUSH_EVENTS = new Set([
     "pair-request", "pair-accept", "pair-reject", "pair-cancel", "pair-code",
     "join-request", "join-accept", "join-reject", "join-cancel", "join-remove",
     "join-online",
-    "room-open", "room-signal", "room-data", "room-close"
+    "room-open", "room-signal", "room-data", "room-close",
+    "user-change", "logout"
 ]);
 
 // The binary relay frame, the same bytes the server reads (see
@@ -87,7 +88,8 @@ const readRoomFrame = function(buffer) {
 // online, offline, version-mismatch,
 // pair-request, pair-accept, pair-reject, pair-cancel, pair-code,
 // join-request, join-accept, join-reject, join-cancel, join-remove, join-online,
-// room-open, room-signal, room-data, room-close
+// room-open, room-signal, room-data, room-close,
+// user-change, logout
 const Server = class extends EventTarget {
     address = "";
     ws = null;
@@ -381,6 +383,64 @@ const Server = class extends EventTarget {
     };
 
     //
+    // accounts
+    //
+    // one call, one answer, the same way for every call below: the answer is
+    // handed back whole, and what is thrown carries the server's own error name
+    async invokeChecked(message) {
+        const messageObj = this.communicator.invoke(message);
+        await messageObj.wait();
+        if (messageObj.error !== "") {
+            throw new Error(messageObj.error);
+        }
+        if (typeof messageObj.data !== "object" || messageObj.data["success"] !== true) {
+            throw new Error(messageObj.data?.["error"] ?? "failed");
+        }
+        return messageObj.data;
+    };
+
+    // a Google credential becomes an account on this connection, and the
+    // session the answer carries is what signs it in again without Google
+    async loginGoogle(credential, userAgent) {
+        return await this.invokeChecked({"type": "login-google", "credential": credential, "userAgent": userAgent});
+    };
+
+    // a session this client kept, presented again - on every connection, since
+    // the server holds who a socket is for that socket alone
+    async loginSession(sessionKey) {
+        return await this.invokeChecked({"type": "login-session", "sessionKey": sessionKey});
+    };
+
+    // this connection is the guest again, the session left standing
+    async loginGuest() {
+        if (this.isOnline === false) {
+            return;
+        }
+        await this.invokeChecked({"type": "login-guest"});
+    };
+
+    // a session ends - this connection's own, or another of the same user
+    async logout(sessionId) {
+        const message = {"type": "logout"};
+        if (typeof sessionId === "string") {
+            message["sessionId"] = sessionId;
+        }
+        await this.invokeChecked(message);
+    };
+
+    // the names the user goes by; the answer is the whole profile
+    async userUpdate(firstName, lastName) {
+        const answer = await this.invokeChecked({"type": "user-update", "firstName": firstName, "lastName": lastName});
+        return answer["user"];
+    };
+
+    // every device signed in as this user
+    async sessionList() {
+        const answer = await this.invokeChecked({"type": "session-list"});
+        return answer["sessions"] ?? [];
+    };
+
+    //
     // the room
     //
     // one signal to the other end of the room this connection is in. The server
@@ -441,7 +501,8 @@ const Server = class extends EventTarget {
     // ended, and the host hears the code it was given in place of a refused
     // one - and either side of a remembered join hears the other arrive or go.
     // The room is the other half: both ends are told they are in one, what the
-    // other is signaling, and when it is over.
+    // other is signaling, and when it is over. An account hears its profile
+    // change on another device, and that its session was ended from one.
     // Each becomes an event of the same name, with the message as detail.
     async handleIncoming(messageObj) {
         await messageObj.wait();

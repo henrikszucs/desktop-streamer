@@ -20,6 +20,18 @@
             "last-name": {
                 "en": "Last name",
                 "hu": "Vezetéknév"
+            },
+            "save": {
+                "en": "Save",
+                "hu": "Mentés"
+            },
+            "saved": {
+                "en": "Account information saved.",
+                "hu": "Fiók adatok mentve."
+            },
+            "failed": {
+                "en": "The account information could not be saved.",
+                "hu": "A fiók adatokat nem sikerült menteni."
             }
         }
     }

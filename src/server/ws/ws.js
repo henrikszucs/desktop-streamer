@@ -18,6 +18,7 @@ import { buildPublicConf } from "./handlers/conf.js";
 import { removePairCode, releasePairCodes } from "./handlers/pairing.js";
 import { detachJoins, releaseJoins } from "./handlers/joins.js";
 import { detachRooms, releaseRooms } from "./handlers/rooms.js";
+import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.js";
 import { startDatabase, stopDatabase } from "./database.js";
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
@@ -35,6 +36,11 @@ const ServerWS = class {
     pairs = new Map();              // key-pairCode, value-state object of the pair (see ./handlers/pairing.js)
     joins = new Map();              // key-joinId, value-state of a join a socket holds open (see ./handlers/joins.js)
     rooms = new Map();              // key-one side's room key, value-the two sockets an accept put together - one room is in here twice, once per side (see ./handlers/rooms.js)
+    accounts = new Map();           // key-userId, value-the sockets signed in as that user, while there is one (see ./handlers/accounts.js)
+
+    // the sign-in providers and the rules on who may sign in, built from the
+    // configuration in start() - a server that never started signs nobody in
+    auth = createAuth(undefined);
 
     // the rows behind the joins, and the only thing here that outlives the
     // process - see ./database.js
@@ -73,6 +79,10 @@ const ServerWS = class {
         // what a client is allowed to learn about this server, never key
         // material, SMTP credentials, OAuth secrets or database settings
         this.confPublic = buildPublicConf(conf, this.version);
+
+        // and the half a client never sees: the Google client id a credential
+        // is checked against, and whether an unknown account may be made
+        this.auth = createAuth(conf);
 
         // the WS server is reachable on the HTTP domain when they share a host
         let domain = conf["ws"]["domain"];
@@ -152,14 +162,16 @@ const ServerWS = class {
         // `isRelayAllowed` is a permission and not a message: it is answered
         // here, once, and read off this Map by the relay rather than looked up
         // per message it carries (see handlers/rooms.js). Every client is a
-        // guest until dev/plans/ws-accounts.md lands, so the configuration is
-        // the whole answer today; when an account can sign in, this is the slot
-        // its row fills - read once for the session, because a permission is not
+        // guest until it signs in, so the configuration is the answer here, and
+        // attachAccount in handlers/accounts.js is what fills the slot from the
+        // user's row - read once per sign-in, because a permission is not
         // expected to change under a live connection.
         /*{
             "com": Communicator,
             "ws": WebSocket,
-            "isRelayAllowed": boolean
+            "isRelayAllowed": boolean,
+            "userId": string,               (signed in only)
+            "accountSessionId": string      (signed in only - the sessions row, not this connection)
         }*/
         const client = new Map([
             ["com", com],
@@ -200,6 +212,7 @@ const ServerWS = class {
             removePairCode(this, sessionId);
             detachRooms(this, sessionId);
             detachJoins(this, sessionId);
+            detachAccount(this, sessionId);
             client.get("com").release();
             this.clients.delete(sessionId);
 
@@ -303,6 +316,7 @@ const ServerWS = class {
         releasePairCodes(this);
         releaseRooms(this);
         releaseJoins(this);
+        releaseAccounts(this);
         this.clients.clear();
 
         // the rows stay, the pool does not: an open one keeps the process alive

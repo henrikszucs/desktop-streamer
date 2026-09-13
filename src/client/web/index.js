@@ -9,6 +9,7 @@ import { conf, confLoad, setLocal, getUser, setUser, resetUser } from "./src/con
 import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
 import { createJoins } from "./src/joins.js";
+import { createAccount } from "./src/account.js";
 import { createRoom } from "./src/room.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
@@ -48,6 +49,7 @@ const main = async function() {
         "server": server,
         "conf": conf,
         "joins": null,
+        "account": null,
         "room": null,
         "localization": localization,
         "desktop": desktop,
@@ -59,6 +61,7 @@ const main = async function() {
         "ui": null
     };
     ctx["joins"] = createJoins(ctx);
+    ctx["account"] = createAccount(ctx);
 
     // the live connection between this device and the other one. It is built
     // here rather than by the room screen because it outlives one: the host that
@@ -89,6 +92,11 @@ const main = async function() {
     // the route is opened under the loading layer, which lifts once it is there
     const switchOnline = async function() {
         router.closeDialogs();
+
+        // who this client is comes first: the server holds that per socket, so
+        // it is told again on every one, and the screen under the loading layer
+        // has to be drawn as that user
+        await ctx["account"].resume();
 
         // the remembered devices are presented before the screen is: a host is
         // only reachable on the joins it has connected, and nothing on screen

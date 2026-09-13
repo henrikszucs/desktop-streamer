@@ -134,8 +134,10 @@ const createUI = function(ctx) {
         "isAuth": function() {
             return permissions.get("isAuth");
         },
+        // whether this client is the guest right now - the one place the
+        // guest permissions learn about accounts (src/account.js)
         "isGuest": function() {
-            return true;
+            return ctx["account"] === null || ctx["account"].isGuest() === true;
         },
         // a guest permission, answered for whoever this client is
         "allows": function(name) {

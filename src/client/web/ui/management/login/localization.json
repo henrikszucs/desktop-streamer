@@ -11,6 +11,28 @@
         "retry": {
             "en": "Try again",
             "hu": "Újra"
+        },
+        "done": {
+            "en": "Signed in.",
+            "hu": "Bejelentkezve."
+        },
+        "error": {
+            "failed": {
+                "en": "Sign-in failed. Please try again later.",
+                "hu": "A bejelentkezés nem sikerült. Kérlek próbáld meg később."
+            },
+            "invalid-credential": {
+                "en": "The sign-in was not accepted by the server.",
+                "hu": "A bejelentkezést a szerver nem fogadta el."
+            },
+            "register-disabled": {
+                "en": "The administrator does not allow new accounts on this server.",
+                "hu": "Az adminisztrátor nem engedélyez új fiókokat ezen a szerveren."
+            },
+            "email-taken": {
+                "en": "An account with this e-mail address already exists.",
+                "hu": "Ezzel az e-mail címmel már létezik fiók."
+            }
         }
     }
 }

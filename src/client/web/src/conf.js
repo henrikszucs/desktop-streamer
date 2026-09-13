@@ -28,8 +28,10 @@ const LOCAL_DEFAULTS = {
     "autoLaunch": false,
     "minimizing": false,
     "exitShortcuts": "[]",
-    "sessionId": "",
-    "sessionKey": ""
+    // the accounts this client is signed in as - each with the session key
+    // that signs it in again - and which of them it is, "" for the guest
+    "accounts": "[]",
+    "userId": ""
 };
 
 let DB = null;
@@ -59,6 +61,14 @@ const confLoad = new Promise(async function(resolve) {
     }
 
     result["exitShortcuts"] = JSON.parse(result["exitShortcuts"]);
+    try {
+        result["accounts"] = JSON.parse(result["accounts"]);
+    } catch (error) {
+        result["accounts"] = [];
+    }
+    if (Array.isArray(result["accounts"]) === false) {
+        result["accounts"] = [];
+    }
     resolve(result);
 });
 

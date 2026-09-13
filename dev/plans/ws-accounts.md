@@ -4,6 +4,18 @@ Restore everything between a connected socket and a signed-in user: e-mail
 sending, Google sign-in, sessions that survive a reconnect, live user data, and
 account deletion.
 
+**Most of this is done** - `src/server/ws/handlers/accounts.js` and
+`src/client/web/src/account.js`, described in `.claude/CLAUDE.md` and
+`.claude/CLIENT.md`. What was built differs from the table below in three ways:
+there is no subscription API - every socket signed in as a user is pushed
+`user-change` and `logout`, and the client asks `session-list` when the window
+opens; `login-guest` was added, for the user menu's switch back to the guest
+without ending the session; and the relay permission lives on the `users` row
+(`is_relay_allowed`, from `userRegisterRelay` at registration) rather than being
+looked up per message. What is **not** built is the mail: the transports, the
+`delete` table, `delete-email` and `delete` - the client's delete window still
+only reports.
+
 Source of the removed code: `git show 6c0d18a:src/server/ws.js` -
 `start()` 180-326 (mailers, `authGoogle`), `addSession` 327-377,
 `updateSession` 378-454, `removeSession` 455-492, `addClientSession` 493-511,

@@ -42,6 +42,29 @@ const checkBrowser = function() {
 };
 
 const browser = checkBrowser();
+
+// the operating system, in the names node uses for it, since the desktop shell
+// reports the same word from os.platform() - "unknown" where the user agent
+// says nothing this recognises
+const getPlatform = function() {
+    const agent = navigator.userAgent ?? "";
+    if (/iPhone|iPad|iPod/i.test(agent)) {
+        return "ios";
+    }
+    if (/Android/i.test(agent)) {
+        return "android";
+    }
+    if (/Windows/i.test(agent)) {
+        return "win32";
+    }
+    if (/Mac OS|Macintosh/i.test(agent)) {
+        return "darwin";
+    }
+    if (/Linux|X11/i.test(agent)) {
+        return "linux";
+    }
+    return "unknown";
+};
 const width = window.innerWidth;
 const sizeS = 600;
 const sizeM = 993;
@@ -131,5 +154,5 @@ const domReady = new Promise(function (resolve) {
     }, { "once": true });
 });
 
-export { checkBrowser, browser, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
-export default { checkBrowser, browser, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
+export { checkBrowser, browser, getPlatform, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
+export default { checkBrowser, browser, getPlatform, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };

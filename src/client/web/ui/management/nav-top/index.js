@@ -45,6 +45,11 @@ const NavTop = class extends View {
             this.applyPermissions();
         });
 
+        // the accounts are the account module's, and the bar draws whatever it
+        // says - a sign-in, a switch, a session ended from another device
+        ctx["account"].addEventListener("change", () => {
+            this.refresh();
+        });
         this.setAccounts();
     };
 
@@ -62,9 +67,19 @@ const NavTop = class extends View {
     };
 
     // the switch-account submenu, the guest first and the accounts after it. The
-    // rows are rebuilt every time, so the add entry is all that stays.
-    async setAccounts(accounts=[], currentId=this.currentId) {
+    // rows are rebuilt every time, so the add entry is all that stays. The list
+    // and the current one are read off the account module, never kept here.
+    async setAccounts() {
+        const accountCtx = this.ctx["account"];
+        const accounts = accountCtx.list().map(function(record) {
+            return {
+                "id": record["userId"],
+                "name": accountCtx.displayName(record),
+                "avatar": record["picture"] || ""
+            };
+        });
         this.accounts = [GUEST, ...accounts];
+        const currentId = accountCtx.currentId();
         const isKnown = this.accounts.some(function(account) {
             return account["id"] === currentId;
         });
@@ -88,7 +103,7 @@ const NavTop = class extends View {
 
     // the same list again, for a record that changed under it
     refresh() {
-        return this.setAccounts(this.accounts.slice(1));
+        return this.setAccounts();
     };
 
     currentAccount() {
@@ -135,11 +150,22 @@ const NavTop = class extends View {
         return entry;
     };
 
-    switchAccount(id) {
+    // who this client is from now on. The route is drawn again under the
+    // dialogs that go, since a screen gated on the guest permissions was drawn
+    // for the user before; a switch the server refused says so and stays.
+    async switchAccount(id) {
         if (id === this.currentId) {
             return;
         }
-        this.setAccounts(this.accounts.slice(1), id);
+        try {
+            await this.ctx["account"].switchTo(id);
+        } catch (error) {
+            console.error("Cannot switch account:", error);
+            this.ctx["ui"].snackbar.show(this.ctx["localization"].get("main.switchFailed"), true);
+            return;
+        }
+        this.ctx["ui"].closeDialogs();
+        await this.ctx["ui"].reload();
         this.dispatchEvent(new CustomEvent("switch-account", {"detail": {"id": id}}));
     };
 
@@ -165,10 +191,20 @@ const NavTop = class extends View {
             } catch (error) {
                 console.error(error);
             }
-            await this.refresh();
-            this.ctx["ui"].closeDialogs();
-            await this.ctx["ui"].reload();
+        } else {
+            // the session ends on the server and the account is forgotten
+            // here; the client is the guest again, drawn as one below
+            try {
+                await this.ctx["account"].logout();
+            } catch (error) {
+                console.error("Cannot sign out:", error);
+                this.ctx["ui"].snackbar.show(this.ctx["localization"].get("main.logoutFailed"), true);
+                return false;
+            }
         }
+        await this.refresh();
+        this.ctx["ui"].closeDialogs();
+        await this.ctx["ui"].reload();
         this.dispatchEvent(new CustomEvent("logout", {"detail": {"id": id}}));
         return true;
     };

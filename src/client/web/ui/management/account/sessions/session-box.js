@@ -25,8 +25,8 @@ const SessionBox = class extends EventTarget {
                 </div>
                 <div>
                     <button class="circle large error btn-session-delete">
-                        <i>delete</i>
-                        <span class="l m">Delete</span>
+                        <i>logout</i>
+                        <span class="l m">` + localization.get("account.sessions.sign-out") + `</span>
                     </button>
                 </div>
             </div>
@@ -48,7 +48,7 @@ const SessionBox = class extends EventTarget {
 
         // format data
         if (lastUsed !== undefined) {
-            lastUsed = localization.get("account.sessions.last-active") + ": " + new Date(lastUsed).toLocaleString(localization.getLang(), { timeZone: "UTC" });
+            lastUsed = localization.get("account.sessions.last-active") + ": " + new Date(lastUsed).toLocaleString(localization.getLang());
             this.elLastUsed.innerText = lastUsed;
         }
 
@@ -70,10 +70,15 @@ const SessionBox = class extends EventTarget {
             } else if (userAgent["os"] === "ios") {
                 platform = "iOS";
             } else {
-                platform = "Unknown OS";
+                platform = localization.get("account.sessions.unknown-os");
+            }
+            if (userAgent["kind"] === "web") {
+                platform += " (web)";
             }
 
             this.elPlatform.innerText = platform;
+        } else {
+            this.elPlatform.innerText = localization.get("account.sessions.unknown-os");
         }
     };
 };

@@ -83,6 +83,14 @@ const dict = {
             "en": "The administrator disabled authentication",
             "hu": "Az adminisztrátor letiltotta a bejelentkezést"
         },
+        "switchFailed": {
+            "en": "The account could not be switched.",
+            "hu": "A fiókot nem sikerült váltani."
+        },
+        "logoutFailed": {
+            "en": "Signing out failed. Please try again.",
+            "hu": "A kijelentkezés nem sikerült. Kérlek próbáld újra."
+        },
     }
 };
 
