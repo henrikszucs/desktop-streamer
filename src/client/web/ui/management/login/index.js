@@ -12,10 +12,17 @@ const LoginScreen = class extends Screen {
     static rootId = "screen-login";
 
     google = null;
+    isButtonReady = false;
 
     async mount(ctx) {
         this.googleBox = document.getElementById("google-login");
         this.disabledBox = document.getElementById("login-disabled");
+        this.unavailableBox = document.getElementById("login-unavailable");
+        this.retryButton = document.getElementById("login-retry");
+
+        this.retryButton.addEventListener("click", () => {
+            this.setupGoogle();
+        });
     };
 
     open(params) {
@@ -26,16 +33,16 @@ const LoginScreen = class extends Screen {
         super.open(params);
     };
 
-    setupGoogle() {
+    async setupGoogle() {
         const ctx = this.ctx;
         const clientId = ctx["conf"]["remote"]?.["auth"]?.["google"]?.["clientId"];
+        this.unavailableBox.classList.add("hide");
         if (typeof clientId === "undefined") {
             this.googleBox.classList.add("hide");
             return;
         }
         if (this.google === null) {
             this.google = new GoogleLogin(clientId);
-            this.google.createButton(this.googleBox);
             this.google.addEventListener("login", function(event) {
                 // the credential has nowhere to go until the server signs in
                 // again (dev/plans/ws-accounts.md)
@@ -43,6 +50,17 @@ const LoginScreen = class extends Screen {
             });
         }
         this.googleBox.classList.remove("hide");
+        if (this.isButtonReady === true) {
+            return;
+        }
+
+        // a provider the server offers but the browser cannot reach - offline,
+        // a blocked script - is a notice too, and one that can be tried again
+        this.retryButton.disabled = true;
+        this.isButtonReady = await this.google.createButton(this.googleBox);
+        this.retryButton.disabled = false;
+        this.unavailableBox.classList.toggle("hide", this.isButtonReady === true);
+        this.googleBox.classList.toggle("hide", this.isButtonReady === false);
     };
 };
 

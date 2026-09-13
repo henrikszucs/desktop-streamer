@@ -153,6 +153,20 @@ shows the reason in its tooltip, and removes the `data-route` — which is what
 stops the click, since the router's delegated handler walks past an element with
 no `[data-route]`.
 
+The login screen is reachable by URL whatever the server answers, so it has a
+notice for each way there can be nothing to sign in with. `isAuth()` false is
+the administrator's decision and gets `main.authDisabled`, the same string as
+the bar's tooltip. A provider that *is* offered can still fail in the browser:
+Google's button is a script fetched from Google itself, and offline, behind a
+filter or with the script blocked by an extension there would be an empty
+screen and no error. `GoogleLogin.load()` resolves to whether that script is
+usable — its `load`/`error` events with `LOAD_TIMEOUT` behind them — and a
+failure shows `login.unavailable` with a retry instead of the button. A failed
+tag is removed so the retry fetches again rather than finding a dead element,
+and the button is rendered through `google.accounts.id.renderButton` rather
+than the declarative `g_id_onload` markup, which Google's script only parses
+once at its own load and so would never draw a button created after it.
+
 ## Users
 
 The client is always a user. It starts as the guest and signing in adds an
@@ -667,6 +681,12 @@ share with the menu dialog), and the registry hands each module's
   against, which serves the matching download. A browser tab has nothing to
   install, so it keeps its translated message and the user is sent to whoever
   runs the server.
+- **The locked exit shortcuts** (ESC, and F11 in a browser) are the platform's
+  own and cannot be edited or removed, so the row says so in a beercss tooltip
+  rather than only greying its controls. A tooltip is shown by `:hover` on its
+  parent, and a disabled control swallows the pointer in Chrome and Firefox, so
+  `settings/control/view.css` gives the locked row's disabled controls
+  `pointer-events: none` for the hover to reach the row.
 
 ## What is not wired yet
 

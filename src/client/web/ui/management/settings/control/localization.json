@@ -40,6 +40,10 @@
                     "en": "-- None --",
                     "hu": "-- Nincs --"
                 },
+                "locked": {
+                    "en": "This combination is locked: the platform forces it as the default way to leave fullscreen, so it cannot be changed or removed.",
+                    "hu": "Ez a kombináció zárolt: a platform alapértelmezésként kényszeríti a teljes képernyőből való kilépésre, ezért nem módosítható és nem törölhető."
+                },
                 "delay-unit1": {
                     "en": "No delay",
                     "hu": "Azonnal"

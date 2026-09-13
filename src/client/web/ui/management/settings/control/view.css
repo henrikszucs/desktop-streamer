@@ -46,3 +46,13 @@
     min-width: fit-content;
     align-self: center;
 }
+
+/* a locked row carries a tooltip; the disabled controls in it would swallow the
+   hover the tooltip is shown by */
+.shortcut-box.locked {
+    position: relative;
+}
+
+.shortcut-box.locked :disabled {
+    pointer-events: none;
+}

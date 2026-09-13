@@ -3,6 +3,14 @@
         "title": {
             "en": "Log in to your account",
             "hu": "Jelentkezz be a fiókodba"
+        },
+        "unavailable": {
+            "en": "Sign-in is not available right now, the sign-in service could not be reached",
+            "hu": "A bejelentkezés jelenleg nem elérhető, a bejelentkezési szolgáltatás nem érhető el"
+        },
+        "retry": {
+            "en": "Try again",
+            "hu": "Újra"
         }
     }
 }

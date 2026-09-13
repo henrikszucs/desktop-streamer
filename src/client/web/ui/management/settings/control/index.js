@@ -143,6 +143,15 @@ const ControlWindow = class extends Panel {
 
         el.appendChild(elSub);
 
+        // a locked row says why it is locked, on hover
+        if (typeof confobj === "undefined") {
+            el.classList.add("locked");
+            const tooltip = document.createElement("div");
+            tooltip.classList.add("tooltip", "bottom", "max");
+            tooltip.innerText = localization.get("settings.control.exit-shortcut.locked");
+            el.appendChild(tooltip);
+        }
+
         this.shortcuts.push(el);
         this.shortcutList.appendChild(el);
         return [el, keyInput, deleteBtn];
