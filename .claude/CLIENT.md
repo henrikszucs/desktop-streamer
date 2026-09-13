@@ -321,9 +321,14 @@ the mismatch the shell just showed.
 What the server says on its own arrives at `handleIncoming`, which reads the
 message to its end so the communicator can close it and hands it on as an event
 of the same name — `PUSH_EVENTS` is the list, and a type outside it is logged
-rather than dispatched. The pairing flow is the whole of that list today, and a
-module listens for the ones it is in the middle of rather than the transport
-holding state about them.
+rather than dispatched. Seventeen types today, one set per flow: the pairing
+(`pair-request`, `pair-accept`, `pair-reject`, `pair-cancel`, `pair-code`), the
+joins (`join-request`, `join-accept`, `join-reject`, `join-cancel`,
+`join-remove`, `join-online`), the room (`room-open`, `room-signal`,
+`room-data`, `room-close`) and the account (`user-change`, `logout`). A module
+listens for the ones it is in the middle of rather than the transport holding
+state about them, so a new push is a line in that set and a listener in the
+module it concerns.
 
 `createPairCode`/`deletePairCode` are the connection code the share flow hands
 out, and `pairRequest`/`pairAccept`/`pairReject` are the join attempt it
@@ -642,8 +647,9 @@ navigates with `isConnecting` instead (`navigate(path, params)`; the params are
 gone after a reload, which is right - so is the pairing). `/room` typed by hand is
 neither, and is the bar with nothing in front of it.
 
-`setConnecting(false)` is what ends the wait, and nothing calls it yet - the
-thing that would is the stream.
+`setConnecting(false)` is what ends the wait, and the room's `connected` event
+is what calls it (`onRoomConnected`, which also draws the relay indicator) - the
+other end is there, and the picture is what is missing now, not the path to it.
 
 **An accepted request now moves both sides, and they move to different places.**
 The peer goes into the room it was asking for (`room/joining`, which handles the
@@ -790,6 +796,14 @@ share with the menu dialog), and the registry hands each module's
   against, which serves the matching download. A browser tab has nothing to
   install, so it keeps its translated message and the user is sent to whoever
   runs the server.
+- **The desktop shell's libs are loaded by path, once.** `src/desktop.js` asks
+  the main process for the app path and `require()`s the three libs from it -
+  `auto-launch` and `ffmpeg-chunkifier` from the shell's own `libs/`, the
+  `easy-control.node` addon from the native folder that the build lays beside it
+  - onto `ctx["desktop"]`, and then sets `globalThis.require` to `undefined`, so
+  nothing that runs after boot can reach Node whatever it was handed. Anything
+  the desktop needs from Node is either on `ctx["desktop"]` already or goes
+  through `ipcRenderer` to `main.js`.
 - **The locked exit shortcuts** (ESC, and F11 in a browser) are the platform's
   own and cannot be edited or removed, so the row says so in a beercss tooltip
   rather than only greying its controls. A tooltip is shown by `:hover` on its
@@ -799,16 +813,22 @@ share with the menu dialog), and the registry hands each module's
 
 ## What is not wired yet
 
-The pairing, join and account flows are live, account deletion included; what
-is still cut out of the server is the WebRTC signaling relay, and the UI for it
-is present but inert. Each piece is planned under `dev/plans/`. The previous client
-implementation is at commit `da3921d`, and it read message types the server no
-longer serves — do not paste it back untouched.
+The pairing, join, room and account flows are live, account deletion and the
+relayed connection included; what nothing does yet is carry media. The server
+side of that is in `handlers/rooms.js` and the negotiation is proved on both
+legs (see The connection); what is left is what the two ends *do* with the
+connection once it stands, which `dev/plans/ws-pairing-joins.md` describes. The
+previous client implementation is at commit `da3921d`, and it read message types
+the server no longer serves — do not paste it back untouched.
 
 | Module | Waiting on |
 | --- | --- |
 | `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, both screens carry the settings and the confirmed delete on every card, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
 | `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
 
-`management/search` is a separate case: the field it mirrors and the button that
-opens it are both still commented out in the shell markup, so nothing opens it.
+Two modules are markup with nothing behind them. `management/search`: the field
+it mirrors and the button that opens it are both still commented out in the
+shell markup, so nothing opens it. `room/settings` (`room-settings`): the
+dialog a host would set what it shares and under what name in, an empty
+`Dialog` subclass today — the host's half of the room is not built, and the
+name a share carries lives in `management/connection` for now.
