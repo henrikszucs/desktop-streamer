@@ -19,8 +19,8 @@
  * layer index.html starts with. Order cannot carry the stacking any more, so
  * it is written down here: the bars stay under the overlay, every dialog sits
  * over it, the confirmation - only ever opened nested, over whatever dialog is
- * asking - over every other dialog, and the loading layer is over all of it,
- * snackbars included.
+ * asking - brings an overlay of its own over every other dialog and stands on
+ * that, and the loading layer is over all of it, snackbars included.
  */
 #dialog-overlay {
     z-index: 101;
@@ -30,8 +30,12 @@ dialog {
     z-index: 102;
 }
 
-#dialog-confirm {
+#dialog-confirm-overlay {
     z-index: 103;
+}
+
+#dialog-confirm {
+    z-index: 104;
 }
 
 #dialog-loading {

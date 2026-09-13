@@ -223,6 +223,8 @@ row follows a language change like the rest of the bar — unless the guest gave
 itself one in the account dialog, which is kept on its row (`name`, beside the
 joins) and shown as text instead.
 
+The confirm dialog carries an overlay of its own (`#dialog-confirm-overlay`, mounted from its `view.html` beside the dialog and toggled in `show()`/`hide()`): it is only ever opened nested, and the shared overlay is already held by the dialog asking and sits *under* it, so without one the question and the dialog behind it would stand side by side with nothing to say which is live. A click on it is a no, like a click on the shared overlay for any other dialog; `index.css` stacks it over every dialog and the question over it.
+
 The guest's sign out cannot be taken back, so `logout()` in `nav-top` asks
 through the confirm dialog first, and a yes is three things: the row dropped,
 `joins.reset()` — the memory records cleared and `join-disconnect` sent, since
@@ -236,7 +238,7 @@ wait under the loading layer.
 
 The account dialog is not the same column for every user. `open()` asks
 `permissions.isGuest()` and shows the buttons marked with that `data-user`: the
-guest has its name (`account.guest`) and a delete (`account.reset`) that is the
+guest has its name (`account.guest`, the *Name* button — the field opens on the name the bar shows, the localized "Guest" when the row has none, and saving that default back keeps the row empty so the name goes on following the language) and a delete (`account.reset`) that is the
 bar's `logout()` reached through `loadModule("nav-top")` — one call, so the
 menu's sign out and the dialog's delete cannot drift apart — where an account
 has the information, sessions and delete windows. The guest's name window
@@ -249,6 +251,8 @@ refills the fields while the window is open. `sessions` lists
 a row is one of two things: on this device it is the bar's `logout()` again,
 on another it is `endSession()` and the row goes. `delete` is still inert — the
 mail behind it is not built.
+
+The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
 
 `OLD_GUEST_TABLE` is dropped on every open; a client that ran the two-table build
 still carries it. Dropping a table that is not there is free, so it costs a

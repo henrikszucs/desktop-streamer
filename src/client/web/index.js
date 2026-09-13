@@ -5,7 +5,7 @@
 
 // first-party dependencies
 import { domReady } from "./src/env.js";
-import { conf, confLoad, setLocal, getUser, setUser, resetUser } from "./src/conf.js";
+import { conf, confLoad, setLocal, resetLocal, getUser, setUser, resetUser } from "./src/conf.js";
 import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
 import { createJoins } from "./src/joins.js";
@@ -13,7 +13,7 @@ import { createAccount } from "./src/account.js";
 import { createRoom } from "./src/room.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
-import { applyScale, applyTheme, applyLanguage, createUI, buildUI } from "./ui/ui.js";
+import { applyScale, applyLocal, createUI, buildUI } from "./ui/ui.js";
 
 const main = async function() {
     // the environment - the size of the UI first, before anything is drawn at
@@ -31,12 +31,7 @@ const main = async function() {
     //
     // the configuration, applied
     //
-    applyTheme(conf["local"]);
-    const lang = applyLanguage(conf["local"]);
-    if (desktop.isAvailable) {
-        desktop.ipcRenderer.invoke("api", "set-lang", lang);
-        desktop.ipcRenderer.send("api", "set-tray", conf["local"]["minimizing"]);
-    }
+    applyLocal(conf["local"], desktop);
 
     //
     // the shell
@@ -54,6 +49,7 @@ const main = async function() {
         "localization": localization,
         "desktop": desktop,
         "setLocal": setLocal,
+        "resetLocal": resetLocal,
         "getUser": getUser,
         "setUser": setUser,
         "resetUser": resetUser,

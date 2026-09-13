@@ -46,6 +46,19 @@ const applyLanguage = function(local) {
     return lang;
 };
 
+// the whole of the local configuration, applied: the theme, the language, and
+// what the desktop shell is told of them. Boot does it once, and the settings
+// reset does it again, so the defaults land the way any value does.
+const applyLocal = function(local, desktop) {
+    applyTheme(local);
+    const lang = applyLanguage(local);
+    if (desktop?.["isAvailable"] === true) {
+        desktop["ipcRenderer"].invoke("api", "set-lang", lang);
+        desktop["ipcRenderer"].send("api", "set-tray", local["minimizing"]);
+    }
+    return lang;
+};
+
 // how long a snackbar stands before it takes itself off screen
 const SNACKBAR_TIMEOUT = 6000;
 
@@ -157,6 +170,8 @@ const createUI = function(ctx) {
         "closeDialogs": function() { return ctx["router"].closeDialogs(); },
         // the open route again, for a screen whose records changed under it
         "reload": function() { return ctx["router"].loadPath(); },
+        // the local configuration applied again, for a reset of it
+        "applyLocal": function() { return applyLocal(ctx["conf"]["local"], ctx["desktop"]); },
 
         // the one question asked before something is undone for good, answered
         // true or false. It opens nested - whatever asked it is still behind it
@@ -200,5 +215,5 @@ const buildUI = async function(router) {
     }
 };
 
-export { applyScale, applyTheme, applyLanguage, createSnackbar, createUI, buildUI };
-export default { applyScale, applyTheme, applyLanguage, createSnackbar, createUI, buildUI };
+export { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
+export default { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };

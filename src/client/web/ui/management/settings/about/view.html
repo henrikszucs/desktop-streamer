@@ -19,5 +19,22 @@
 
             <span class="error-text hide" id="about-control">&bull;<span data-localization="settings.about.control-share">Control share: not supported</span></span>
         </fieldset>
+        <!--
+            Every local setting back to its default - the appearance, the
+            language, the tray and the exit shortcuts. Who this client is
+            signed in as is not a setting and stays. Asked about first, and
+            applied in place through ui.applyLocal(), the same call boot
+            applies them with - see index.js.
+        -->
+        <fieldset class="about-box">
+            <legend data-localization="settings.about.reset-title">Reset settings</legend>
+            <p data-localization="settings.about.reset-hint">Every setting of this application on this device goes back to its default. Accounts and remembered connections are kept.</p>
+            <nav class="center-align">
+                <button class="border" id="btn-about-reset">
+                    <i>restart_alt</i>
+                    <span data-localization="settings.about.reset">Reset to defaults</span>
+                </button>
+            </nav>
+        </fieldset>
     </div>
 </div>

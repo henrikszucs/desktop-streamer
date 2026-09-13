@@ -2,8 +2,8 @@
     "account": {
         "guest": {
             "title": {
-                "en": "Guest",
-                "hu": "Vendég"
+                "en": "Name",
+                "hu": "Név"
             },
             "hint": {
                 "en": "The guest is this device alone. The name is kept here and reaches no server; signing out forgets it with everything else.",

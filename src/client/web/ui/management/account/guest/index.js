@@ -3,6 +3,11 @@
 // what the guest can say about itself: a name, on its own row in the local
 // database. There is no account behind the guest, so nothing here reaches the
 // server - the bar's user menu is what reads it back.
+//
+// The field opens on the name the bar shows - the one on the row, or the
+// localized "Guest" when there is none - so what is edited is what is seen.
+// Saving that default back, or nothing, keeps the row empty rather than
+// writing the word in, so the name goes on following the language.
 
 // first-party dependencies
 import { Panel } from "../../../../src/view.js";
@@ -27,13 +32,19 @@ const GuestWindow = class extends Panel {
         });
     };
 
+    // the localized default, the name of a guest that gave itself none
+    defaultName() {
+        return this.ctx["localization"].get("main.guest");
+    };
+
     // the row keeps the joins beside the name, so it is read and written whole
     async save() {
         const ctx = this.ctx;
         const localization = ctx["localization"];
         try {
             const user = await ctx["getUser"](GUEST_ID);
-            user["name"] = this.nameInput.value.trim();
+            const name = this.nameInput.value.trim();
+            user["name"] = (name === this.defaultName() ? "" : name);
             await ctx["setUser"](GUEST_ID, user);
             const navTop = await ctx["ui"].loadModule("nav-top");
             await navTop.refresh();
@@ -48,9 +59,11 @@ const GuestWindow = class extends Panel {
         super.open(params);
         this.nameInput.value = "";
         this.ctx["getUser"](GUEST_ID).then((user) => {
-            if (this.el.classList.contains("hide") === false) {
-                this.nameInput.value = typeof user["name"] === "string" ? user["name"] : "";
+            if (this.el.classList.contains("hide") === true) {
+                return;
             }
+            const name = typeof user["name"] === "string" ? user["name"].trim() : "";
+            this.nameInput.value = (name !== "" ? name : this.defaultName());
         });
     };
     close() {

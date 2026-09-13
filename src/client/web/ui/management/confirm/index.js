@@ -28,6 +28,11 @@ const ConfirmDialog = class extends Dialog {
     async mount(ctx) {
         this.message = document.getElementById("dialog-confirm-message");
         this.acceptLabel = document.getElementById("btn-confirm-accept-label");
+        this.overlay = document.getElementById("dialog-confirm-overlay");
+
+        this.overlay.addEventListener("click", () => {
+            this.requestClose();
+        });
 
         document.getElementById("btn-confirm-close").addEventListener("click", () => {
             this.requestClose();
@@ -63,6 +68,16 @@ const ConfirmDialog = class extends Dialog {
         this.setText(this.message, params?.["message"] ?? "");
         this.setText(this.acceptLabel, params?.["confirm"] ?? DEFAULT_CONFIRM);
         super.open(params);
+    };
+
+    // the dialog's own overlay comes and goes with it, over whatever asked
+    show() {
+        super.show();
+        this.overlay.classList.add("active");
+    };
+    hide() {
+        super.hide();
+        this.overlay.classList.remove("active");
     };
 
     // closing is also how the question ends from somewhere else - a navigation,

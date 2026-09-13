@@ -83,6 +83,26 @@ const setLocal = async function(key, value, stored=value) {
     await IDB.RowSet(table(CONF_TABLE), [[key, stored]]);
 };
 
+// the keys that are who this client is rather than how it is set up: a reset
+// of the settings leaves them alone, since signing out is its own action
+const IDENTITY_KEYS = new Set(["accounts", "userId"]);
+
+// every setting back to its default, on disk and in memory. Applying them -
+// the theme, the language, the tray - is applyLocal() in ui/ui.js, the same
+// call boot makes, so the caller runs that after this.
+const resetLocal = async function() {
+    const rows = [];
+    for (const key of Object.keys(LOCAL_DEFAULTS)) {
+        if (IDENTITY_KEYS.has(key) === true) {
+            continue;
+        }
+        const stored = LOCAL_DEFAULTS[key];
+        conf["local"][key] = (key === "exitShortcuts" ? JSON.parse(stored) : stored);
+        rows.push([key, stored]);
+    }
+    await IDB.RowSet(table(CONF_TABLE), rows);
+};
+
 // the records of one user, one row each and the guest under GUEST_ID - a user
 // nothing was stored for reads back as an empty record rather than as a row
 const getUser = async function(id=GUEST_ID) {
@@ -129,5 +149,5 @@ const resetUser = async function(id=GUEST_ID) {
     await IDB.RowDel(table(USER_TABLE), [id]);
 };
 
-export { conf, confLoad, table, setLocal, getUser, setUser, resetUser, getJoins, setJoin, removeJoin, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
-export default { conf, confLoad, table, setLocal, getUser, setUser, resetUser, getJoins, setJoin, removeJoin, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
+export { conf, confLoad, table, setLocal, resetLocal, getUser, setUser, resetUser, getJoins, setJoin, removeJoin, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
+export default { conf, confLoad, table, setLocal, resetLocal, getUser, setUser, resetUser, getJoins, setJoin, removeJoin, GUEST_ID, DATABASE, CONF_TABLE, USER_TABLE };
