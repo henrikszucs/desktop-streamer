@@ -9,7 +9,7 @@
 // clients are told this number - the one waiting draws a bar that runs out, the
 // one deciding draws the same bar on the button that happens by itself - so
 // neither side is watching a spinner that means nothing. Silence is a rejection.
-const ANSWER_TIMEOUT = 5000;
+const ANSWER_TIMEOUT = 10000;
 
 // a client that is already gone is not an error worth failing a call over, so
 // this reports rather than throws
