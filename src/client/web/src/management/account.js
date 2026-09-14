@@ -43,6 +43,7 @@ const createAccount = function(ctx) {
             "firstName": user["firstName"] ?? "",
             "lastName": user["lastName"] ?? "",
             "picture": user["picture"] ?? "",
+            "isRelayAllowed": user["isRelayAllowed"] === true,
             "sessionId": answer["sessionId"],
             "sessionKey": sessionKey
         };

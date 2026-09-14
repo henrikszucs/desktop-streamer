@@ -114,15 +114,18 @@ const generateUnique = async function(db, table, column) {
     return undefined;
 };
 
-// a users row in the words the client reads: never the row itself, since what
-// is on it is this server's business (the relay flag) rather than the user's
+// a users row in the words the client reads: never the row itself. The relay
+// flag is this server's decision and is checked here per message, but it is
+// told, so a client can grey the fallback out rather than wait on one it has
+// not got.
 const profileOf = function(row, picture) {
     return {
         "userId": row["user_id"],
         "email": row["email"],
         "firstName": row["first_name"] ?? "",
         "lastName": row["last_name"] ?? "",
-        "picture": picture ?? ""
+        "picture": picture ?? "",
+        "isRelayAllowed": isTrue(row["is_relay_allowed"])
     };
 };
 

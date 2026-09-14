@@ -55,6 +55,14 @@
         "failed": {
             "en": "The connection could not be saved.",
             "hu": "A kapcsolatot nem sikerült menteni."
+        },
+        "removed": {
+            "en": "The other device deleted this connection.",
+            "hu": "A másik eszköz törölte ezt a kapcsolatot."
+        },
+        "ended": {
+            "en": "The other device ended the connection.",
+            "hu": "A másik eszköz lezárta a kapcsolatot."
         }
     }
 }

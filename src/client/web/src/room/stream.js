@@ -11,13 +11,16 @@
 // hands in is the canvas to draw on and what the bar asked for.
 //
 // Over the control channel (room.send / room "message"), peer to host:
-//     {"kind": "settings", "isAudio", "bandwidth", "height", "framerate"}
+//     {"kind": "settings", "isAudio", "bandwidth", "height", "framerate", "screenIndex"}
 //     {"kind": "keyframe"}
 //     {"kind": "control", "isControl"}
 //     {"kind": "input", "events": [...]}          see stream-input.js
 // and host to peer:
-//     {"kind": "share", "width", "height", "isControl"}
+//     {"kind": "share", "width", "height", "isAudio", "isControl", "screens", "screenIndex"}
 //     {"kind": "share-end"}
+// `screens` is the host's displays as it lists them ({width, height,
+// isPrimary} each, in the order a screenIndex names them) - empty for a web
+// host, whose picker chose - and `screenIndex` the one the picture is of.
 // Over the video channel (room.sendFrame / room "frame"): frame.js chunks.
 
 // first-party dependencies
@@ -26,8 +29,15 @@ import { buildLines, CODEC } from "./stream-ffmpeg.js";
 import { createInput } from "./stream-input.js";
 
 // what the host runs at before the peer says anything: the room bar's own
-// defaults, so the first frames are what the bar shows
+// defaults, so the first frames are what the bar shows. No screenIndex: the
+// primary display until the peer names another.
 const DEFAULT_SETTINGS = {"isAudio": true, "bandwidth": 8, "height": 1080, "framerate": 30};
+
+// the display a peer may ask for: an index into the host's list, or nothing
+// for the primary one - anything else is read as nothing
+const screenIndexOf = function(value) {
+    return (Number.isInteger(value) && value >= 0 ? value : undefined);
+};
 
 // the frame rates a peer may ask for, and the rate anything else is read as
 const FRAMERATES = [24, 30, 45, 60, 120];
@@ -239,6 +249,13 @@ const createDesktopEncoder = function(ctx) {
         "onEnd": function() {}
     };
 
+    // the displays as easy-control lists them, in the words the peer is told
+    const listScreens = function() {
+        return desktop["Control"]["Screen"].list().map(function(screen) {
+            return {"width": screen["width"], "height": screen["height"], "isPrimary": screen["isPrimary"] === true};
+        });
+    };
+
     // the display shared, as easy-control lists them: the one asked for, or
     // the primary one
     const screenOf = function(wantedIndex) {
@@ -284,6 +301,7 @@ const createDesktopEncoder = function(ctx) {
         const own = ++generation;
         const screen = screenOf(settings["screenIndex"]);
         api.screen = screen;
+        api.screens = listScreens();
         const built = buildLines(desktop["os"].platform(), screen, {
             "bitrate": settings["bandwidth"] * 1000000 * VIDEO_SHARE,
             "height": settings["height"],
@@ -350,7 +368,7 @@ const createDesktopEncoder = function(ctx) {
                 return;
             }
             if (wanted["bandwidth"] === settings["bandwidth"] && wanted["height"] === settings["height"]
-                && wanted["framerate"] === settings["framerate"]) {
+                && wanted["framerate"] === settings["framerate"] && wanted["screenIndex"] === settings["screenIndex"]) {
                 return;
             }
             settings = {...wanted};
@@ -617,8 +635,11 @@ const createWebEncoder = function() {
         "requestKeyframe": function() {
             isKeyWanted = true;
         },
+        // whether the display picked shares its sound. Asked of the stream and
+        // not of the encoder: the share message goes out on the video
+        // configuration, which is before the audio encoder exists
         "hasAudio": function() {
-            return audioEncoder !== null;
+            return (stream?.getAudioTracks?.() ?? []).length > 0;
         }
     });
 };
@@ -822,6 +843,18 @@ const createStream = function(ctx) {
     //
     // the host
     //
+    // what the host is sharing, for the peer's bar: the picture, and whether
+    // there is sound and a keyboard to take with it - a button for what the
+    // host has not got is greyed rather than left to do nothing
+    const shareMessage = function() {
+        return {
+            "kind": "share",
+            ...hostInfo,
+            "isAudio": encoder?.hasAudio?.() === true,
+            "isControl": control?.isAvailable() === true
+        };
+    };
+
     const startHost = async function() {
         if (role !== "") {
             await stop();
@@ -832,11 +865,23 @@ const createStream = function(ctx) {
         audioConfig = null;
         const desktop = ctx["desktop"];
         encoder = (desktop.isAvailable === true ? createDesktopEncoder(ctx) : createWebEncoder());
+        // every start of the encoder - the first and each restart - says what
+        // it is showing: the picture, and which of the host's displays it is
+        // of, so the peer's bar can offer the others. The control follows it,
+        // since the mouse is mapped into the display being shared.
         encoder.onConfig = function(config) {
             videoConfig = config;
-            hostInfo = {"width": config["codedWidth"], "height": config["codedHeight"]};
+            hostInfo = {
+                "width": config["codedWidth"],
+                "height": config["codedHeight"],
+                "screens": encoder?.screens ?? [],
+                "screenIndex": encoder?.screen?.["index"]
+            };
+            if (desktop.isAvailable === true && typeof encoder?.screen !== "undefined") {
+                control?.start(encoder.screen);
+            }
             if (room().isConnected() === true) {
-                say({"kind": "share", ...hostInfo, "isControl": control?.isAvailable() === true});
+                say(shareMessage());
             }
         };
         encoder.onChunk = onVideoChunk;
@@ -855,9 +900,6 @@ const createStream = function(ctx) {
             await encoder.start(settings);
             if (role !== "host") {
                 return;     // stopped while the picker was open
-            }
-            if (desktop.isAvailable === true && typeof encoder?.screen !== "undefined") {
-                control.start(encoder.screen);
             }
             startStats();
             emit("started", {"role": role});
@@ -1061,7 +1103,8 @@ const createStream = function(ctx) {
                         "isAudio": message["isAudio"] !== false,
                         "bandwidth": Number(message["bandwidth"]) || DEFAULT_SETTINGS["bandwidth"],
                         "height": Number(message["height"]) || DEFAULT_SETTINGS["height"],
-                        "framerate": framerateOf(message["framerate"])
+                        "framerate": framerateOf(message["framerate"]),
+                        "screenIndex": screenIndexOf(message["screenIndex"])
                     };
                     encoder?.setSettings(settings);
                     break;
@@ -1111,6 +1154,8 @@ const createStream = function(ctx) {
                 isControlWanted = false;
                 say({"kind": "control", "isControl": false});
                 emit("control", {"isControl": false});
+            }, function(delay) {
+                emit("hold", {"delay": delay});
             });
         },
 
@@ -1121,7 +1166,8 @@ const createStream = function(ctx) {
                 "isAudio": wanted?.["isAudio"] !== false,
                 "bandwidth": Number(wanted?.["bandwidth"]) || settings["bandwidth"],
                 "height": Number(wanted?.["height"]) || settings["height"],
-                "framerate": framerateOf(wanted?.["framerate"] ?? settings["framerate"])
+                "framerate": framerateOf(wanted?.["framerate"] ?? settings["framerate"]),
+                "screenIndex": screenIndexOf(wanted?.["screenIndex"])
             };
             audioPlayer?.setMuted(settings["isAudio"] === false);
             if (role === "peer") {

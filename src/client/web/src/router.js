@@ -183,13 +183,15 @@ const Router = class extends EventTarget {
     //
     // the URL
     //
-    // the path the location holds, normalized to a route the shell can answer
-    routeOf(pathname) {
+    // the path the location holds, normalized to a route the shell can answer.
+    // `params` is what the flow that navigates knows (see loadPath).
+    routeOf(pathname, params) {
         let path = (pathname || "/").slice(1).split("/");
         if (SCREEN_ROUTES.includes(path[0]) === true) {
             path = [path[0]];
         } else if (DEEP_ROUTES.includes(path[0]) === true) {
-            path = [path[0], path[1]];
+            // the id only when there is one, so a bare route is not "room/"
+            path = ((path[1] ?? "") !== "" ? [path[0], path[1]] : [path[0]]);
         } else {
             path = [""];
         }
@@ -198,10 +200,32 @@ const Router = class extends EventTarget {
         if (path[0] === "services" && typeof this.ctx["conf"]["remote"]?.["serviceSharing"] === "undefined") {
             path = [""];
         }
+        if (path[0] === "room" && this.isRoomRoute(path[1], params) === false) {
+            path = [""];
+        }
         if (path[0] === "") {
             path = [DEFAULT_ROUTE];
         }
         return path;
+    };
+
+    // The room is not an address: it is the screen of a connection, and a path
+    // into it is answered only while there is one. A flow that is entering it
+    // says so (`isConnecting`, and the path is the flow's own), and a room that
+    // stands is reachable on its own path alone - `room/<joinId>` for one on a
+    // remembered device, bare `room` for one on a pairing that was not - so
+    // `/room` typed in, a stale bookmark, a reload of a room that died with it,
+    // or the right screen with the wrong id all land on the default screen
+    // rather than on a bar with nothing in front of it.
+    isRoomRoute(joinId, params) {
+        if (params?.["isConnecting"] === true) {
+            return true;
+        }
+        const room = this.ctx["room"];
+        if (typeof room?.getRoomKey !== "function" || room.getRoomKey() === "") {
+            return false;
+        }
+        return (joinId ?? "") === (room.getJoinId() ?? "");
     };
 
     // both hand back the promise of the screen being open, so boot can wait for
@@ -213,7 +237,7 @@ const Router = class extends EventTarget {
     // not in the history: a reload is the path alone, which is the only thing
     // that survives one.
     loadPath(params) {
-        const path = this.routeOf(window.location.pathname);
+        const path = this.routeOf(window.location.pathname, params);
         window.history.replaceState({}, "", "/" + path.join("/"));
         return this.openScreen(path[0], {...params, "path": path.slice(1)});
     };

@@ -77,8 +77,12 @@ const RoomScreen = class extends Screen {
 
     // the stage and the bar over it, all taken in mount()
     canvas = null;
+    stage = null;
+    exitRing = null;
     bar = null;
-    relayChip = null;
+    relayBtn = null;
+    relayIcon = null;
+    relayTooltip = null;
     statsEl = null;
     audioBtn = null;
     audioIcon = null;
@@ -89,6 +93,9 @@ const RoomScreen = class extends Screen {
     bandwidthBtn = null;
     bandwidthLabel = null;
     bandwidthMenu = null;
+    screenBtn = null;
+    screenLabel = null;
+    screenMenu = null;
     resolutionBtn = null;
     resolutionLabel = null;
     resolutionMenu = null;
@@ -98,17 +105,41 @@ const RoomScreen = class extends Screen {
     fullscreenIcon = null;
     fullscreenTooltip = null;
 
-    // the whole of what this bar decides, and what the `settings` event carries
+    // the whole of what this bar decides, and what the `settings` event carries.
+    // No screenIndex until the peer chose one: the host shows its primary
+    // display until it is asked for another.
     settings = {
         "isAudio": true,
         "isControl": false,
         "bandwidth": DEFAULT_BANDWIDTH,
         "resolution": AUTO,
-        "framerate": DEFAULT_FRAMERATE
+        "framerate": DEFAULT_FRAMERATE,
+        "screenIndex": undefined
     };
+
+    // what the host said it has (the stream's "share" event): its displays,
+    // and which of them the picture is of. The menu is drawn from this and
+    // nothing else, so a host with one display gets no menu at all.
+    screens = [];
+    screenIndex = undefined;
+
+    // whether the relay is there for this user at all - asked of the room,
+    // which answers for the guest and for an account alike
+    isRelayAllowed = false;
+
+    // what the host has to offer besides the picture (the "share" message):
+    // sound, and a keyboard and mouse to take. A button for what it has not
+    // got is greyed, and nothing until a share has said.
+    isAudioAvailable = false;
+    isControlAvailable = false;
+
+    // the exit ring's clock, while a shortcut is held
+    holdFrameId = -1;
 
     async mount(ctx) {
         this.canvas = document.getElementById("room-canvas");
+        this.stage = document.getElementById("room-stage");
+        this.exitRing = document.getElementById("room-exit-ring");
         this.statsEl = document.getElementById("room-stats");
 
         this.audioBtn = document.getElementById("btn-room-audio");
@@ -120,6 +151,9 @@ const RoomScreen = class extends Screen {
         this.bandwidthBtn = document.getElementById("btn-room-bandwidth");
         this.bandwidthLabel = document.getElementById("room-bandwidth-label");
         this.bandwidthMenu = document.getElementById("room-bandwidth-menu");
+        this.screenBtn = document.getElementById("btn-room-screen");
+        this.screenLabel = document.getElementById("room-screen-label");
+        this.screenMenu = document.getElementById("room-screen-menu");
         this.resolutionBtn = document.getElementById("btn-room-resolution");
         this.resolutionLabel = document.getElementById("room-resolution-label");
         this.resolutionMenu = document.getElementById("room-resolution-menu");
@@ -128,14 +162,25 @@ const RoomScreen = class extends Screen {
         this.framerateMenu = document.getElementById("room-framerate-menu");
         this.fullscreenIcon = document.getElementById("btn-room-fullscreen-icon");
         this.fullscreenTooltip = document.getElementById("btn-room-fullscreen-tooltip");
-        this.relayChip = document.getElementById("room-relay");
+        this.relayBtn = document.getElementById("btn-room-relay");
+        this.relayIcon = document.getElementById("btn-room-relay-icon");
+        this.relayTooltip = document.getElementById("btn-room-relay-tooltip");
         this.bar = this.el.querySelector(".room-bar");
 
+        // the switch between the two paths - see toggleRelay()
+        this.relayBtn.addEventListener("click", () => {
+            this.toggleRelay();
+        });
+
         this.audioBtn.addEventListener("click", () => {
-            this.setAudio(this.settings["isAudio"] === false);
+            if (this.isAudioAvailable === true) {
+                this.setAudio(this.settings["isAudio"] === false);
+            }
         });
         this.controlBtn.addEventListener("click", () => {
-            this.setControl(this.settings["isControl"] === false);
+            if (this.isControlAvailable === true) {
+                this.setControl(this.settings["isControl"] === false);
+            }
         });
         document.getElementById("btn-room-fullscreen").addEventListener("click", () => {
             this.toggleFullscreen();
@@ -154,6 +199,7 @@ const RoomScreen = class extends Screen {
         // room, which is before this screen is on it - see src/room/room.js.
         ctx["room"].addEventListener("connected", this.onRoomConnected);
         ctx["room"].addEventListener("closed", this.onRoomClosed);
+        ctx["room"].addEventListener("direct", this.onRoomDirect);
 
         // the picture: the stream draws on this canvas from now on, and says
         // once a second what it is drawing. The control it takes back on the
@@ -162,16 +208,21 @@ const RoomScreen = class extends Screen {
         ctx["stream"].addEventListener("stats", this.onStreamStats);
         ctx["stream"].addEventListener("control", this.onStreamControl);
         ctx["stream"].addEventListener("share", this.onStreamShare);
+        ctx["stream"].addEventListener("hold", this.onStreamHold);
 
         this.buildBandwidthMenu();
         this.buildResolutionMenu();
         this.buildFramerateMenu();
+        this.buildScreenMenu();
         this.setAudio(this.settings["isAudio"]);
         this.setControl(this.settings["isControl"]);
         this.drawBandwidth();
         this.drawResolution();
         this.drawFramerate();
+        this.drawScreen();
         this.drawFullscreen();
+        this.drawAvailable();
+        this.drawRelay(false);
     };
 
     //
@@ -222,6 +273,25 @@ const RoomScreen = class extends Screen {
         }
     };
 
+    // the host's displays, one row each, from what the host last said it has.
+    // Rebuilt on every "share" rather than once, since a display can be
+    // plugged in or pulled while the room stands, and the host says so at its
+    // next restart.
+    buildScreenMenu() {
+        this.screenMenu.innerHTML = "";
+        for (let index = 0; index < this.screens.length; index++) {
+            const item = document.createElement("li");
+            item.appendChild(this.buildCheck());
+            item.appendChild(this.buildText(this.screenText(index)));
+            item.addEventListener("click", () => {
+                this.blur(this.screenBtn);
+                this.setScreen(index);
+            });
+            this.screenMenu.appendChild(item);
+            item.dataset["screen"] = String(index);
+        }
+    };
+
     buildFramerateMenu() {
         this.framerateMenu.innerHTML = "";
         for (const framerate of FRAMERATES) {
@@ -267,6 +337,18 @@ const RoomScreen = class extends Screen {
         );
     };
 
+    // a display by its place in the host's list, counted from one, and the
+    // primary one said to be: the numbers are the host's own order, which is
+    // the one thing the peer and the host can both point at
+    screenText(index) {
+        const screen = this.screens[index];
+        const key = (screen?.["isPrimary"] === true ? "room.screen.primary" : "room.screen.value");
+        return this.ctx["localization"].putParameters(
+            this.ctx["localization"].get(key),
+            new Map([["value", String(index + 1)]])
+        );
+    };
+
     // a beercss menu stands while its holder has the focus, so a choice is only
     // taken once the holder gives it up - the router does the same for a route
     blur(holder) {
@@ -309,7 +391,7 @@ const RoomScreen = class extends Screen {
 
         const localization = this.ctx["localization"];
         this.audioIcon.innerText = (isAudio === true ? "volume_up" : "volume_off");
-        this.audioBtn.classList.toggle("active", isAudio === true);
+        this.audioBtn.classList.toggle("active", isAudio === true && this.isAudioAvailable === true);
         this.audioTooltip.innerText = localization.get(isAudio === true ? "room.audio.mute" : "room.audio.unmute");
         this.emit();
     };
@@ -323,7 +405,7 @@ const RoomScreen = class extends Screen {
 
         const localization = this.ctx["localization"];
         this.controlIcon.innerText = (isControl === true ? "hand_gesture" : "hand_gesture_off");
-        this.controlBtn.classList.toggle("active", isControl === true);
+        this.controlBtn.classList.toggle("active", isControl === true && this.isControlAvailable === true);
         this.controlTooltip.innerText = localization.get(isControl === true ? "room.control.release" : "room.control.take");
         this.el.classList.toggle("room-controlling", isControl === true);
         this.ctx["stream"].setControl(isControl === true);
@@ -350,15 +432,74 @@ const RoomScreen = class extends Screen {
     };
 
     // the host started or stopped sharing: a host that stops while the room
-    // stands leaves the last picture and says so
+    // stands leaves the last picture and says so. What it is sharing comes
+    // with the start - its displays, and which the picture is of - and the
+    // bar's screen entry is drawn from that: shown for more than one, and
+    // marking the one the host reports rather than the one that was asked
+    // for, since the host is the one that knows.
     onStreamShare = (event) => {
+        const info = event.detail;
+        this.screens = (Array.isArray(info?.["screens"]) ? info["screens"] : []);
+        this.screenIndex = (Number.isInteger(info?.["screenIndex"]) ? info["screenIndex"] : undefined);
+        this.buildScreenMenu();
+        this.drawScreen();
+        this.setAvailable(info?.["isAudio"] === true, info?.["isControl"] === true);
+
         if (this.isOpen === false) {
             return;
         }
-        if (event.detail === null) {
+        if (info === null) {
             this.statsEl.innerText = "";
             this.ctx["ui"].snackbar.show(this.ctx["localization"].get("room.share.ended"));
         }
+    };
+
+    // what the host has to offer, from its "share" message. A keyboard taken
+    // from a host that then says it has none is let go here, since the host
+    // has stopped listening for it either way.
+    setAvailable(isAudio, isControl) {
+        this.isAudioAvailable = (isAudio === true);
+        this.isControlAvailable = (isControl === true);
+        if (this.isControlAvailable === false && this.settings["isControl"] === true) {
+            this.setControl(false);
+        }
+        this.drawAvailable();
+    };
+
+    // the tooltip says why a greyed tool is greyed, and what a live one does.
+    // A greyed tool is never lit: the sound is "on" by default, and a lit
+    // button that cannot be pressed reads as a setting rather than a refusal.
+    drawAvailable() {
+        const localization = this.ctx["localization"];
+        this.audioBtn.classList.toggle("room-tool-off", this.isAudioAvailable === false);
+        this.controlBtn.classList.toggle("room-tool-off", this.isControlAvailable === false);
+        this.audioBtn.classList.toggle("active", this.settings["isAudio"] === true && this.isAudioAvailable === true);
+        this.controlBtn.classList.toggle("active", this.settings["isControl"] === true && this.isControlAvailable === true);
+        this.audioTooltip.innerText = localization.get(this.isAudioAvailable === false ? "room.audio.none"
+            : (this.settings["isAudio"] === true ? "room.audio.mute" : "room.audio.unmute"));
+        this.controlTooltip.innerText = localization.get(this.isControlAvailable === false ? "room.control.none"
+            : (this.settings["isControl"] === true ? "room.control.release" : "room.control.take"));
+    };
+
+    // the exit shortcut being held: the ring fills over the delay, and goes
+    // the moment the hold ends - by firing or by a key changing
+    onStreamHold = (event) => {
+        cancelAnimationFrame(this.holdFrameId);
+        this.holdFrameId = -1;
+        const delay = event.detail?.["delay"];
+        if (typeof delay !== "number" || delay <= 0) {
+            this.exitRing.classList.add("hide");
+            return;
+        }
+        const start = performance.now();
+        const tick = () => {
+            const progress = Math.min(100, (performance.now() - start) / delay * 100);
+            this.exitRing.style.setProperty("--p", String(progress));
+            this.holdFrameId = (progress < 100 ? requestAnimationFrame(tick) : -1);
+        };
+        this.exitRing.style.setProperty("--p", "0");
+        this.exitRing.classList.remove("hide");
+        this.holdFrameId = requestAnimationFrame(tick);
     };
 
     // the line, and the cap that hangs off it: a picture the new bandwidth
@@ -407,9 +548,25 @@ const RoomScreen = class extends Screen {
         this.emit();
     };
 
+    // which of the host's displays to show. The label does not move yet: the
+    // host restarts its encoder on the new one and says so in its next
+    // "share", which is what the bar draws - so what is marked is what is on
+    // screen, and a display the host cannot open is never claimed to be.
+    setScreen(index) {
+        if (Number.isInteger(index) === false || index < 0 || index >= this.screens.length) {
+            return;
+        }
+        this.settings["screenIndex"] = index;
+        this.emit();
+    };
+
+    // the stage alone goes fullscreen - the picture, and none of the bar - so
+    // the way out is the exit shortcut: the browser's own Escape, or the hold
+    // (src/room/stream-input.js) while the keyboard is the host's, which lets
+    // the fullscreen go first and the keyboard on a second hold
     toggleFullscreen() {
         if (document.fullscreenElement === null) {
-            this.el.requestFullscreen?.().catch(function(error) {
+            this.stage.requestFullscreen?.().catch(function(error) {
                 console.error("Cannot open fullscreen:", error);
             });
             return;
@@ -458,6 +615,22 @@ const RoomScreen = class extends Screen {
         }
     };
 
+    // the entry is only there when there is a choice to make
+    drawScreen() {
+        const isChoice = (this.screens.length > 1);
+        this.screenBtn.classList.toggle("hide", isChoice === false);
+        if (isChoice === false) {
+            return;
+        }
+        const current = (Number.isInteger(this.screenIndex) ? this.screenIndex : 0);
+        this.screenLabel.innerText = this.screenText(current);
+        for (const item of this.screenMenu.children) {
+            const isCurrent = (item.dataset["screen"] === String(current));
+            item.classList.toggle("active", isCurrent);
+            item.children.item(0).classList.toggle("room-menu-unchecked", isCurrent === false);
+        }
+    };
+
     drawFramerate() {
         this.framerateLabel.innerText = this.framerateText(this.settings["framerate"]);
         for (const item of this.framerateMenu.children) {
@@ -491,7 +664,8 @@ const RoomScreen = class extends Screen {
             "isAutoResolution": (this.settings["resolution"] === AUTO),
             "resolution": resolution["id"],
             "height": resolution["height"],
-            "framerate": this.settings["framerate"]
+            "framerate": this.settings["framerate"],
+            "screenIndex": this.settings["screenIndex"]
         };
     };
 
@@ -502,18 +676,68 @@ const RoomScreen = class extends Screen {
         this.setConnecting(false);
     };
 
-    // what is carrying this room, and it is only said when it is the slow one:
-    // a direct connection is what everybody expects, and an indicator for the
-    // expected thing is one more light to learn to ignore
+    // what is carrying this room, and the switch: the server (lit), the two
+    // devices with the server there behind them (plain), or the two devices
+    // with nothing behind them for this user (disabled) - so a peer on a line
+    // that keeps dropping can see whether there is a fallback, and take it. A
+    // direct path being tried again from the relay turns the icon meanwhile.
+    // The permission is asked of the room every time, since who this client is
+    // can change between two rooms.
     drawRelay(isRelay) {
-        this.relayChip.classList.toggle("hide", isRelay !== true);
-        this.bar.classList.toggle("room-bar-relayed", isRelay === true);
+        const localization = this.ctx["localization"];
+        const room = this.ctx["room"];
+        this.isRelayAllowed = (room.isRelayAllowed() === true);
+        const isOn = (isRelay === true);
+        const isTrying = (isOn === true && room.isTryingDirect?.() === true);
+        const isOff = (isOn === false && this.isRelayAllowed === false);
+
+        this.relayIcon.innerText = (isTrying === true ? "sync" : (isOn === true ? "cloud" : "cloud_off"));
+        this.relayBtn.classList.toggle("room-relay-on", isOn);
+        this.relayBtn.classList.toggle("room-relay-trying", isTrying);
+        this.relayBtn.disabled = isOff;
+        this.relayTooltip.innerText = localization.get(isTrying === true ? "room.relay.trying"
+            : (isOn === true ? "room.relay.on" : (isOff === true ? "room.relay.off" : "room.relay.direct")));
+    };
+
+    // the switch itself: off the relay by trying the direct path again, or
+    // onto it. Only while the room stands - the wait before that has its own
+    // clock, which is what decides the path the first time.
+    toggleRelay() {
+        const room = this.ctx["room"];
+        if (room.isConnected() !== true) {
+            return;
+        }
+        if (room.isRelay() === true) {
+            room.useDirect();
+        } else {
+            room.useRelay();
+        }
+        this.drawRelay(room.isRelay());
+    };
+
+    // a retry started or ended: the button says which, and a retry that did
+    // not make it is said in words, since the button just looks as it did
+    onRoomDirect = (event) => {
+        this.drawRelay(this.ctx["room"].isRelay());
+        if (event.detail?.["isTrying"] === false && this.isOpen === true) {
+            this.ctx["ui"].snackbar.show(this.ctx["localization"].get("room.relay.failed"), true);
+        }
     };
 
     // and it is not there any more. The wait comes back rather than the screen
     // going: what happens next is the peer's to decide, and the quit button in
     // it is the way out - see ui/room/loading/.
     onRoomClosed = (event) => {
+        // the display chosen was chosen of *this* host: the next one is shown
+        // from its primary display like any first time
+        this.settings["screenIndex"] = undefined;
+        this.screens = [];
+        this.screenIndex = undefined;
+        this.buildScreenMenu();
+        this.drawScreen();
+        this.emit();
+        this.setAvailable(false, false);
+
         if (this.isOpen === false) {
             return;
         }
@@ -653,6 +877,7 @@ const RoomScreen = class extends Screen {
         if (this.settings["isControl"] === true) {
             this.setControl(false);
         }
+        this.onStreamHold({"detail": {"delay": null}});
         this.setConnecting(false);
         // the guard belongs to being in the room, not to the way it was left:
         // the router closes this screen for a navigation, a dropped connection

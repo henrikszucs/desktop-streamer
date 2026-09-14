@@ -68,6 +68,8 @@ const createRoom = function(ctx) {
     let state = "closed";       // closed | connecting | connected
     let mode = MODE_DIRECT;     // direct | relay - what is carrying it
     let directTimeoutId = -1;
+    let attempt = 0;            // which direct attempt the channels belong to: a
+                                // retry from the relay is a second one
 
     // a candidate that arrives before the description it belongs to has nowhere
     // to go yet: ICE starts on both ends at once and the two messages cross
@@ -155,6 +157,7 @@ const createRoom = function(ctx) {
     // communicator is built here rather than on "open" because the other end may
     // sync into this one before that fires - see CLIENT.md, "The connection".
     const wireChannel = function() {
+        const ownAttempt = attempt;
         channel.binaryType = "arraybuffer";
 
         channelCom = new Communicator({
@@ -206,12 +209,15 @@ const createRoom = function(ctx) {
                 console.error("Cannot sync the channel:", error);
                 return;
             }
-            if (roomKey !== openRoomKey || mode !== MODE_DIRECT) {
-                return;         // the room went, or the relay was taken meanwhile
+            if (roomKey !== openRoomKey || ownAttempt !== attempt) {
+                return;         // the room went, or this attempt was given up meanwhile
             }
 
+            // a retry that made it takes the room off the relay here, on the
+            // proof, and the other end does the same on its own sync
             clearTimeout(directTimeoutId);
             directTimeoutId = -1;
+            mode = MODE_DIRECT;
             state = "connected";
             emit("connected", {"roomKey": roomKey, "isHost": isHost, "isRelay": false});
         });
@@ -219,7 +225,7 @@ const createRoom = function(ctx) {
         // a channel that closes while it *is* the room is the connection being
         // lost, which the relay is for as much as one that never came up
         channel.addEventListener("close", function() {
-            if (mode !== MODE_DIRECT) {
+            if (mode !== MODE_DIRECT || ownAttempt !== attempt) {
                 return;
             }
             setTimeout(function() {
@@ -250,15 +256,23 @@ const createRoom = function(ctx) {
     //
     // the fallback
     //
-    // whether there is one at all. It is answered for every client, so this
-    // holds no default of its own, and one that is not there is not waited for.
+    // whether there is one at all, for whoever this client is: the guest flag
+    // of the conf-get answer, or the account's own (src/management/account.js).
+    // Both are answered rather than defaulted, so one that is not there is not
+    // waited for - and the bar greys its indicator on the same answer.
     const isRelayAllowed = function() {
+        const account = ctx["account"]?.current?.() ?? null;
+        if (account !== null) {
+            return account["isRelayAllowed"] === true;
+        }
         return ctx["conf"]["remote"]?.["permissions"]?.["guestAllowRelay"] === true;
     };
 
     // Both ends have to give up together and they will not give up at the same
     // moment: whoever gets there first says so, and the other follows on the
-    // spot rather than waiting out its own clock.
+    // spot rather than waiting out its own clock. The same move is made by
+    // hand from the room bar (useRelay), which is a peer on a direct path that
+    // keeps dropping choosing the slower path that does not.
     const startRelay = function(isTold) {
         if (mode === MODE_RELAY || roomKey === "") {
             return;
@@ -293,7 +307,14 @@ const createRoom = function(ctx) {
     const startDirectClock = function() {
         clearTimeout(directTimeoutId);
         directTimeoutId = setTimeout(function() {
-            if (state === "connected" || roomKey === "") {
+            if (roomKey === "") {
+                return;
+            }
+            if (mode === MODE_RELAY) {
+                giveUpDirect();     // a retry that ran out: the relay stands
+                return;
+            }
+            if (state === "connected") {
                 return;
             }
             console.log("Room " + roomKey + " could not connect directly");
@@ -301,24 +322,22 @@ const createRoom = function(ctx) {
         }, DIRECT_TIMEOUT);
     };
 
-    const open = function(detail) {
-        // one room at a time on this client. The server does not impose that -
-        // a host may be in several - but one screen shows one connection, so a
-        // second is what the first is replaced by rather than hidden behind.
-        if (roomKey !== "") {
-            leave("replaced");
-        }
-
-        roomKey = detail?.["roomKey"] ?? "";
-        joinId = detail?.["joinId"] ?? "";
-        name = "";
-        isHost = (detail?.["isHost"] === true);
-        mode = MODE_DIRECT;
-        if (roomKey === "") {
+    // a retry from the relay that did not make it, or was told to stop: the
+    // attempt goes and the room stays where it was
+    const giveUpDirect = function() {
+        if (connection === null) {
             return;
         }
-        startDirectClock();
+        console.log("Room " + roomKey + " could not connect directly again");
+        closeConnection();
+        emit("direct", {"roomKey": roomKey, "isTrying": false});
+    };
 
+    // the direct attempt itself: one RTCPeerConnection, the two channels on it,
+    // and the offer from whichever side offers. The first attempt is made by
+    // open(), a retry by startDirect().
+    const createConnection = function() {
+        attempt++;
         connection = new RTCPeerConnection({"iceServers": iceServers()});
         connection.addEventListener("icecandidate", function(event) {
             // the null candidate is the end of the gathering, and says nothing
@@ -334,10 +353,15 @@ const createRoom = function(ctx) {
             const current = connection?.connectionState;
             console.log("Room " + roomKey + " is " + current);
 
-            // a direct connection that failed is what the relay is for; one that
-            // was closed on purpose is not
+            // a direct connection that failed is what the relay is for; a retry
+            // that failed leaves the relay standing; one that was closed on
+            // purpose is neither
             if (current === "failed") {
-                startRelay(false);
+                if (mode === MODE_RELAY) {
+                    giveUpDirect();
+                } else {
+                    startRelay(false);
+                }
                 return;
             }
             if (current === "closed" && mode === MODE_DIRECT) {
@@ -367,13 +391,11 @@ const createRoom = function(ctx) {
                 wireChannel();
             });
         }
+    };
 
-        state = "connecting";
-        emit("connecting", {"roomKey": roomKey, "isHost": isHost});
-        console.log("Room " + roomKey + " open as " + (isHost === true ? "host" : "peer"));
-
-        // whatever arrived before this side knew there was a room. Every other
-        // room id held here belongs to one this client is not in.
+    // whatever arrived before this side had a connection to hand it to. Every
+    // other room id held here belongs to one this client is not in.
+    const replayHeldSignals = function() {
         const held = earlySignals.get(roomKey) ?? [];
         earlySignals.clear();
         for (const signal of held) {
@@ -381,12 +403,61 @@ const createRoom = function(ctx) {
         }
     };
 
+    // a direct connection tried again from the relay, at either end's asking
+    // (useDirect from the room bar, or the other end's `direct` signal). The
+    // relay carries the room throughout: nothing moves until the new channel
+    // is synced, so a retry that fails costs a wait and not a picture.
+    const startDirect = async function(isTold) {
+        if (roomKey === "" || mode !== MODE_RELAY || connection !== null) {
+            return;     // no room, nothing to come back from, or a retry already running
+        }
+        if (isTold !== true && await send({"kind": "direct"}) === false) {
+            return;
+        }
+        if (roomKey === "" || mode !== MODE_RELAY || connection !== null) {
+            return;     // the wait on the signal changed one of the three
+        }
+        console.log("Room " + roomKey + " is trying a direct connection again");
+        emit("direct", {"roomKey": roomKey, "isTrying": true});
+
+        // what is held is the tail of the attempt that failed, not the start of
+        // this one: the `direct` signal goes ahead of the offer on both ends
+        earlySignals.clear();
+        createConnection();
+        startDirectClock();
+    };
+
+    const open = function(detail) {
+        // one room at a time on this client. The server does not impose that -
+        // a host may be in several - but one screen shows one connection, so a
+        // second is what the first is replaced by rather than hidden behind.
+        if (roomKey !== "") {
+            leave("replaced");
+        }
+
+        roomKey = detail?.["roomKey"] ?? "";
+        joinId = detail?.["joinId"] ?? "";
+        name = "";
+        isHost = (detail?.["isHost"] === true);
+        mode = MODE_DIRECT;
+        if (roomKey === "") {
+            return;
+        }
+        startDirectClock();
+        createConnection();
+
+        state = "connecting";
+        emit("connecting", {"roomKey": roomKey, "isHost": isHost});
+        console.log("Room " + roomKey + " open as " + (isHost === true ? "host" : "peer"));
+        replayHeldSignals();
+    };
+
     const onSignal = async function(detail) {
-        if (connection === null || detail?.["roomKey"] !== roomKey) {
+        const signal = detail?.["signal"] ?? {};
+        if (detail?.["roomKey"] !== roomKey || (connection === null && signal["kind"] !== "direct")) {
             holdSignal(detail);
             return;
         }
-        const signal = detail["signal"] ?? {};
         try {
             if (signal["kind"] === "description") {
                 await connection.setRemoteDescription(signal["description"]);
@@ -403,6 +474,11 @@ const createRoom = function(ctx) {
             // the other end could not get through either, and is on the relay
             if (signal["kind"] === "relay") {
                 startRelay(true);
+                return;
+            }
+            // or is on the relay and asks for the direct path again
+            if (signal["kind"] === "direct") {
+                startDirect(true);
                 return;
             }
             if (signal["kind"] === "candidate") {
@@ -591,8 +667,29 @@ const createRoom = function(ctx) {
         "getMode": function() {
             return mode;
         },
+        "isRelayAllowed": isRelayAllowed,
         "isRelay": function() {
             return mode === MODE_RELAY;
+        },
+        // whether a direct connection is being tried again from the relay
+        "isTryingDirect": function() {
+            return mode === MODE_RELAY && connection !== null;
+        },
+
+        // the path by hand, from the room bar: onto the relay, or a direct
+        // connection tried again from it. Both are the same moves the failures
+        // make on their own, so the other end follows either the same way.
+        "useRelay": function() {
+            if (state !== "connected" || isRelayAllowed() === false) {
+                return;
+            }
+            startRelay(false);
+        },
+        "useDirect": function() {
+            if (state !== "connected") {
+                return;
+            }
+            startDirect(false);
         },
         "isConnected": function() {
             return state === "connected";

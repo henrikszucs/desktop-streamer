@@ -453,7 +453,13 @@ connection nobody has named, not a name somebody cleared, so the local record
 stands. `management/connection` is the dialog, and a rename made while the socket
 is down is local only, since the call cannot be made. The same dialog names the
 live share, where there is no row and no call at all - see "A share is not only a
-record" below.
+record" below. **The dialog follows the connection it is about**: it listens to
+the `change` of `ctx["joins"]` (and the room's `closed`, for the live share)
+while it stands, and when its record is gone - the other side deleted it, the
+push `join-remove` having dropped the row - it closes, its nested confirm with
+it, and says why in the snackbar; a name saved onto a row that no longer exists
+would otherwise be answered `connection.unknown` after the fact. Its own delete
+sets `isRemoving` first, since the records change the same way for both.
 
 Who is on the other side of a join arrives the same way: `join-online` is pushed
 to each side as the other's first socket appears and its last one goes, so
@@ -559,7 +565,12 @@ then what would have crossed between the two devices crosses the server instead
 - **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
   answered to every client in `permissions` (it is off unless the configuration
   says otherwise, since it spends the server's own bandwidth), and where it is
-  off a failed direct attempt ends the room rather than hanging on one;
+  off a failed direct attempt ends the room rather than hanging on one. It is
+  the *guest's* flag: an account's is its own users row, told in the profile
+  as `isRelayAllowed` and kept on the account record, and `isRelayAllowed()`
+  in `room.js` answers from whichever the client is - the one permission
+  `permissions.allows()` in `ui.js` cannot answer, since a signed-in user is
+  not simply allowed everything a guest is refused;
 - **a direct connection that is *lost* is the same case as one that was never
   made.** A channel that closes mid-room says nothing about why - the other end
   leaving and the path between them breaking look identical from there, and what
@@ -588,10 +599,22 @@ exists. Two things follow that the stream work has to know:
   every browser agrees on; the socket's is 64 KB with 64 in flight, since the
   relayed stream is carried by that product and the kilobyte it used to be
   capped a relayed room at a few Mbps. The room bar is the exception, and
-deliberately: a relayed connection is slower and is worth saying so - the
-indicator is in the empty track the centring already leaves, and it is only ever
-shown when it is true, because an indicator for the expected case is one more
-light to learn to ignore.
+deliberately: a relayed connection is slower and is worth saying so. The
+switch (`#btn-room-relay`) is in the empty track the centring already leaves,
+and it is always there: lit while the server is carrying the room, plain for a
+direct room with the server behind it, and `[disabled]` for a direct room with
+**no relay for this user** - so a peer on a line that keeps dropping can see
+whether there is a fallback, and take it. A click is the same move the failures
+make on their own: `useRelay()` is `startRelay`, and `useDirect()` is
+`startDirect` - a fresh `RTCPeerConnection` negotiated while the relay goes on
+carrying the room, taken over only on the new channel's sync (which is where
+`mode` flips, on each end's own proof) and given up on the direct clock or an
+ICE failure with the relay still standing, said in the snackbar since the
+button then looks as it did. The other end follows a `direct` signal the way
+it follows a `relay` one; `attempt` is what keeps a channel of the attempt
+that was given up from reporting for the one that replaced it. `drawRelay`
+asks `ctx["room"].isRelayAllowed()` every time, which answers for whoever the
+client is right now (see below), rather than reading the guest flag once.
 
 **"Connected" means the two ends have exchanged packets**, not that ICE says so
 and not only that the channel opened: the channel opening says *this* end is
@@ -633,6 +656,31 @@ it. The whole bar ends in one `settings` event on the screen and a
 which carries it to the host - see The stream below. The picture is a `<canvas>`
 the screen hands the stream once at mount (`attach`), and the reading beside the
 relay chip is the stream's `stats` event once a second.
+
+**A tool the host has not got is greyed, not left to do nothing.** The
+`share` message says whether there is sound (`isAudio`, the encoder's
+`hasAudio()` - the desktop host has none yet) and a keyboard to take
+(`isControl`, easy-control being there), and the bar greys the two buttons
+(`room-tool-off`) until a share has said, with the reason in the tooltip; a
+keyboard already taken from a host that then says it has none is let go.
+
+**Fullscreen is the stage alone** - `#room-stage`, the canvas and nothing of
+the bar - so the way out is the exit shortcut: the browser's own Escape, or
+under the desktop shell the hold. The hold lets go of the innermost thing
+first, the fullscreen and then the keyboard on a second hold, and while it runs
+the stream's `hold` event (`onHold` in `stream-input.js`, the delay in it)
+fills the ring over the picture, since five seconds on a key that shows nothing
+reads as a key that does nothing.
+
+**The screen entry is drawn from the host, never guessed.** `#btn-room-screen`
+is hidden until the stream's `share` event brings a `screens` list of more than
+one, and its rows are that list in the host's own order - the one thing both
+ends can point at - with the primary display said to be. Choosing one only sends
+`screenIndex` in the settings: the label does not move until the host restarts
+its encoder on that display and says so in its next `share`, so what is marked
+is what is on screen, and a display the host could not open is never claimed to
+be. The choice is of *this* host, so `onRoomClosed` clears it and the next room
+opens on its primary display like any first time.
 
 **The frame rate is priced by nothing.** The third menu (`FRAMERATES`: 24, 30,
 45, 60, 120) is not held under the bandwidth the way a resolution is: an encoder
@@ -678,12 +726,17 @@ reaching a host - and when the socket comes back, `loadPath()` opens the room
 again and its own wait returns with it.
 
 **A room is entered *for* something**, and either the path or the flow says so.
-`/room/<joinId>` is a remembered device - an address this client can be sent back
-to - and the room waits when the route carries one. A pairing the host did not
-remember has no id anywhere to put in a URL, so the dialog that accepted it
-navigates with `isConnecting` instead (`navigate(path, params)`; the params are
-gone after a reload, which is right - so is the pairing). `/room` typed by hand is
-neither, and is the bar with nothing in front of it.
+`/room/<joinId>` is a room on a remembered device and the room waits when the
+route carries one. A pairing the host did not remember has no id anywhere to
+put in a URL, so the dialog that accepted it navigates with `isConnecting`
+instead (`navigate(path, params)`; the params are gone after a reload, which is
+right - so is the pairing). **The room is not an address**: `isRoomRoute` in
+`src/router.js` answers a room path only while a flow is entering it or a room
+stands on exactly that id (`getRoomKey()`/`getJoinId()`), and anything else -
+`/room` typed in, a stale bookmark, a reload of a room that died with it, the
+right screen with the wrong id - is normalized to the default screen the way a
+route the server does not offer is. The way back to a remembered device is the
+devices screen, which asks the host; a URL never does.
 
 `setConnecting(false)` is what ends the wait, and the room's `connected` event
 is what calls it (`onRoomConnected`, which also draws the relay indicator) - the
@@ -839,7 +892,12 @@ second, no B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows,
 at the frame rate the bar asked for.
 A settings change is a restart behind `RESTART_DEBOUNCE`, since ffmpeg is told
 nothing over a pipe - which is also why the desktop host cannot answer a
-keyframe request, and the one second GOP is the whole answer to a gap. In a
+keyframe request, and the one second GOP is the whole answer to a gap. The
+display shared is a setting like the others (`screenIndex`, an index into
+`Control.Screen.list()`, the primary one when absent or out of range): every
+start of the encoder reports the display it opened and the whole list beside it
+in the `share` message, and re-binds the control to that display, since the
+peer's mouse is mapped into the picture being shared. In a
 browser it is `getDisplayMedia` through a `MediaStreamTrackProcessor` into a
 WebCodecs `VideoEncoder` (`latencyMode: "realtime"`, `avc: {format: "annexb"}`
 so the bytes are the desktop host's bytes), a keyframe every `KEY_INTERVAL`

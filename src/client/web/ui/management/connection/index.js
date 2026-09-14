@@ -27,6 +27,10 @@ const ConnectionDialog = class extends Dialog {
     nameInput = null;
     hint = null;
 
+    // whether the delete being seen is this dialog's own: the records change
+    // under it either way, and only the other side's is news
+    isRemoving = false;
+
     async mount(ctx) {
         this.nameInput = document.getElementById("input-connection-name");
         this.hint = document.getElementById("connection-name-hint");
@@ -92,17 +96,46 @@ const ConnectionDialog = class extends Dialog {
         // there is no row to drop, so what is deleted is the connection itself -
         // the other side is told through the server, as it is for any leaving
         if (isLive === true) {
+            this.isRemoving = true;
             ctx["room"].leave();
             ctx["ui"].snackbar.show(ctx["localization"].get("connection.disconnected"));
             this.requestClose();
             return;
         }
+        this.isRemoving = true;
         try {
             await ctx["joins"].remove(joinId);
             ctx["ui"].snackbar.show(ctx["localization"].get("connection.deleted"));
         } catch (error) {
             console.error(error);
         }
+        this.requestClose();
+    };
+
+    // the connection went under the dialog: the other side deleted it (the
+    // row is gone from the records - see join-remove in src/management/joins.js)
+    // or, for the live one, left the room. A dialog about a connection that no
+    // longer exists would save a name onto nothing, so it closes and says why.
+    onJoinsChange = () => {
+        if (this.isLive === true || this.isRemoving === true) {
+            return;
+        }
+        if (typeof this.ctx["joins"].get(this.joinId) === "undefined") {
+            this.closeAs("connection.removed");
+        }
+    };
+    onRoomClosed = () => {
+        if (this.isLive !== true || this.isRemoving === true) {
+            return;
+        }
+        this.closeAs("connection.ended");
+    };
+
+    // the question this dialog may be asking (the delete's confirm, nested on
+    // it) goes with it: it is about the same connection
+    closeAs(key) {
+        this.ctx["ui"].snackbar.show(this.ctx["localization"].get(key), true);
+        this.ctx["ui"].closeDialog("confirm");
         this.requestClose();
     };
 
@@ -149,10 +182,20 @@ const ConnectionDialog = class extends Dialog {
 
         super.open(params);
 
+        // the connection is watched for as long as the dialog is about it
+        this.isRemoving = false;
+        this.ctx["joins"].addEventListener("change", this.onJoinsChange);
+        this.ctx["room"].addEventListener("closed", this.onRoomClosed);
+
         // selected rather than merely focused: the usual thing to do with a
         // name that is already there is to type over it
         this.nameInput.focus();
         this.nameInput.select();
+    };
+    close() {
+        this.ctx["joins"].removeEventListener("change", this.onJoinsChange);
+        this.ctx["room"].removeEventListener("closed", this.onRoomClosed);
+        super.close();
     };
 };
 

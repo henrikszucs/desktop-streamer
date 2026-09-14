@@ -15,7 +15,10 @@
 // The way out is a shortcut held for its delay - Escape for a second in a
 // browser, five under the desktop shell, and whatever the settings added -
 // because every key the peer presses goes to the host, this one included, so
-// a key alone cannot mean "stop": holding it is what does.
+// a key alone cannot mean "stop": holding it is what does. It lets go of the
+// innermost thing: the fullscreen while there is one, the keyboard and the
+// mouse otherwise. `onHold(delay)` says a hold has started and `onHold(null)`
+// that it ended, either way, so the screen can draw the wait.
 
 const BUTTONS = ["left", "middle", "right", "back", "forward"];
 
@@ -31,7 +34,7 @@ const builtinShortcuts = function(isDesktop) {
     return [{"delay": 1, "keys": ["Escape"]}, {"delay": 1, "keys": ["F11"]}];
 };
 
-const createInput = function(canvas, ctx, send, onRelease) {
+const createInput = function(canvas, ctx, send, onRelease, onHold = function() {}) {
     let isEnabled = false;
     let queue = [];
     let flushId = -1;
@@ -128,6 +131,7 @@ const createInput = function(canvas, ctx, send, onRelease) {
     // the shortcut clock: it starts when the keys held are exactly one
     // shortcut's, and a key changing stops it
     const checkShortcut = function() {
+        const wasHolding = (shortcutTimerId !== -1);
         clearTimeout(shortcutTimerId);
         shortcutTimerId = -1;
         for (const shortcut of shortcuts()) {
@@ -138,10 +142,19 @@ const createInput = function(canvas, ctx, send, onRelease) {
             const delay = Math.max(0.2, Number(shortcut["delay"]) || 1) * 1000;
             shortcutTimerId = setTimeout(function() {
                 shortcutTimerId = -1;
+                onHold(null);
+                if (document.fullscreenElement !== null) {
+                    document.exitFullscreen?.().catch?.(function() {});
+                    return;
+                }
                 release();
                 onRelease();
             }, delay);
+            onHold(delay);
             return;
+        }
+        if (wasHolding === true) {
+            onHold(null);
         }
     };
 
@@ -201,8 +214,11 @@ const createInput = function(canvas, ctx, send, onRelease) {
         canvas.removeEventListener("keydown", onKeyDown);
         canvas.removeEventListener("keyup", onKeyUp);
         window.removeEventListener("blur", onBlur);
-        clearTimeout(shortcutTimerId);
-        shortcutTimerId = -1;
+        if (shortcutTimerId !== -1) {
+            clearTimeout(shortcutTimerId);
+            shortcutTimerId = -1;
+            onHold(null);
+        }
 
         // whatever is still down comes up, so the host is not left holding a key
         for (const code of held.values()) {
