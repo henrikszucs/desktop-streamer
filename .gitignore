@@ -1,6 +1,24 @@
 node_modules
-tmp
-bin
-conf
+
+# runtime folders: keep the folder in the repo, ignore its contents
+tmp/*
+!tmp/TEMPORARY_FOLDER
+bin/*
+!bin/PUT_BIN_HERE
+conf/*
+!conf/PUT_CONFIG_HERE
+!conf/config.example.json
+
 package-lock.json
 dev/electron
+
+model/.venv
+model/uv.lock
+
+model/*/data
+model/*/checkpoints
+model/*/benchmark/www/models
+__pycache__/
+
+.playwright-mcp
+.DS_Store

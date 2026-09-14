@@ -1,0 +1,54 @@
+/* the shares screen */
+
+/* Shares screen */
+/* A grid of cards is worth the whole surface on a large display, so it opts
+ * out of the width the shell caps a screen of text at (see #screen-main > div
+ * in /index.css). The headings go back to the start edge with it: the surface
+ * is centre-aligned for the screens that are one column of text, and a centred
+ * heading over a left-packed grid read as a mistake.
+ */
+#screen-main > #screen-shares {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-inline-size: none;
+    text-align: start;
+}
+
+.shares-article {
+    height: -webkit-fill-available;
+    height: -moz-available;
+    height: 100%;
+}
+
+.shares-article > :nth-child(1) {
+    display: flex;
+    justify-content: space-between;
+}
+
+.shares-article > :nth-child(1) > :nth-child(1) {
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+}
+
+.shares-article > :nth-child(1) > :nth-child(2) {
+    margin-right: 0px;
+}
+
+.shares-article > :nth-child(2) > :nth-child(1) {
+    aspect-ratio: 4/3;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) {
+    flex-wrap: wrap;
+    flex-direction: row;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) > :nth-child(1) {
+    flex-shrink: 1;
+}
+
+.shares-article > :nth-child(3) > :nth-child(1) > :nth-child(1) > button {
+    margin: 8px;
+}

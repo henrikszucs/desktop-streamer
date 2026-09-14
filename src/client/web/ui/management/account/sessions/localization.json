@@ -1,0 +1,42 @@
+{
+    "account": {
+        "sessions": {
+            "title": {
+                "en": "Active sessions",
+                "hu": "Aktív munkamenetek"
+            },
+            "last-active": {
+                "en": "Last active",
+                "hu": "Utojára aktív"
+            },
+            "ip-address": {
+                "en": "IP address",
+                "hu": "IP cím"
+            },
+            "this-device": {
+                "en": "This device",
+                "hu": "Ez az eszköz"
+            },
+            "empty": {
+                "en": "No device is signed in.",
+                "hu": "Egyetlen eszköz sincs bejelentkezve."
+            },
+            "error": {
+                "en": "The sessions could not be loaded.",
+                "hu": "A munkameneteket nem sikerült betölteni."
+            },
+            "failed": {
+                "en": "The session could not be signed out.",
+                "hu": "A munkamenetet nem sikerült kijelentkeztetni."
+            },
+            "sign-out": {
+                "en": "Sign out",
+                "hu": "Kijelentkezés"
+            },
+            "unknown-os": {
+                "en": "Unknown device",
+                "hu": "Ismeretlen eszköz"
+            }
+        }
+    }
+}

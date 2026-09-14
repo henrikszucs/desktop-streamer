@@ -2,47 +2,90 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getArg } from "./server/common.js";
 
-// search in parameters
-const getArg = function(args, argName, isKeyValue=false, isInline=false) {
-    for (let i = 0, length=args.length; i < length; i++) {
-        const arg = args[i];
-        if (isKeyValue) {
-            if (isInline) {
-                if (arg.startsWith(argName + "=")) {
-                    return arg.slice(argName.length + 1);
-                }
-            } else {
-                if (arg === argName) {
-                    return args[i + 1];
-                }
-            }
-        } else {
-            if (arg === argName) {
-                return true;
-            }
+const deletePath = async function (targetPath, keepDir, skipPaths = []) {
+    const resolvedTarget = path.resolve(targetPath);
+
+    let stat;
+    try {
+        stat = await fs.stat(resolvedTarget);
+    } catch {
+        return;
+    }
+    
+    if (!stat.isDirectory()) {
+        await fs.rm(resolvedTarget);
+        return;
+    }
+
+    await deleteContents(resolvedTarget, resolvedTarget, skipPaths);
+
+    if (!keepDir) {
+        const remaining = await fs.readdir(resolvedTarget);
+        if (remaining.length === 0) {
+            await fs.rmdir(resolvedTarget);
         }
     }
-    return undefined;
+}
+
+const deleteContents = async function (rootPath, currentPath, skipPaths) {
+    const entries = await fs.readdir(currentPath);
+
+    for (const entry of entries) {
+        const entryPath = path.join(currentPath, entry);
+        const relativePath = path.relative(rootPath, entryPath).split(path.sep).join("/");
+
+        // Exact match — skip entirely
+        if (skipPaths.includes(relativePath)) {
+            continue;
+        }
+
+        // Check if this entry is a parent of any keepPath
+        const isParentOfKept = skipPaths.some(
+            (kp) => kp.startsWith(relativePath + "/")
+        );
+
+        if (isParentOfKept) {
+            // Recurse into it but don't delete it
+            await deleteContents(rootPath, entryPath, skipPaths);
+        } else {
+            await fs.rm(entryPath, { recursive: true });
+        }
+    }
 };
 
 const main = async function() {
-    const pathList = [
-        "./package-lock.json",
-        "./node_modules",
-        "./tmp"
-    ];
+    const helpFlag = getArg(process.argv, "--help", false) || getArg(process.argv, "-h", false);
+    if (helpFlag) {
+        console.log("Usage: npm run uninstall [-- --bin] [-- --help] [-- --version]\n\n  --bin        also remove ./bin\n  -h, --help   show this help message\n  -v, --version  show the project version");
+        return;
+    }
+
+    const versionFlag = getArg(process.argv, "--version", false) || getArg(process.argv, "-v", false);
+    if (versionFlag) {
+        const packageJsonPath = path.resolve(import.meta.dirname, "../package.json");
+        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+        console.log(packageJson.version);
+        return;
+    }
+
+    const itemList = new Set([
+		{"path": "./package-lock.json", "keepDir": false, "skipPaths": []},
+        {"path": "./node_modules", "keepDir": false, "skipPaths": []},
+		{"path": "./tmp", "keepDir": true, "skipPaths": ["tmp"]}
+    ]);
 
     const binFlag = getArg(process.argv, "--bin", false); 
     if (binFlag) {
-        pathList.push("./bin");
+        itemList.add({"path": "./bin", "keepDir": true, "skipPaths": ["bin"]});
     }
 
-    for (const dir of pathList) {
+    for (const item of itemList) {
         try {
-            await fs.rm(dir, { "recursive": true, "force": true });
+            await deletePath(item.path, item.keepDir, item.skipPaths);
         } catch (error) {
-            console.error(`Error removing ${dir}:`, error);
+            console.error(`Error removing ${item.path}:`, error);
         }
     }
     console.log("Cleanup completed.");

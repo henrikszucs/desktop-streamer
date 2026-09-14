@@ -1,0 +1,55 @@
+<div id="settings-audio" class="hide">
+    <h5 class="small-margin" data-localization="settings.audio.title">Audio settings</h5>
+    <div class="small-margin">
+        <fieldset>
+            <legend data-localization="settings.audio.decoder.title">Audio play</legend>
+            <span class="green-text hide" id="decoder-audio-support" data-localization="settings.audio.decoder.supported">Low latency play supported</span>
+            <span class="error-text hide" id="decoder-audio-unsupport" data-localization="settings.audio.decoder.unsupported">Low latency play not supported</span>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.audio.system.title">System audio share</legend>
+            <span class="green-text hide" id="system-audio-support" data-localization="settings.audio.system.supported">Fully supported</span>
+            <span class="tertiary-text hide" id="system-audio-partial" data-localization="settings.audio.system.partial">Only manual share supported</span>
+            <span class="error-text hide" id="system-audio-unsupport" data-localization="settings.audio.system.unsupported">System audio share not supported</span>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.audio.speaker.title">Speakers</legend>
+            <div class="audio-test">
+                <div class="field suffix border round select-audio-test">
+                    <select id="select-audio-test">
+                        <option value="0" data-localization="settings.audio.speaker.test1">Test sound 1</option>
+                        <option value="1" data-localization="settings.audio.speaker.test2">Test sound 2</option>
+                        <option value="2" data-localization="settings.audio.speaker.test3">Test sound 3</option>
+                    </select>
+                    <i>arrow_drop_down</i>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-test-audio-test">
+                        <i>play_arrow</i>
+                    </button>
+                </div>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.audio.mic.title">Microphones</legend>
+            <div class="audio-input">
+                <div class="field suffix border round select-audio-input">
+                    <select id="select-audio-input" disabled>
+                        <option data-localization="settings.audio.mic.notfound">No Microphone</option>
+                    </select>
+                    <i>arrow_drop_down</i>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-refresh-audio-input">
+                        <i>refresh</i>
+                    </button>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-test-audio-input" disabled>
+                        <i>play_arrow</i>
+                    </button>
+                </div>
+            </div>
+        </fieldset>
+    </div>
+</div>

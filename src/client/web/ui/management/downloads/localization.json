@@ -1,0 +1,28 @@
+{
+    "downloads": {
+        "title": {
+            "en": "Download Desktop Streamer",
+            "hu": "A Desktop Streamer letöltése"
+        },
+        "subtitle": {
+            "en": "Get the Desktop Streamer client program for your computer to full remote control.",
+            "hu": "Töltsd le a Desktop Streamer kliensprogramot a számítógépedre a teljes távoli irányításhoz."
+        },
+        "os": {
+            "en": "1. Operating system",
+            "hu": "1. Operációs rendszer"
+        },
+        "arch": {
+            "en": "2. Architecture",
+            "hu": "2. Architektúra"
+        },
+        "btn": {
+            "en": "Download",
+            "hu": "Letöltés"
+        },
+        "empty": {
+            "en": "This server has no desktop client to download.",
+            "hu": "Ezen a kiszolgálón nincs letölthető asztali kliens."
+        }
+    }
+}

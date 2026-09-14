@@ -1,0 +1,94 @@
+{
+    "room": {
+        "audio": {
+            "mute": {
+                "en": "Mute the sound",
+                "hu": "Hang némítása"
+            },
+            "unmute": {
+                "en": "Turn the sound on",
+                "hu": "Hang bekapcsolása"
+            }
+        },
+        "control": {
+            "take": {
+                "en": "Take the keyboard and the mouse",
+                "hu": "Billentyűzet és egér átvétele"
+            },
+            "release": {
+                "en": "Give the keyboard and the mouse back",
+                "hu": "Billentyűzet és egér elengedése"
+            }
+        },
+        "bandwidth": {
+            "value": {
+                "en": "{value} Mbps",
+                "hu": "{value} Mbps"
+            }
+        },
+        "resolution": {
+            "auto": {
+                "en": "Automatic",
+                "hu": "Automatikus"
+            },
+            "autoValue": {
+                "en": "Automatic ({value})",
+                "hu": "Automatikus ({value})"
+            },
+            "lowered": {
+                "en": "{from} needs more bandwidth than this room is allowed - the picture is now {to}.",
+                "hu": "A(z) {from} több sávszélességet igényel az engedélyezettnél - a kép mostantól {to}."
+            }
+        },
+        "fullscreen": {
+            "enter": {
+                "en": "Fullscreen",
+                "hu": "Teljes képernyő"
+            },
+            "exit": {
+                "en": "Leave fullscreen",
+                "hu": "Kilépés a teljes képernyőből"
+            }
+        },
+        "relay": {
+            "label": {
+                "en": "Relay",
+                "hu": "Átjátszás"
+            },
+            "tooltip": {
+                "en": "The two devices could not reach each other, so the connection goes through the server.",
+                "hu": "A két eszköz nem éri el közvetlenül egymást, ezért a kapcsolat a kiszolgálón keresztül megy."
+            }
+        },
+        "connection": {
+            "lost": {
+                "en": "The connection with the other device was lost.",
+                "hu": "A kapcsolat megszakadt a másik eszközzel."
+            }
+        },
+        "leave": {
+            "tooltip": {
+                "en": "Leave the room",
+                "hu": "Kilépés a szobából"
+            }
+        },
+        "system": {
+            "title": {
+                "en": "Leave the room",
+                "hu": "Kilépés a szobából"
+            },
+            "question": {
+                "en": "Do you want to close the window and leave this room?",
+                "hu": "Biztosan bezárod az ablakot és kilépsz ebből a szobából?"
+            },
+            "confirm": {
+                "en": "Close",
+                "hu": "Bezárás"
+            },
+            "cancel": {
+                "en": "Stay",
+                "hu": "Maradok"
+            }
+        }
+    }
+}

@@ -1,0 +1,510 @@
+# WebSocket communication
+
+How the browser/Electron client and the Node server talk to each other, from the
+socket up to the message types they exchange. This describes what the code does
+today, not what is planned - for the parts that were removed and are waiting to
+be restored see [../plans/README.md](../plans/README.md).
+
+## The three layers
+
+```
+    application    {"type": "conf-get"}  ->  {"webrtc": {...}, "permissions": {...}}
+                src/server/ws/ws.js  <->  src/client/web/src/server.js
+    ----------------------------------------------------------------------------
+    communicator   packets, acks, retries, split, message ids, invoke/answer
+                   src/server/communicator.js  <->  libs/communicator/communicator.js
+    ----------------------------------------------------------------------------
+    transport      one wss:// WebSocket, text frames for JSON, binary for the rest
+```
+
+The two `communicator.js` files are vendored copies of the maintainer's own
+`easy-communicator` (LGPL-3.0-or-later, see the SPDX headers). **They implement
+the same protocol and have to stay in sync** - a change to one is a change to
+both. They are also intended to back WebRTC data channels later, which is why
+the protocol knows nothing about WebSockets: it only calls a `sender` function.
+
+| side | files |
+| --- | --- |
+| server | [`src/server/ws/ws.js`](../../src/server/ws/ws.js), [`src/server/ws/api.js`](../../src/server/ws/api.js), [`src/server/communicator.js`](../../src/server/communicator.js) |
+| client | [`src/client/web/src/server.js`](../../src/client/web/src/server.js), [`src/client/web/libs/communicator/communicator.js`](../../src/client/web/libs/communicator/communicator.js) |
+
+## Where the address comes from
+
+The client never hard-codes the server. `buildConfFile` writes
+`tmp/web/index.json` at compile with the WS endpoint in it, and the client fetches
+that file at load time (`src/client/web/src/conf.js`). It holds the version, the
+address of each of the two servers - they are configured apart, so the WS half
+may be somewhere else entirely - and the desktop clients that compile wrote:
+
+```json
+{"version": "0.0.4",
+ "http": {"domain": "localhost", "port": 8443},
+ "ws": {"domain": "localhost", "port": 8444},
+ "clients": ["win32-x64.zip"]}
+```
+
+`index.js` then builds the URL and hands it to the transport:
+
+```js
+server.connect("wss://" + conf["ws"]["domain"] + ":" + conf["ws"]["port"]);
+```
+
+The port is always appended, `443` included. On the server side the WS endpoint
+is either its own HTTPS listener (`ws.port`, answering an empty `200` to normal
+requests) or an upgrade on the HTTP server's existing listener when
+`http.port === ws.port` - `config.js` allows those two to collide and nothing
+else to.
+
+## Connection lifecycle
+
+```
+client                                                    server
+  |                                                          |
+  |---- WebSocket handshake (wss) -------------------------->|  clientConnect()
+  |                                                          |  sessionId = generateSessionId()
+  |                                                          |  new Communicator per connection
+  |                                                          |
+  |<=== side sync (both sides start one) ===================>|  random UIDs decide who owns
+  |                                                          |  which message id parity
+  |<=== time sync ==========================================>|  clock offset for sendTime
+  |                                                          |
+  |---- invoke {"type": "conf-get"} ------------------------>|  handleAPI()
+  |<--- answer {"webrtc": ..., "permissions": ...} ----------|
+  |                                                          |
+  | isOnline = true, dispatch "online"                       |
+  |                                                          |
+  |---- further invokes ------------------------------------>|
+  |<--- answers --------------------------------------------|
+  |                                                          |
+  |<--- close / error --------------------------------------|  ws "close": release the
+  | dispatch "offline", retry after 2000 ms                  |  communicator, drop the client
+```
+
+Both sides run `sideSync()` and `timeSync()` themselves as soon as the socket is
+open - the server in `clientConnect`, the client in its `open` listener. Each
+side answers the other's request, so the two runs interleave harmlessly.
+
+**The client stays offline until `conf-get` answers.** If that call errors or
+comes back as anything but an object it closes the socket, which means the retry
+loop below starts and the loading dialog never goes away. A missing `conf-get`
+on the server is therefore indistinguishable from an unreachable server.
+
+The client keeps **one** `Communicator` for the life of the page and a new
+`WebSocket` per attempt: `reconnect()` closes the old socket, opens a new one,
+re-points the communicator's `sender` at it and re-runs both syncs. The server
+builds a fresh `Communicator` per connection and `release()`s it on close.
+
+Reconnect is a flat 2 s retry with no backoff and no attempt limit
+(`handleDisconnection` in `server.js`).
+
+## Transport adapters
+
+The communicator is transport agnostic: it hands out either an `ArrayBuffer` or
+a plain JS array, and the glue on each side decides how that becomes a frame.
+
+**Sending** - identical on both sides:
+
+```js
+"sender": async function(data, transfer, message) {
+    if ((data instanceof ArrayBuffer) === false) {
+        data = JSON.stringify(data);
+    }
+    ws.send(data);
+}
+```
+
+So an `ArrayBuffer` goes out as a **binary frame** and everything else as a
+**text frame** holding a JSON array.
+
+**Receiving** - the client sets `binaryType = "arraybuffer"` and only has to
+parse the text case. The server has to convert:
+
+```js
+data = new Uint8Array(data);   // node Buffer -> copy
+data = data.buffer;            // exact-size ArrayBuffer
+```
+
+The copy is not redundant. `ws` hands over a node `Buffer`, whose `.buffer` is
+the shared allocation pool slab, not just this message - passing it straight
+through would give the communicator the wrong bytes and the wrong length.
+
+## The communicator protocol
+
+### Frame forms
+
+A frame is either a JSON array or a binary buffer. In the binary form **the
+header is a trailer**: the payload sits at the front and every header field is
+addressed backwards from the end of the buffer (`byteLength - n`), so a packet
+can be built by writing the payload first and stamping the header on after.
+
+JSON array form (used for any message that is not an `ArrayBuffer`):
+
+```
+[flags, sendTime, messageId, (answerFor), payload]
+```
+
+JSON messages are never split and never carry sync frames - `packetSize` does
+not apply to them, and one message is always exactly one packet.
+
+### Flag bits
+
+The flags byte is `msg[0]` in the array form and the **last byte** of a binary
+frame.
+
+| bit | value | meaning |
+| --- | --- | --- |
+| 0 | 1 | time sync |
+| 1 | 2 | side sync |
+| 2 | 4 | invoke (an answer is expected) |
+| 3 | 8 | split (this message is more than one packet) |
+| 4 | 16 | abort |
+| 5 | 32 | answer (this is the reply to `answerFor`) |
+
+Time sync and side sync are checked first and are mutually exclusive with the
+rest - a sync frame carries no message id.
+
+### Binary layouts
+
+Offsets are counted back from the end of the buffer, the way the code reads
+them.
+
+| frame | size | fields (from the end) |
+| --- | --- | --- |
+| time sync | 25 B | `-1` flags=1, `-9` f64 my time, `-17` f64 other time (`-1` in a request) |
+| side sync request | 13 B | `-1` flags=2, `-5` u32 my time, `-9` u32 my UID, `-13` u32 other UID = 0 |
+| side sync answer | 25 B | same trailing 13 bytes, other UID filled in (the leading 12 B are unused) |
+| ack | 11 B | `-1` flags (0, or 8 when split), `-5` u32 send time, `-9` u32 message id, `-11` u16 packet id when split |
+| data packet | payload + 9…17 B | `-1` flags, `-5` u32 send time, `-9` u32 message id, `-11` u16 packet id and `-13` u16 packet count when split, then u32 `answerFor` when the answer flag is set |
+
+The packet count is only written on the first packet of a message
+(`packetId === 0`), and the reader only looks for it on a packet the peer
+originated.
+
+### Side sync - who owns which message ids
+
+Each side picks a random 32-bit UID and sends it; the peer echoes it back with
+its own. The side with the **greater** UID takes `myReminder = 1`, the other
+`0`, and from then on allocates message ids of that parity, stepping by 2. So
+the two sides can never hand out the same id, and a receiver can tell at a
+glance what an incoming frame is:
+
+```js
+if (messageId % 2 === this.myReminder) { /* an ack or abort for MY message */ }
+else                                    { /* the peer's message */ }
+```
+
+If both sides happen to draw the same UID, the initiator re-rolls and retries -
+five attempts, then one last wait of `interactTimeout`.
+
+**Nothing can be sent before side sync completes**, and it has to be redone on
+every reconnect, because the id parity is what routes every later frame.
+
+### Time sync - why every packet carries a timestamp
+
+The requester sends its own clock and `-1`; the peer echoes that and appends its
+own clock; the requester computes
+
+```
+timeOffset = (peer time + round trip / 2) - now
+```
+
+Every packet then stamps `sendTime = (Date.now() + timeOffset) % 4294967295`, and
+a receiver **drops any packet whose `sendTime` is outside `interactTimeout`**,
+logging `outdated packet`. Time sync is therefore not optional: without it two
+machines with a clock skew larger than 3 s would silently discard every frame.
+
+### Send, invoke and answers
+
+| call | flag | meaning |
+| --- | --- | --- |
+| `com.send(msg)` | - | one way, nothing comes back |
+| `com.invoke(msg)` | 4 | the peer is expected to answer |
+
+Both return a `Message` immediately; `await messageObj.wait()` settles when it
+finishes or fails, and the result is on `messageObj.data` / `messageObj.error`.
+
+An answer is not a new conversation: the responder calls `messageObj.send(...)`
+on the **incoming** message object, which allocates a fresh id from the
+responder's own parity, sets the answer flag and puts the original id in
+`answerFor`. That is why `messageObj.send` only exists on a message whose invoke
+flag was set - answering a one-way send is not possible.
+
+Incoming messages the peer started arrive at the handler registered with
+`com.onIncoming(...)`: `handleAPI` on the server, `handleIncoming` on the
+client. Both directions are in use: the pairing and join flows are the first
+calls this server answers by talking to a *third* socket, which it does through
+`push`/`notify` in `ws/notify.js`. The client turns each of those into an event
+of the same name (`PUSH_EVENTS` in its `server.js`).
+
+### Packets, acks and splitting
+
+An `ArrayBuffer` larger than `packetSize` is cut into chunks, up to
+`sendThreads` of them in flight at once. Every packet is acked; an unacked
+packet is resent every `packetTimeout` until `packetRetry` runs out. A JSON
+message is always a single packet but is acked the same way.
+
+### Timeouts
+
+Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
+`connect`):
+
+| option | value | what it limits |
+| --- | --- | --- |
+| `interactTimeout` | 3000 ms | the gap between two packets of one message |
+| `timeout` | 5000 ms | the whole message, end to end |
+| `packetSize` | 1000 B | one binary chunk |
+| `packetTimeout` | 1000 ms | wait for an ack before resending |
+| `packetRetry` | `Infinity` | resend attempts per packet |
+| `sendThreads` | 16 | packets in flight at once |
+
+### Errors
+
+`messageObj.error` is `""` on success, otherwise one of:
+
+| value | when |
+| --- | --- |
+| `timeout` | the message did not finish inside `timeout` |
+| `inactive` | no packet arrived for `interactTimeout` - **this is what an unanswered invoke looks like** |
+| `abort` | this side called `abort()` |
+| `reject` | the peer sent an abort flag |
+| `send` | the `sender` function threw |
+| `receive` | a packet ran out of retries |
+
+## The application API
+
+Everything above carries plain objects with a `"type"` key. `handleAPI` in
+`ws/api.js` dispatches on it and every handler answers the caller. A type is
+served by one function in one group file under `ws/handlers/`; the groups are
+merged into the dispatch table in `api.js`.
+
+| group | types |
+| --- | --- |
+| `handlers/conf.js` | `conf-get` |
+| `handlers/connection.js` | `ping`, `session-get` |
+| `handlers/pairing.js` | `pair-create`, `pair-delete`, `pair-request`, `pair-accept`, `pair-reject` |
+| `handlers/joins.js` | `join-connect`, `join-list`, `join-rename`, `join-request`, `join-accept`, `join-reject`, `join-delete` |
+| `handlers/rooms.js` | `room-signal`, `room-data`, `room-leave`, and every **binary** message (see below) |
+| anything else | answered `{"success": false, "error": "unknown-type" \| "invalid-format"}` |
+
+The three below are the whole of what a connection can ask *about itself*; the
+pairing and join calls are the flow that connects two people, the room calls are
+the connection that flow leads to, and their requests, answers and
+server-initiated pushes are written out in
+[../plans/ws-pairing-joins.md](../plans/ws-pairing-joins.md).
+
+**A binary message is not a call.** `handleAPI` routes every `ArrayBuffer` to one
+place - the room relay - because a payload the communicator splits into packets
+cannot also be a JSON object with a `"type"` in it. The frame says what it is
+itself:
+
+```
+[0]      kind: 1 = bytes, 2 = a JSON payload
+[1..10]  the room id
+[11..]   the payload, which the server never looks at
+```
+
+It is forwarded to the other socket of that room exactly as it arrived, one way
+and unanswered. This is the path with **no size limit**: the communicator splits
+an ArrayBuffer into `packetSize` packets and reassembles it, so what a JSON call
+could not carry (one message, one frame) a binary frame can.
+
+| type | request | answer |
+| --- | --- | --- |
+| `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "guestAllowRelay": bool, "isAuth": bool, "isGoogleAuth": bool}, "pairing": {"answerTimeout": number}, "auth": {"google": {"clientId": string}}}` |
+| `ping` | - | `{"success": true, "timestamp": number}` |
+| `session-get` | - | `{"success": true, "sessionId": string}` |
+
+`conf-get` is built once in `ServerWS.start` by `buildPublicConf` and is the
+**public half** of the configuration - the version of the process, ICE servers,
+the permissions, and the public client id of each configured sign-in provider. Never key material, SMTP
+credentials, OAuth secrets or database settings. `auth` is absent when no
+provider is configured, and so is anything the current config schema has no
+field for - `serviceSharing`, which the client uses to decide whether to show the
+services route, so that route stays hidden (see
+[../plans/ws-client-config.md](../plans/ws-client-config.md)).
+
+`permissions` is what this server would let the caller do, so the client can
+leave a feature it is going to refuse off the screen rather than fail it at the
+point of use. **Every flag is answered for every client, set or not**: a key the
+configuration omits comes back as the default the schema documents, so the
+client never carries a default of its own.
+
+| flag | default | means |
+| --- | --- | --- |
+| `guestAllowShare` | `true` | a guest may share this device |
+| `guestAllowJoin` | `true` | a guest may join someone else's room |
+| `guestAllowRelay` | `false` | this server will carry the data of two devices that cannot reach each other, which is its own bandwidth - so it is the one guest flag that is off until it is asked for. It gates the **two relayed payload paths**: the `room-data` call and the binary relay frame, which is the one the client actually streams over. The negotiation itself (`room-signal`) is never gated. The client is told because a fallback that is not there must not be waited for. It is answered **once per connection**, into the client state at `clientConnect`, and read from there by every relayed message - never re-read from the configuration or a row while the socket is live |
+| `isAuth` | - | this server has some way to sign in, so an account is worth offering |
+| `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |
+
+`isAuth` and `isGoogleAuth` are the same question one step apart: whether there
+is any sign-in at all, and whether that one provider is there. Google is the only
+provider today, so the two agree and a second one would only widen `isAuth`.
+`isGoogleAuth` is read off the same key as `auth.google.clientId`, so a provider
+can never be announced here and then be missing the client id the button is
+built from.
+
+The client asks both through `ctx["ui"].permissions` (see
+`src/client/web/ui/ui.js`), never off `conf["remote"]` directly. `isAuth()` is
+what the user menu greys its *add an account* entry on, and what decides whether
+a guest notice offers a way to the sign-in screen; `allows(name)` answers a guest
+flag for whoever this client is, and the `new` screen puts each of its two flows
+on screen or replaces it with that notice. A flag that has not arrived reads as a
+refusal, which is only ever true while the loading layer is still up. When `auth` is absent there is no sign-in at all - `isGoogleAuth` is
+`false`, the `auth` section is left off, every client stays a guest, and the auth
+half of the configuration decides nothing. The permissions the schema carries and
+this answer does not are the ones the client has no say in: `userRegister` is
+enforced at sign-in (the client cannot know whether the account behind a
+credential exists yet), and `userRegisterRelay` is a registration policy that
+decides nothing on screen. `guestAllowRelay` is **not** one of them - it is
+enforced on the relay *and* answered here, because a client that waited for a
+fallback this server does not carry would wait for ever.
+
+`sessionId` is the id of the **connection**, ten characters from
+`generateId(10)`, unique among the live `clients` Map. It is not an account
+session and does not survive a reconnect.
+
+The `version` of the `conf-get` answer is the `version` of `package.json`,
+cached by `getVersion()`. A client whose own build does not match it is out of
+date, and the answer carries the version it should be on. It rides on `conf-get`
+rather than on a call of its own, since that is the one call the client already
+waits for before it goes online.
+
+### Static config over HTTP vs. the live version over WS
+
+These are two different versions and they are allowed to disagree.
+
+| | `index.json` over HTTP | `conf-get` over WS |
+| --- | --- | --- |
+| what it is | the **static** config the client was shipped with | the **live** version of the process answering right now |
+| written by | `buildConfFile`, at compile and nowhere else | `getVersion()`, read from `package.json` |
+| read as | `conf["version"]` | the `version` field of the answer |
+| how stale it can get | as stale as the client build | never |
+
+`index.json` is fetched once, at load, by `src/client/web/src/conf.js`. Nothing
+refreshes it. So it goes stale in two ways:
+
+- a **browser** tab left open across a server upgrade keeps the copy it loaded;
+- a **desktop** client reads the copy bundled in its own zip under
+  `resources/app`, which is as old as the installed client - arbitrarily far
+  behind the server it is talking to.
+
+The socket is the only thing that knows what the server actually is. Hence the
+intended behaviour:
+
+> After connecting, the client checks its own version against the one
+> `conf-get` answered. On a mismatch the UI points the user at the download page
+> so they can get the new version.
+
+**The check is implemented, the screen behind it is not.** The `open` handler of
+`src/client/web/src/server.js` compares `conf["version"]` against
+`conf["remote"]["version"]` right after `conf-get`, and on a mismatch marks the
+connection outdated (so it stops reconnecting) and raises `version-mismatch`,
+which `index.js` listens for. What is missing:
+
+- the download page already exists as the `downloads` screen
+  (`ui/downloads/`, route `downloads`), but it has no list to build the
+  OS/architecture choice from any more - `index.json` no longer carries one, so
+  `clientList()` returns nothing and the screen offers no download.
+
+Two things to settle before wiring it up:
+
+1. **A stale browser tab does not need a download - it needs a reload.** The
+   download page is the right answer for the desktop client
+   (`desktop.isAvailable`); for the web client the same mismatch means the page
+   itself is old, and reloading fetches a current `index.json` and a current
+   build. The two cases probably want different UI.
+2. **Where the download list comes from.** It used to be a `clients` array in
+   this file, written by two generators - `ServerHTTP.start` from the zips in
+   `tmp/desktop` at boot, `buildConfFile` from the dists the compile found.
+   There is one generator now, and it writes the same three keys into the web
+   client and into every desktop zip:
+
+   | key | web and desktop zip (`buildConfFile`) |
+   | --- | --- |
+   | `version` | yes |
+   | `http.domain`, `http.port` | yes |
+   | `ws.domain`, `ws.port` | yes |
+
+   The bundled copy was as old as the installed client anyway, so a target the
+   server added since went missing from it while a target it dropped was still
+   offered - exactly what the version mismatch implies is stale. The list wants to
+   come over the socket with the version answer instead.
+
+### Answering, not aborting
+
+An unknown or malformed call is **answered** with `{"success": false, ...}`.
+This matters: `messageObj.abort()` on an *incoming* message only resolves the
+local promise, it sends nothing to the peer, so aborting would leave the caller
+waiting out its whole `interactTimeout` and failing with `inactive` three
+seconds later. `handleAPI` funnels both cases through `reject()`, which answers
+an invoke and only falls back to `abort()` for a one-way send.
+
+## Gotchas
+
+- **`wait()` never throws.** A failed call resolves like a successful one, with
+  the reason in `messageObj.error` and `messageObj.data` left `undefined`.
+  Wrapping it in `try`/`catch` catches nothing; check `error` instead.
+- **Every call needs a failure branch.** Any type the server does not serve now
+  answers `{"success": false}`, so `data["success"]` is safe to read - but a
+  connection that dies mid-call still leaves `data` `undefined`.
+- **The two `communicator.js` copies must stay in sync**, including the parts
+  this document describes as layout. They are deliberately not an npm
+  dependency; edit the copies in the repo and keep their SPDX headers.
+- **Nothing serves `src/client/web` directly.** A change to the client is
+  invisible until `npm run server -- --compile` rebuilds `tmp/web`.
+- `ArrayBuffer.prototype.transfer` is used on every incoming binary frame,
+  acks included, so it is on the hot path of every message. It is newer than the
+  `"node": ">=20.11.0"` floor in `package.json` - worth verifying that floor
+  before trusting it.
+
+## Testing it by hand
+
+There is no test harness for the socket. The quickest check is a small script
+that drives the **browser's own** communicator against a running server, which
+is what verified the table above:
+
+```js
+import Communicator from "<repo>/src/client/web/libs/communicator/communicator.js";
+import WebSocket from "<repo>/node_modules/ws/index.js";
+
+const com = new Communicator({
+    "sender": async function(data) {
+        ws.send((data instanceof ArrayBuffer) ? data : JSON.stringify(data));
+    },
+    "interactTimeout": 3000, "timeout": 5000, "packetSize": 1000,
+    "packetTimeout": 1000, "packetRetry": Infinity, "sendThreads": 16
+});
+const ws = new WebSocket("wss://localhost:8444", {"rejectUnauthorized": false});
+ws.binaryType = "arraybuffer";
+ws.addEventListener("message", function(event) {
+    let data = event.data;
+    if (typeof data === "string") { data = JSON.parse(data); }
+    else if (data instanceof Buffer) { data = new Uint8Array(data).buffer; }
+    com.receive(data);
+});
+ws.addEventListener("open", async function() {
+    await com.sideSync();
+    await com.timeSync();
+    const m = com.invoke({"type": "conf-get"});
+    await m.wait();
+    console.log(m.error, m.data);
+});
+```
+
+`rejectUnauthorized: false` is needed for the self-signed certificate in
+`conf/`. The same certificate is why a headless browser refuses the page with
+`ERR_CERT_AUTHORITY_INVALID` - a real browser has to accept it once by hand.
+
+## Not implemented yet
+
+Sign-in and account sessions, user data subscriptions and the WebRTC signaling
+relay are still cut out of the WS server and planned in [../plans/](../plans/).
+The client's `Server` class matches what the server answers, so nothing in the
+browser sends a type the server does not serve. The UI modules those methods fed
+- the account windows, renaming a device, the room and the stream behind an
+accepted request - are still there and still mount, on empty lists and dead
+buttons, each one pointing at the plan that fills it again. The previous
+implementation is at commit `6c0d18a` on the server side and `da3921d` on the
+client side; both were written against an older config shape and should be read,
+not pasted back.

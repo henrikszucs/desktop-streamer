@@ -1,0 +1,39 @@
+{
+    "http": {
+        "name": {
+            "en": "Desktop Streamer (local)",
+            "hu": "Desktop Streamer (helyi)"
+        },
+        "domain": "localhost",
+        "port": 8443,
+        "key": "server.key",
+        "cert": "server.crt",
+        "redirect": 8080,
+        "cache": {
+            "size": 524288000,
+            "fileSizeLimit": 10485760
+        }
+    },
+    "ws": {
+        "domain": "localhost",
+        "port": 8444,
+        "key": "server.key",
+        "cert": "server.crt",
+        "database": {
+            "type": "sqlite",
+            "host": "database.db"
+        },
+        "webrtc": {
+            "iceServers": [
+                "stun:stun.l.google.com:19302"
+            ]
+        },
+        "permissions": {
+            "guestAllowShare": true,
+            "guestAllowJoin": true,
+            "guestAllowRelay": true,
+            "userRegister": true,
+            "userRegisterRelay": true
+        }
+    }
+}

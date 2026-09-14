@@ -1,0 +1,50 @@
+{
+    "settings": {
+        "appearance": {
+            "title": {
+                "en": "Appearance settings",
+                "hu": "Megjelenés beállítások"
+            },
+            "theme": {
+                "en": "Theme color",
+                "hu": "Téma szín"
+            },
+            "lang": {
+                "en": "Language",
+                "hu": "Nyelv"
+            },
+            "autolang": {
+                "en": "-- Automatic selection --",
+                "hu": "-- Automatikus kiválasztás --"
+            },
+            "tray": {
+                "title": {
+                    "en": "System tray",
+                    "hu": "Rendszer tálca"
+                },
+                "checkbox": {
+                    "en": "Create tray icon instead close",
+                    "hu": "Rendszer tálca ikon bezárás helyett"
+                },
+                "error": {
+                    "en": "System tray not supported.",
+                    "hu": "A rendszer tálca nem támogatott."
+                }
+            },
+            "autostart": {
+                "title": {
+                    "en": "Auto startup",
+                    "hu": "Automatikus indítás"
+                },
+                "checkbox": {
+                    "en": "Launch with the system",
+                    "hu": "Indítás a rendszerrel"
+                },
+                "error": {
+                    "en": "Auto launch not supported.",
+                    "hu": "Az automatikus indítás nem támogatott."
+                }
+            }
+        }
+    }
+}

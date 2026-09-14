@@ -1,0 +1,29 @@
+<div class="hide" id="account-information">
+    <h5 class="small-margin" data-localization="account.information.title">Information</h5>
+    <div class="small-margin">
+        <fieldset>
+            <legend data-localization="account.information.account-data">Account data</legend>
+            <nav class="wrap">
+                <!-- the address comes from the sign-in provider and is not this client's to change -->
+                <div class="field label border round information-box">
+                    <input type="text" id="account-email" disabled/>
+                    <label data-localization="account.information.email">Email</label>
+                </div>
+                <div class="field label border round information-box">
+                    <input type="text" id="account-firstname" maxlength="64"/>
+                    <label data-localization="account.information.first-name">First name</label>
+                </div>
+                <div class="field label border round information-box">
+                    <input type="text" id="account-lastname" maxlength="64"/>
+                    <label data-localization="account.information.last-name">Last name</label>
+                </div>
+            </nav>
+            <nav class="right-align">
+                <button id="btn-account-information-save">
+                    <i>check</i>
+                    <span data-localization="account.information.save">Save</span>
+                </button>
+            </nav>
+        </fieldset>
+    </div>
+</div>

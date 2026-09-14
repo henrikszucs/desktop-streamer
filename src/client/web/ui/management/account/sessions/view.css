@@ -1,0 +1,24 @@
+/* the account sessions window */
+
+/* Session information */
+.session-list {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding-top: 16px;
+}
+
+.session-box {
+    display: flex;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+    padding-left: 16px;
+    align-items: center;
+}
+
+.session-box > div:nth-child(1) {
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}

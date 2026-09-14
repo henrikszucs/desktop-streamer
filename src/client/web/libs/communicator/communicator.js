@@ -1,6 +1,18 @@
+/*
+ * easy-communicator — packetized, acknowledgment-based messaging protocol.
+ * Vendored copy of https://github.com/henrikszucs/easy-communicator
+ *
+ * Copyright (C) Henrik Szűcs
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ *
+ * This file is part of the bundled easy-communicator library and is licensed
+ * under the GNU Lesser General Public License v3.0 or later. See COPYING.LESSER
+ * and COPYING in this directory. It is distributed as part of Desktop Streamer
+ * (AGPL-3.0-or-later) but keeps its own LGPL terms.
+ */
 "use strict";
 
-//constant values 
+//constant values
 const errors = {
     NO_ERROR: "",               // no error
     TIMEOUT: "timeout",         // error occurs if the data transfer is not completed in time

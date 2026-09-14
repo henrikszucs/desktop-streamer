@@ -1,0 +1,18 @@
+{
+    "account": {
+        "reset": {
+            "title": {
+                "en": "Delete guest",
+                "hu": "Vendég törlése"
+            },
+            "warning": {
+                "en": "The guest has no account to delete: what is deleted is what this device keeps for it - the name and every remembered connection. It is the same as signing out, and nothing brings it back.",
+                "hu": "A vendégnek nincs törölhető fiókja: az törlődik, amit ez az eszköz tárol róla - a neve és minden megjegyzett kapcsolat. Ugyanaz, mint a kijelentkezés, és nem állítható vissza."
+            },
+            "confirm": {
+                "en": "Delete local data",
+                "hu": "Helyi adatok törlése"
+            }
+        }
+    }
+}

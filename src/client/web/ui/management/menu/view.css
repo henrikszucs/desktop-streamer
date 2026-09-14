@@ -1,0 +1,14 @@
+/* the side menu dialog */
+
+#dialog-menu {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+#dialog-menu > div:nth-child(2) > button {
+    width: 100%;
+    width: -moz-available;          /* WebKit-based browsers will ignore this. */
+    width: -webkit-fill-available;  /* Mozilla-based browsers will ignore this. */
+    width: fill-available;
+}

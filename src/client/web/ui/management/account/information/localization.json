@@ -1,0 +1,38 @@
+{
+    "account": {
+        "information": {
+            "title": {
+                "en": "Account information",
+                "hu": "Fiók információk"
+            },
+            "account-data": {
+                "en": "Account data",
+                "hu": "Fiók adatok"
+            },
+            "email": {
+                "en": "Email",
+                "hu": "Email"
+            },
+            "first-name": {
+                "en": "First name",
+                "hu": "Keresztnév"
+            },
+            "last-name": {
+                "en": "Last name",
+                "hu": "Vezetéknév"
+            },
+            "save": {
+                "en": "Save",
+                "hu": "Mentés"
+            },
+            "saved": {
+                "en": "Account information saved.",
+                "hu": "Fiók adatok mentve."
+            },
+            "failed": {
+                "en": "The account information could not be saved.",
+                "hu": "A fiók adatokat nem sikerült menteni."
+            }
+        }
+    }
+}

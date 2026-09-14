@@ -1,0 +1,19 @@
+<!--
+    The wait for the other device, over the room and under the shell's own
+    loading layer - the two are different waits and index.css keeps them in
+    that order. The button is the point of it: a host that never answers is
+    the one case where nothing else on screen is reachable.
+-->
+<dialog id="dialog-room-loading">
+    <h5 id="room-loading-title" data-localization="room.loading.title">Connecting...</h5>
+    <br>
+    <div id="room-loading-subtitle" data-localization="room.loading.subtitle">Waiting for the other device, please wait...</div>
+    <br>
+    <progress id="room-loading-progress"></progress>
+    <nav class="right-align">
+        <button class="border" id="btn-room-loading-quit">
+            <i>logout</i>
+            <span data-localization="room.loading.quit">Quit</span>
+        </button>
+    </nav>
+</dialog>

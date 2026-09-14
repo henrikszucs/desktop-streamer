@@ -1,0 +1,20 @@
+/* the login screen */
+
+/* Login */
+#google-login,
+#google-recover {
+    display: flex;
+    justify-content: center;
+    /* the scaled button below still lays out at its drawn size, so the row is
+       given the room the scaled one takes */
+    padding: 1rem 0;
+}
+
+/* Google draws the button at a fixed 32px for the size that is never
+   personalized (see google.js), so the drawn element is scaled up rather than
+   asked for a bigger one - a transform keeps it clickable as it is */
+#google-login > div,
+#google-recover > div {
+    transform: scale(1.5);
+    transform-origin: center;
+}

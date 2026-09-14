@@ -1,0 +1,19 @@
+<dialog class="" id="dialog-room-joining">
+    <nav>
+        <h5 data-localization="new.join.dialog-title">Joining...</h5>
+        <div class="max"></div>
+        <button class="circle transparent" id="btn-room-joining-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <div class="no-border">
+        <!--
+            Both are written by ./index.js as the wait goes on: the text says
+            which half of it this is, and the bar carries a value only once the
+            server has named a length for it - without one it is the
+            indeterminate bar, which is what an unanswered request is.
+        -->
+        <p id="dialog-room-joining-info" data-localization="new.join.dialog-asking">Asking the host device...</p>
+        <progress min="0" max="10000" id="room-joining-progress"></progress>
+    </div>
+</dialog>

@@ -1,0 +1,219 @@
+"use strict";
+
+// the shell layer: everything boot needs a document for, and the build that
+// mounts the module tree - the one file in ./ui that is not a module
+
+// first-party dependencies
+import { browser, width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
+import localization from "../src/localization.js";
+import registry from "../src/registry.js";
+import { createLoading } from "./loading/loading.js";
+
+// the size of the UI, from the display it is read on: every length in the shell
+// is a rem, so the root font size is the size of the whole UI
+const applyScale = function() {
+    const display = getDisplay();
+    const kind = getDisplayKind(display);
+    document.documentElement.style.fontSize = getRootFontSize(display, kind) + "px";
+    return {"display": display, "kind": kind};
+};
+
+// the theme, then the mode a tick later - beercss derives the mode from the
+// theme it just built, so the two cannot be set in one go
+const applyTheme = function(local) {
+    globalThis.ui("theme", local["color"]);
+    setTimeout(() => {
+        let mode = local["mode"];
+        if (mode === "auto") {
+            mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        globalThis.ui("mode", mode);
+    }, 1);
+};
+
+// the language of the shell: "auto" follows the browser, anything unsupported
+// falls back to English, and the resolved one goes back to the desktop shell
+const applyLanguage = function(local) {
+    let lang = local["lang"];
+    if (lang === "auto") {
+        lang = (navigator.language || navigator.userLanguage).substring(0, 2);
+    }
+    if (localization.supportedLanguages.indexOf(lang) === -1) {
+        lang = "en";
+    }
+    localization.setLang(lang);
+    localization.translate(lang);
+    return lang;
+};
+
+// the whole of the local configuration, applied: the theme, the language, and
+// what the desktop shell is told of them. Boot does it once, and the settings
+// reset does it again, so the defaults land the way any value does.
+const applyLocal = function(local, desktop) {
+    applyTheme(local);
+    const lang = applyLanguage(local);
+    if (desktop?.["isAvailable"] === true) {
+        desktop["ipcRenderer"].invoke("api", "set-lang", lang);
+        desktop["ipcRenderer"].send("api", "set-tray", local["minimizing"]);
+    }
+    return lang;
+};
+
+// how long a snackbar stands before it takes itself off screen
+const SNACKBAR_TIMEOUT = 6000;
+
+// the one place a call that failed says so. Its markup is built here rather
+// than written into index.html because nothing needs it before the first
+// module, and beercss puts it at the bottom of the window on its own - under
+// the loading layer and over everything else, which is the order index.css
+// writes down. A message comes from a module (or from a server), so it goes in
+// as text, never as markup.
+const createSnackbar = function() {
+    const snackbarEl = document.createElement("div");
+    snackbarEl.className = "snackbar";
+    snackbarEl.id = "snackbar";
+    document.body.appendChild(snackbarEl);
+
+    let timeoutId = -1;
+    const snackbar = {
+        "el": snackbarEl,
+        // the timeout is restarted by every message, so a second one is shown
+        // for its own time instead of the rest of the first one's
+        "show": function(message, isError = false) {
+            clearTimeout(timeoutId);
+            snackbarEl.textContent = message;
+            snackbarEl.classList.toggle("error", isError === true);
+            snackbarEl.classList.add("active");
+            timeoutId = setTimeout(function() {
+                snackbar.hide();
+            }, SNACKBAR_TIMEOUT);
+        },
+        "hide": function() {
+            clearTimeout(timeoutId);
+            timeoutId = -1;
+            snackbarEl.classList.remove("active");
+        }
+    };
+
+    // beercss draws it as something to click, so clicking it dismisses it
+    snackbarEl.addEventListener("click", function() {
+        snackbar.hide();
+    });
+
+    return snackbar;
+};
+
+// the ctx["ui"] namespace. ctx is handed in before its router is there, so
+// every call below reads ctx["router"] at the time of the call, not now.
+const createUI = function(ctx) {
+    const overlayEl = document.getElementById("dialog-overlay");
+
+    // the shared overlay, held by name because the loading layer and the dialogs
+    // overlap - on screen while anything holds it, blurred if any holder asked
+    const overlayHolders = new Map([["loading", true]]);
+    const applyOverlay = function() {
+        if (overlayHolders.size === 0) {
+            overlayEl.classList.remove("active");
+            overlayEl.classList.remove("blur");
+            return;
+        }
+        overlayEl.classList.add("active");
+        overlayEl.classList.toggle("blur", [...overlayHolders.values()].includes(true));
+    };
+    const overlay = {
+        "el": overlayEl,
+        "take": function(holder, isBlurred=false) {
+            overlayHolders.set(holder, isBlurred);
+            applyOverlay();
+        },
+        "release": function(holder) {
+            overlayHolders.delete(holder);
+            applyOverlay();
+        }
+    };
+
+    // the loading layer, over both segments - see ./loading/loading.js
+    const loading = createLoading(overlay);
+
+    // the message layer at the bottom of the window, over the dialogs
+    const snackbar = createSnackbar();
+
+    // the "permissions" block of the conf-get answer, asked as a question rather
+    // than read as a value - a missing flag has not arrived, it is not a default
+    const permissions = {
+        "get": function(name) {
+            return ctx["conf"]["remote"]?.["permissions"]?.[name] === true;
+        },
+        "isAuth": function() {
+            return permissions.get("isAuth");
+        },
+        // whether this client is the guest right now - the one place the
+        // guest permissions learn about accounts (src/account.js)
+        "isGuest": function() {
+            return ctx["account"] === null || ctx["account"].isGuest() === true;
+        },
+        // a guest permission, answered for whoever this client is
+        "allows": function(name) {
+            return permissions.isGuest() === false || permissions.get(name) === true;
+        }
+    };
+
+    return {
+        "overlay": overlay,
+        "loading": loading,
+        "snackbar": snackbar,
+        "permissions": permissions,
+        "env": {"browser": browser, "width": width, "sizeS": sizeS, "sizeM": sizeM},
+        "navigate": function(path, params) { return ctx["router"].navigate(path, params); },
+        "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
+        "closeDialog": function(id) { return ctx["router"].closeDialog(id); },
+        "closeDialogs": function() { return ctx["router"].closeDialogs(); },
+        // the open route again, for a screen whose records changed under it
+        "reload": function() { return ctx["router"].loadPath(); },
+        // the local configuration applied again, for a reset of it
+        "applyLocal": function() { return applyLocal(ctx["conf"]["local"], ctx["desktop"]); },
+
+        // the one question asked before something is undone for good, answered
+        // true or false. It opens nested - whatever asked it is still behind it
+        // and is what acts on the answer - and it is given localization keys
+        // rather than lines, so a language switched while it stands redraws it.
+        "confirm": async function(params) {
+            const view = await ctx["router"].openDialog("confirm", params, true);
+            if (typeof view === "undefined" || view === null) {
+                return false;
+            }
+            return await new Promise(function(resolve) {
+                view.addEventListener("done", function(event) {
+                    resolve(event.detail?.["isConfirmed"] === true);
+                }, {"once": true});
+            });
+        },
+        "loadModule": function(id) { return ctx["router"].load(id); }
+    };
+};
+
+// every UI module, mounted before the router runs, one dot-depth of the registry
+// id at a time so a module lands after the one it mounts into
+const buildUI = async function(router) {
+    const ids = registry.ids();
+    const depthOf = function(id) {
+        return id.split(".").length;
+    };
+    const depths = [...new Set(ids.map(depthOf))].sort();
+
+    for (const depth of depths) {
+        const level = ids.filter(function(id) {
+            return depthOf(id) === depth;
+        });
+        await Promise.all(level.map(async function(id) {
+            try {
+                await router.load(id);
+            } catch (error) {
+                console.error("Cannot build UI module " + id + ":", error);
+            }
+        }));
+    }
+};
+
+export { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
+export default { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };

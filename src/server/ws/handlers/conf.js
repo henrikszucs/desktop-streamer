@@ -1,0 +1,77 @@
+"use strict";
+
+// the public half of the configuration: what goes into it, and the call that
+// hands it out
+
+// first-party dependencies
+import { ANSWER_TIMEOUT } from "../notify.js";
+
+// the public half of the configuration, answered to "conf-get": the schema
+// defaults are repeated here, Ajv runs without "useDefaults"
+const buildPublicConf = function(conf, version) {
+    const permissions = conf["ws"]["permissions"] ?? {};
+    const google = conf["ws"]["auth"]?.["google"];
+    const isGoogleAuth = (typeof google?.["clientId"] === "string");
+    const isAuth = (isGoogleAuth === true);      // any sign-in at all, Google is the only provider today
+
+    const confPublic = {
+        // the live version of this process, the client checks its own against it
+        "version": version,
+        "webrtc": {
+            "iceServers": conf["ws"]["webrtc"]["iceServers"]
+        },
+        "permissions": {
+            "guestAllowShare": permissions["guestAllowShare"] ?? true,
+            "guestAllowJoin": permissions["guestAllowJoin"] ?? true,
+            // whether this server will carry the data of two devices that cannot
+            // reach each other. The client has to know before it fails over -
+            // a fallback that does not exist is a wait, and a wait says nothing
+            "guestAllowRelay": permissions["guestAllowRelay"] ?? false,
+            "isAuth": isAuth,
+            "isGoogleAuth": isGoogleAuth
+        },
+        // the one clock of the pairing flow, so neither side has to draw a
+        // spinner for a wait the server already knows the length of
+        "pairing": {
+            "answerTimeout": ANSWER_TIMEOUT
+        }
+    };
+
+    // the sign-in providers, the public client id of each and nothing else
+    if (typeof conf["ws"]["auth"] === "object") {
+        const auth = {};
+        if (isGoogleAuth === true) {
+            auth["google"] = {
+                "clientId": google["clientId"]
+            };
+        }
+        confPublic["auth"] = auth;
+    }
+
+    return confPublic;
+};
+
+// the first message a client sends - it stays offline until this one answers,
+// and it carries the version, so no second call is needed to check it
+const confGet = function(ctx) {
+    /*{
+    }*/
+    /*{
+        "version": string,
+        "webrtc": {"iceServers": string[]},
+        "permissions": {"guestAllowShare": boolean, "guestAllowJoin": boolean,
+                        "guestAllowRelay": boolean,
+                        "isAuth": boolean, "isGoogleAuth": boolean},
+        "pairing": {"answerTimeout": number},
+        "auth": {"google": {"clientId": string}}   (only when configured)
+    }*/
+    ctx["messageObj"].send(ctx["server"].confPublic);
+};
+
+// the types this group answers
+const handlers = {
+    "conf-get": confGet
+};
+
+export { handlers, buildPublicConf, confGet };
+export default handlers;

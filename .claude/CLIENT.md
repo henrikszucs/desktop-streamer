@@ -1,0 +1,854 @@
+# Client reference
+
+Why the browser client is put together the way it is. `CLAUDE.md` has the layout
+and the module contract; this holds the reasoning that used to sit in the source
+comments, so the files themselves can stay thin. `src/client/web` unless a path
+says otherwise.
+
+## Boot
+
+`index.js` is five stages and nothing else: the environment, the configuration,
+the shell, the UI, then the connection. Everything that touches the document
+lives in `ui/ui.js` — the appearance and language settings, the overlay, the
+loading layer, the snackbar, the `ctx["ui"]` namespace, and the build that mounts every
+module. Every screen and dialog is a module under `ui/`.
+
+`ctx` is built before either the `ui` namespace or the router exists, and both
+close over it, so each is filled in as soon as it is there and neither has to be
+constructed first. Every call in `ctx["ui"]` reads `ctx["router"]` at the time of
+the call rather than at the time it was defined.
+
+The route is opened *under* the loading layer and the layer lifts once
+`loadPath()` has it on screen, so the first thing a user sees is the screen
+itself. When the connection drops the layer comes back over whichever segment is
+open and the screen below is left untouched, so it is still there when the
+socket returns.
+
+## The size of the UI
+
+`applyScale` writes the root font size on `<html>`. Every length in the shell is
+a rem — beercss's own and this client's alike — so that one number is the size of
+the whole UI. It is script rather than a stylesheet because only script can ask
+what display it is on, and it is written again on a resize since a window dragged
+onto a second monitor changes the pixel ratio under it.
+
+CSS fixes an inch at 96 px, so `screen.width / 96` is how many inches the
+platform *believes* the display measures — not what a ruler gives, because the
+platform has already divided by the distance it assumes the display is viewed
+from. A phone of 2.7 real inches hands out the four inches of CSS pixels a small
+monitor would: the CSS pixel is a unit of angle, not of glass, and on a phone, a
+tablet and a monitor the platform gets that angle about right on its own.
+
+The one display it gets wrong is a television. It hands out the pixels of a
+twenty inch monitor for a screen watched from three metres and never grew the
+pixel to match the room, so text at the base size lands on the eye at a fraction
+of it. `getRootFontSize` scales a set by `tvScale * (width / 1920)`, clamped, and
+gives a desk display past 30 apparent inches a gentle ramp with a 1.25 cap.
+Everything else keeps 16 px: scaling a phone would undo work the platform did
+correctly.
+
+A set is identified by its user agent alone (`tvAgents` in `src/env.js`). The
+tempting alternative — `pointer: coarse` + `hover: none`, or a screen reporting
+no pointer and no hover — is also what a browser with no input device reports,
+headless Chrome at 1280×720 included, which is a television's resolution exactly.
+No media query separates the two. Missing a set costs it the desk size; taking a
+desk display for a set would double the UI on someone's monitor, so the guess
+only ever goes one way.
+
+## The shell: segments, chrome, layers
+
+The UI is two segments and a layer over both:
+
+```
+loading                 boot, and every time the connection drops
+management              the navigation bars and the main surface
+    new                 create a connection
+    devices, shares     manage the existing ones
+    services
+    downloads           get the desktop client
+    login
+room                    the stream, the whole window, no chrome
+```
+
+A segment is the layer above the screens: the chrome that is on screen while any
+of its own screens is. Which chrome belongs to which segment is a `data-segment`
+attribute in the markup, and a screen names the segment it opens in (`static
+segment`), so **neither is listed in the router** — new chrome needs no router
+change. The router puts a segment on screen by hiding the `[data-segment]`
+elements of the other one, and `body` carries the open segment as a class for
+styles that follow the segment rather than the screen.
+
+The loading layer is not a segment: it covers whichever one is open and gives it
+back untouched.
+
+`buildUI` mounts **every** module before the router runs, one dot-depth of the
+registry id at a time. The tree is small enough that per-module laziness bought
+nothing and cost a wait on the first click of each; it is also what the router
+needs, since it can only hide chrome that is already in the document. A module
+that mounts into another's markup has to follow it, which is what the dot-depth
+ordering is for — `settings` carries the markup `settings.appearance` mounts
+into. A module that throws is logged and skipped rather than taking the boot
+down with it.
+
+## The snackbar
+
+`ctx["ui"].snackbar.show(message, isError)` is the one place a call that failed
+says so out loud. It is built in script rather than written into `index.html`,
+because unlike the loading layer nothing needs it before the first module, and
+beercss already puts a `.snackbar` at the bottom of the window — under the
+loading layer and over the dialogs, which is the order `index.css` writes down.
+The message is set as `textContent`: it is a string a module chose, and the
+reason inside it came from a server.
+
+It takes itself off screen after six seconds and on a click, and a second
+message restarts that clock rather than inheriting what is left of the first
+one's. The text belongs to the module that shows it — the shell slice carries no
+strings for it.
+
+## The overlay and the loading layer
+
+Both the loading layer and every dialog raise and lower the one shared overlay,
+and they overlap: a dialog that opens its first window asks the router for a
+module, and the loading layer handed back at the end of that load would take the
+overlay out from under the dialog that is still open. So the overlay is held **by
+name** (`overlay.take(holder, isBlurred)` / `overlay.release(holder)`) and is on
+screen while anything holds it, blurred while anything holding it asked for the
+blur. It starts held by `"loading"`, which is the state `index.html` is written
+in.
+
+The loading layer holds its own named set for the same reason. Two things ask for
+it and they overlap: the connection, which holds it from boot until the server
+answers and takes it back the moment it drops, and a module slow to arrive (the
+router takes it as `"module"` after `LOADING_DELAY`). A screen that finishes
+loading while the socket is down must not hand the layer back. `dismiss()` is the
+exception — the version mismatch is terminal, so it clears every holder and
+leaves the overlay to the dialog that replaces it.
+
+The room's own wait (`room-loading`) is **not** a holder of this layer and never
+takes it: it waits for the other device rather than for the server, and it is a
+dialog *under* the layer, so a socket that drops replaces it — see The room.
+
+## Permissions
+
+`ctx["ui"].permissions` is the `permissions` block of the `conf-get` answer,
+asked as a question rather than read as a value. The server answers every flag
+for every client whether its configuration sets it or not (`buildPublicConf` in
+`src/server/ws/handlers/conf.js`), so a flag that is not there is *an answer that has not
+arrived* rather than a client-side default — and nothing but the loading layer is
+on screen until it has, so "not yet" and "no" are the same thing to a module.
+
+What the server would refuse is taken off the screen rather than left to fail at
+the point of use, and a notice in its place says why. The checks run on every
+`open()` and again on every reconnect, so a server that comes back configured
+differently is followed.
+
+The guest flags are the permissions of the user this client *is*, so they only
+hold while it is the guest — `isGuest()` asks `ctx["account"]` (see Users), and
+is the one place the permissions know about accounts.
+
+Where an entry is refused, prefer greying it over removing it: an entry that is
+gone says nothing, and what the user needs to know is that it was refused by the
+administrator and not by this client. `nav-top` greys the add-account entry,
+shows the reason in its tooltip, and removes the `data-route` — which is what
+stops the click, since the router's delegated handler walks past an element with
+no `[data-route]`.
+
+The login screen is reachable by URL whatever the server answers, so it has a
+notice for each way there can be nothing to sign in with. `isAuth()` false is
+the administrator's decision and gets `main.authDisabled`, the same string as
+the bar's tooltip. A provider that *is* offered can still fail in the browser:
+Google's button is a script fetched from Google itself, and offline, behind a
+filter or with the script blocked by an extension there would be an empty
+screen and no error. `GoogleLogin.load()` resolves to whether that script is
+usable — its `load`/`error` events with `LOAD_TIMEOUT` behind them — and a
+failure shows `login.unavailable` with a retry instead of the button. A failed
+tag is removed so the retry fetches again rather than finding a dead element,
+and the button is rendered through `google.accounts.id.renderButton` rather
+than the declarative `g_id_onload` markup, which Google's script only parses
+once at its own load and so would never draw a button created after it. The
+button is rendered at `size: "medium"` on purpose: Google personalizes the
+button ("Sign in as *Name*", with the picture) whenever the browser holds a
+session that approved this client id, there is no option against it, and the
+only documented way not to get it is a button below `large` — so the screen
+always reads "Sign in with Google" and shows nobody's account.
+
+Beneath the sign-in is the account recovery, for somebody locked out of their
+own account by a session that keeps ending theirs. It is kept quiet — well
+below the sign-in, a plain bordered button in the middle rather than a red one
+— so the eye lands on the sign-in first. Google's button is the only
+way to get a credential, so the recovery button does not call anything — it opens a
+panel with a Google button of its own and hides the sign-in one, and `mode` on
+the screen says what the one credential that can now arrive is for. `recover()`
+calls `account.recover()`, which sends `sessions-revoke`: every session of the
+account ends, none starts, the local record goes, and the route is redrawn as
+the guest if this client was that account. The screen stays, since signing in
+again is what comes next.
+
+## Users
+
+The client is always a user. It starts as the guest and signing in adds an
+account *beside* it rather than replacing it, so there is no signed-out state and
+no second menu for one. `src/account.js` (`ctx["account"]`) is that model: the
+accounts this client holds are `accounts` in the local configuration — each with
+the `sessionKey` the server answered once to `login-google` and the profile as it
+was last seen — and `userId` is the one the client wants to be, `""` for the
+guest. Who it *is* is `liveId`, filled only by the server's answer: the server
+holds who a socket is for that socket alone, so `resume()` presents the wanted
+key through `login-session` on every `online`, before the route is drawn, and
+a key the server no longer knows (ended from another device, or run out) drops
+the record on the spot. A reconnect does not flip the bar to the guest and back:
+`liveId` is left alone while the loading layer is up and `resume()` sets it
+again. The Google credential goes from the login screen's `login` event to
+`loginGoogle()`, and a yes navigates home — the bar follows the `change` event.
+Signing in again as an account this client already holds sends that record's
+`sessionKey` along — the e-mail is read off the credential's payload only to
+find the record, never trusted — and the server hands the same session back,
+so the record is refreshed rather than doubled and the sessions list shows one
+device once.
+`switchTo("")` is `login-guest`, which leaves the session for the device to come
+back to; `logout()` is `logout`, which ends it on every socket presenting it.
+A `logout` pushed by the server — this device signed out from another one — is
+answered the way a sign out from here is: the record dropped, the dialogs
+closed, the route redrawn. Every user's records are rows of the one `user` table in
+IndexedDB keyed by the id of the user they belong to; the guest is the row under
+the empty id (`GUEST_ID` in `src/conf.js`), since a client is only ever one guest
+and the empty key collides with no account id. The `configuration` table is not a
+user's row, which is why a guest reset leaves the theme and the language alone.
+
+Sign out means `resetUser("")` for the guest — forget the local connection
+records, there is no session to end on the server — and `account.logout()` for an
+account; both end in `refresh()`, `closeDialogs()` and `reload()`, since the
+route was drawn for the user before. The guest's name is a localization key rather than a value, so its menu
+row follows a language change like the rest of the bar — unless the guest gave
+itself one in the account dialog, which is kept on its row (`name`, beside the
+joins) and shown as text instead.
+
+The confirm dialog carries an overlay of its own (`#dialog-confirm-overlay`, mounted from its `view.html` beside the dialog and toggled in `show()`/`hide()`): it is only ever opened nested, and the shared overlay is already held by the dialog asking and sits *under* it, so without one the question and the dialog behind it would stand side by side with nothing to say which is live. A click on it is a no, like a click on the shared overlay for any other dialog; `index.css` stacks it over every dialog and the question over it.
+
+The guest's sign out cannot be taken back, so `logout()` in `nav-top` asks
+through the confirm dialog first, and a yes is three things: the row dropped,
+`joins.reset()` — the memory records cleared and `join-disconnect` sent, since
+the server had this socket presented on the old codes (`join-connect`) and
+would otherwise go on answering for a device that dropped them until the socket
+actually closed — and the route drawn again (`ui.reload()`) under the dialogs
+that go, because the devices screen reads its records once on open rather than
+following `change`. The socket is kept: closing it would have done the same
+through the shell's `offline`/`online` handlers, at the cost of the reconnect
+wait under the loading layer.
+
+The account dialog is not the same column for every user. `open()` asks
+`permissions.isGuest()` and shows the buttons marked with that `data-user`: the
+guest has its name (`account.guest`, the *Name* button — the field opens on the name the bar shows, the localized "Guest" when the row has none, and saving that default back keeps the row empty so the name goes on following the language) and a delete (`account.reset`) that is the
+bar's `logout()` reached through `loadModule("nav-top")` — one call, so the
+menu's sign out and the dialog's delete cannot drift apart — where an account
+has the information, sessions and delete windows. The guest's name window
+reaches the bar the same way and calls `refresh()` after a save so the row
+follows it. The account's `information` window edits the two names through
+`account.update()` — the e-mail is the provider's and stays disabled — and the
+bar follows on `change`; a change pushed from another device (`user-change`)
+refills the fields while the window is open. `sessions` lists
+`account.sessions()` on every open in the `SessionBox` rows, and the button on
+a row is one of two things: on this device it is the bar's `logout()` again,
+on another it is `endSession()` and the row goes. `delete` is the account's
+end, in two halves. *Send delete key* is `account.requestDelete()` — the server
+mails a key to the account's address (`delete-email`, in the client's language)
+and the module notes **this device asked**: `{userId, sessionId, expire}` in the
+tab's `sessionStorage` rather than the local configuration, since the key is
+only good on the account session that asked (the server binds the row to it)
+and asking again is one click — so it survives a reload of this tab and reaches
+no other tab or device, with memory standing in where storage throws. `setStage()`
+is the gate: the key field and *Delete my account* are disabled, and the notice
+under the send button hidden, unless `hasDeleteRequest()` is true — the request
+names the current account on its current session and has not run out — checked
+on every open and again after a send, so the second half only opens on the
+device that asked. A `too-soon` answer (the server's cooldown) is its own line
+rather than the generic failure, and pressing send again is safe: the server
+holds one code per account and mails the same one again. *Delete my account*
+asks `hasDeleteRequest()` once more — the key may have run out while the field
+stood open — and a device that no longer holds a request is told so and the
+field closed, without the server being asked; only then is the confirm dialog opened (`confirm.deleteAccount`,
+the one line that says it cannot be undone), and only a yes calls
+`account.deleteAccount(key)` — the `delete` call, then the record dropped and
+`change` emitted, so the bar is the guest's. The window then does what the
+bar's sign out does after the call: `navTop.refresh()`, `closeDialogs()`,
+`reload()`, and a snackbar that says it happened. An `invalid-key` answer — a
+wrong code, another device's, one that ran out — is one notice, since the
+person's move is the same for all three: check the code or send a new one.
+
+The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
+
+`OLD_GUEST_TABLE` is dropped on every open; a client that ran the two-table build
+still carries it. Dropping a table that is not there is free, so it costs a
+database version only once.
+
+## Navigation
+
+One delegated click handler on `document` answers every `[data-route]` and
+`[data-dialog]` in the shell and in every module, so adding a screen wires no
+buttons by hand. `#navigation` is a counter: the newest navigation wins over one
+still loading.
+
+`blurMenu` walks *up* the menu nesting because a beercss menu stays open until
+whatever holds it loses focus, and a submenu hangs on an `<li>` that cannot hold
+any — the walk is what reaches the element that does, e.g. the user-menu button
+for an entry of the switch-account submenu inside it.
+
+Rows built in script rather than written in `view.html` (the account rows, the
+device and share boxes) are built because there is one per record, and a name
+that comes from the server goes in as `textContent`, never as markup. Their own
+labels carry `data-localization` like any other markup, but nothing translates
+them on their own — a card is built long after the module it belongs to was
+translated — so the screen hands each one to `translate(lang, box.el)` as it
+builds it. A label that changes with the record's state (a card's *Connect* and
+*Offline*) is two spans and a `hide`, not a string set from script, so the card
+is translated once and never again.
+
+## The transport
+
+`src/server.js` is not a UI module: the shell builds one `Server` and hands it to
+every module in `ctx`. Nothing goes online without the `conf-get` answer, and
+`wait()` reports a failed call in `message.error` rather than throwing, so the
+answer has to be *checked*, not caught.
+
+The version check compares the build of this client against the build of the
+server process answering it. They are allowed to differ — a browser tab or an
+installed desktop client is as old as the day it was loaded — but nothing past
+that point is, so the connection ends there and the shell says how to get the
+matching build. An outdated client does not reconnect: it would fail the same
+check every two seconds, and going offline would put the loading layer back over
+the mismatch the shell just showed.
+
+What the server says on its own arrives at `handleIncoming`, which reads the
+message to its end so the communicator can close it and hands it on as an event
+of the same name — `PUSH_EVENTS` is the list, and a type outside it is logged
+rather than dispatched. Seventeen types today, one set per flow: the pairing
+(`pair-request`, `pair-accept`, `pair-reject`, `pair-cancel`, `pair-code`), the
+joins (`join-request`, `join-accept`, `join-reject`, `join-cancel`,
+`join-remove`, `join-online`), the room (`room-open`, `room-signal`,
+`room-data`, `room-close`) and the account (`user-change`, `logout`). A module
+listens for the ones it is in the middle of rather than the transport holding
+state about them, so a new push is a line in that set and a listener in the
+module it concerns.
+
+`createPairCode`/`deletePairCode` are the connection code the share flow hands
+out, and `pairRequest`/`pairAccept`/`pairReject` are the join attempt it
+introduces. `createPairCode` hands back the code and nothing else: it has no
+lifetime to report. What they throw carries the *reason* as the message — the server's
+own error name (`not-allowed`, `busy`, `unknown-code`), or the transport's when
+the call never got an answer — because turning a reason into something a user
+reads is the caller's job, not the transport's.
+
+## The pairing flow
+
+Three dialogs and one code. `room/create` holds the code and steps aside;
+`room/joining` is the wait on the peer; `room/request` is the decision on the
+host. Each owns its own half of the conversation, and none of them holds state
+the server does not.
+
+The one clock is the server's, not the client's: `conf-get` carries
+`pairing.answerTimeout` and the answer to a request repeats it. That is what
+makes both bars mean something — a bar drawn against a number the client invented
+would be a spinner with extra steps. The code itself has no clock at all: it
+stands while the share dialog is offering it, so nothing on either side
+refreshes it, and only a refusal replaces one. Until the server has answered, `room/joining` shows the *indeterminate*
+bar (a `<progress>` with no `value`), because at that moment there is genuinely
+no length to draw.
+
+On the host, the bar runs across the reject button rather than beside the pair of
+them: rejecting is what happens if nothing is clicked, so the button that fills
+up is the button that will act, and the line under it says so. The dialog answers
+half a second before the server's own clock, so the other side hears the host's
+decision rather than a timeout the host was never told about.
+
+Two orderings are load-bearing, and both were bugs first:
+
+- **The accept has to leave before the flow is torn down.** Closing the share
+  dialog gives the code back (`pair-delete`), and a code given back while a
+  request is pending *is* a rejection — so `room/request` dispatches its `done`
+  event only once `pairAccept()` has returned, and `room/create` tears down on
+  that event rather than on the click.
+- **`close()` never talks to the server.** A dialog of this flow is also closed
+  *for* it — the request ended from the other side, or the shell dropped every
+  dialog when the socket did — so only the explicit paths (the close button, the
+  countdown, the two answers) send anything. Closing on an answer that already
+  arrived would answer it back.
+
+A rejected code is replaced by the server, and the new one arrives as a
+`pair-code` push into the field the old one was in. Nothing on the host asks for
+it: the dialog that shows a code takes whichever code it is given.
+
+## Remembered devices
+
+The host may add two things to a yes, and `room/request` is where both live.
+**Remember** writes a join: a row on the server and a record on each side of it,
+each holding its own code. **Unattended** appears only once remember is ticked,
+because it says something about a device you are keeping - that it may come back
+without anybody being asked - and means nothing about one you are not.
+
+`src/joins.js` (`ctx["joins"]`) is this client's half of that, and **the two
+sides are kept in different places**. A share is the machine's: its record lives
+in the guest row of the local database (`getJoins`/`setJoin`/`removeJoin` in
+`src/conf.js`, under `GUEST_ID`) whoever is signed in, so the host code never
+leaves this client and the shares screen shows every user of it the same list.
+A device is the person's: its record lives in the row of the user the client is
+right now, so the devices screen shows only that user's - the guest's are the
+codes it holds and go with the guest row when it is reset, and an account's are
+handed to any client it signs in on by `join-sync`, since the server wrote the
+account on the row when the pair was made. `rowOf(isHost)` in `joins.js` is the
+one place that decides which row a record goes in, and an account forgotten here
+(`dropRecord` in `src/account.js`) takes its row with it - the server has the
+devices back at the next sign-in.
+
+**One join, one side per client.** The two sides of a join carry the same
+`joinId`, and `records` holds one record per id - so a join this machine hosts
+is a share here and nothing else, and the device side of it is the other
+machine's whoever is signed in on both. `join-sync` cannot know that: the row
+carries the peer's account and no host, so when the *same* account is signed
+in on both machines (one person, two devices - or two windows of one browser,
+which share the stored accounts) the host is handed its own share back as a
+device of that account. `syncAccount()` skips an entry whose id is a share
+here, `load()` skips a device record with a share's id and drops the row entry
+an older sync wrote, and `remember()` refuses the device side of a join already
+hosted here. Without the three the sync overwrote the share record at every
+sign-in as that account - the shares screen emptied on the switch and the host
+presented the peer code from its own socket. What is still not supported is two
+windows of one browser pairing *with each other*: they are one client on both
+sides of one join and one guest row, and neither side's record can stand
+without the other's going.
+
+`connectAll()` runs on every `online`, before the screen is even up: a host is
+only reachable on the joins it has connected, and nothing on screen asks for
+that. It loads the rows, asks `join-sync` for an account, and presents every code
+that this socket has not presented yet (`isConnected`, cleared on `offline`). A
+code the server does not know is dropped locally on the spot - the other side
+deleted it while this one was away. **A switch of user is a switch of devices**:
+`joins` listens to the account's `change`, and when the id differs from the one
+whose devices are held it drops those records and starts one sync that takes the
+socket off them with a scoped `join-disconnect`, loads the new user's rows and
+presents their codes - the shares are left exactly where they were. **The sync
+is one wait, started before the change is told**: `list()` waits on a sync in
+flight, so a screen that answers the switch is drawn from the new user's records
+only once the server holds this socket on them; drawn any earlier, every device
+would come out offline and stay that way. A second `connectAll()` for the same
+user while one is in flight joins it rather than presenting every code twice,
+which is what makes the boot's own call and the listener's coexist, and a
+generation counter is what an answer from before a switch is checked against, so
+a code presented for the old user cannot put a record back that the switch took
+out. The devices and shares screens then read the records and ask the server
+only for who is online, which is the one thing a local record cannot know.
+`list()` emits nothing, and that is what lets both screens re-run a build that a
+`change` interrupted (`isPending`) instead of dropping the change - the codes
+presented after a switch land while the screen is mid-build more often than not. What is not pushed between two clients of one account: a device
+remembered or renamed on one reaches the other at its next `connectAll()`, a
+device deleted on one reaches the other at once (`join-remove` goes to every
+socket on the join).
+
+**A connection has a name, and it is this side's own.** `join-rename` writes it
+to the caller's own column on the row (`peer_name` for a host, `host_name` for a
+peer) and nothing is pushed to the other end, which keeps whatever it called this
+one. It is on the row rather than only in the local record so a device presenting
+the same code again is handed it back: `rename()` writes both, and `connectAll()`
+adopts what `join-connect` answers when that is not empty - an empty one is a
+connection nobody has named, not a name somebody cleared, so the local record
+stands. `management/connection` is the dialog, and a rename made while the socket
+is down is local only, since the call cannot be made. The same dialog names the
+live share, where there is no row and no call at all - see "A share is not only a
+record" below.
+
+Who is on the other side of a join arrives the same way: `join-online` is pushed
+to each side as the other's first socket appears and its last one goes, so
+presence is the server's answer rather than the age of the last screen that
+looked. `ctx["joins"]` keeps it on the record, drops all of it on `offline` -
+nobody is reachable until `connectAll()` has presented the codes on the next
+socket - and fires `change` for whatever draws it.
+
+**The shares screen is what draws it; the badge on the two bars does not.**
+`countOnline(true)` is the devices on the host side of this client that are
+there right now, and it stays a question for the screen: a remembered device
+being online means it *could* ask, not that anything is crossing to it. The
+badge is lit by `room.isSharing()` alone - this client is the host of a room
+that stands - because a machine sharing its screen is one whose user is looking
+at something else, so the bar says somebody is on this machine and the screen
+behind the entry says who. It is a dot rather than a count - a beercss badge is
+`var(--error)` and `min` clips it to one - which is also why `nav-left` and the
+`menu` dialog of the small layout carry the same two lines against their own
+badge, each listening to the room's `connecting` and `closed` edges and to
+nothing of the records.
+
+**A device that comes back is answered wherever the shell happens to be.** That
+is the difference between a join request and a pair request: the pairing dialog
+is open by definition, a returning device arrives at a client that may be
+anywhere. So `room/request` listens for `join-request` from `mount()` and opens
+itself, rather than being opened by something that has to be open already. One
+request is answered at a time - a second is refused rather than queued behind the
+dialog - and an unsupervised join never arrives at all, which is exactly what the
+host agreed to.
+
+Asking to come back in is the same wait as a first pairing, so it is the same
+dialog: `room/joining` takes a `mode` and sends either `pair-request` or
+`join-request` itself. An unsupervised join is answered by the server in that
+first call, so that one is over before the bar has moved - and it goes into the
+room without the snackbar an accept is announced with (`enterRoom` alone, not
+`onPairAccept`): nobody decided anything, and a device that walks in every time
+would be told "the host accepted" every time.
+
+The code is the server's to make - six digits, so it can be read out loud - and
+it belongs to the socket it was asked on: the server drops it when the connection
+goes, which is why the share dialog asks for one when it opens and gives it back
+when it closes. `createPairCode` hands back the code and nothing else, so nothing
+on either side refreshes it.
+
+## The connection
+
+`ctx["room"]` (`src/room.js`) is the live connection between this device and the
+other one, and it is the shell's rather than the room screen's: **the host holds
+one while it is on its own screens**, so a screen cannot own it.
+
+Nothing opens it by hand. The server puts the two sockets in a room when a
+request is accepted and tells them both (`room-open`), so an accepted pairing, a
+remembered device let back in and an unsupervised one nobody was asked about all
+arrive here down the same path - and the same message says which side this
+socket is. **Which side decides who offers**: the peer asked for the connection,
+so the peer opens it and the host answers. One rule, rather than a negotiation
+about who negotiates.
+
+**What that message carries is a key, not an id**, and it is this side's alone.
+The two ends of one room hold different keys and neither is ever told the
+other's: every room call presents the caller's own (`roomKey`), the server checks
+both that it minted it and that this socket is the side it gave it to, and
+everything it carries across - a signal, a relayed message, the close - is
+re-addressed to the receiver's key on the way, the binary frame included. So a
+key that leaks names one side and works from one socket, and a client that has
+somehow kept more than it should still cannot do the other half. `getRoomKey()`
+is what this client knows the room by; there is no id behind it that both sides
+share.
+
+What crosses the server is SDP and ICE and nothing else, one message per call
+(`room-signal`), so the server holds nothing between two of them. Three details
+are worth keeping, and two of them are the same mistake at different heights:
+
+- an ICE candidate that arrives **before the description it belongs to** is held
+  until one is set - both ends start gathering at once and the messages cross;
+- a signal that arrives **before this side's own `room-open`** is held by the room
+  key in it and replayed when it comes. The two ends are told about the room in two
+  separate messages and the offer chases them, so on a slow or backgrounded
+  socket the first signal can land first - and a dropped offer is a negotiation
+  that never starts, which is a wait that never ends;
+- the *null* candidate that ends gathering is not sent, since it says nothing the
+  other end needs.
+
+A description that cannot be *sent* ends the attempt (`leave("failed")`) rather
+than leaving a connection nobody is negotiating: there is nothing after it to
+recover with. Every step logs one line - `Room <id> open as peer`, `sent offer`,
+`is connecting`, `is connected`, `closed (reason)` - so a connection that does not
+come up says how far it got, on both machines.
+
+**There is no TURN server in this project: the WebSocket server is the relay.**
+A connection that cannot be made directly is carried by the same socket both ends
+already hold, if the server allows one. ICE is given `DIRECT_TIMEOUT` (12 s, and an ICE `failed` before that), and
+then what would have crossed between the two devices crosses the server instead
+(`room-data`). Three things are worth keeping straight:
+
+- **the clock is the client's, not ICE's.** A connection that never gathers a
+  usable candidate reports nothing at all, so waiting for `failed` is waiting for
+  a message that may never come;
+- **both ends have to give up together**, and they will not do it at the same
+  moment: whoever gets there first sends a `relay` signal and the other follows
+  on the spot. A first relayed message is taken as the same statement, for the
+  case where that signal is the one that went missing;
+- **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
+  answered to every client in `permissions` (it is off unless the configuration
+  says otherwise, since it spends the server's own bandwidth), and where it is
+  off a failed direct attempt ends the room rather than hanging on one;
+- **a direct connection that is *lost* is the same case as one that was never
+  made.** A channel that closes mid-room says nothing about why - the other end
+  leaving and the path between them breaking look identical from there, and what
+  tells them apart arrives on the socket rather than on the channel - so the room
+  is given `CLOSE_GRACE` (1 s) to hear a `room-close`, and what is still a room
+  afterwards moves onto the relay instead of ending. The screen does not blink:
+  the state stays `connected` and only the indicator appears.
+
+`send()` is the same call in both modes and `message` the same event, so nothing
+above the transport knows which it is on. **On the relay it has no size limit**:
+whatever is handed in becomes a binary frame (`buildRoomFrame` in
+`src/server.js`, bytes as they are and anything else JSON-encoded), and the
+communicator splits that into packets and puts it together again at the far end -
+which a JSON message is *not* subject to, and is the whole reason the frame
+exists. Two things follow that the stream work has to know:
+
+- **frames can finish out of order.** `send()` resolves when the last packet has
+  left, not when the far end has the message, so a big frame is still being
+  reassembled while a small one sent after it arrives whole. Anything that cares
+  about order carries its own sequence.
+- **both legs are the same protocol.** The data channel is wrapped in a
+  `Communicator` exactly as the socket is, so packets, acknowledgments and
+  reassembly happen on a direct connection too - which is what lets `send()` be
+  one call with one behaviour, and lifts the per-message ceiling a raw
+  `RTCDataChannel` has (a few hundred kilobytes). Its packet is 16 KB, the size
+  every browser agrees on, against the socket's 1 KB: no proxy sits in the middle
+  of this one. The room bar is the exception, and
+deliberately: a relayed connection is slower and is worth saying so - the
+indicator is in the empty track the centring already leaves, and it is only ever
+shown when it is true, because an indicator for the expected case is one more
+light to learn to ignore.
+
+**"Connected" means the two ends have exchanged packets**, not that ICE says so
+and not only that the channel opened: the channel opening says *this* end is
+ready, and the `sideSync`/`timeSync` that follows says the two of them actually
+reached each other, which is later and truer. A channel that opens but cannot be
+synced is not a connection - it is left to the direct clock, which takes the
+relay - so the sync failing must never report `connected`.
+
+The communicator is built when the channel is wired rather than when it opens:
+the other end opens at its own moment and can sync into this one first, and a
+packet that arrives before there is anything to receive it is a negotiation that
+hangs. It carries no media and nothing is sent on it yet - it
+is the handshake that proves the path, and the seam the control protocol and the
+stream land on (`getConnection()`/`getChannel()`).
+
+The two ways out are not the same. `leave()` is this side deciding: it tears the
+connection down **and** tells the server, so the other end hears `room-close` and
+stops. A `room-close` that arrives from the server is the other end having gone,
+and only takes this side down. Either way the state ends at `closed` and the
+event says why. One room at a time on this client - a second `room-open` replaces
+the first - which the server does not impose and a host with two peers will
+eventually need.
+
+## The room
+
+The room is the **peer's** side of a connection - the one looking at somebody
+else's screen - and the bar under the stream is that peer's half of it: what it
+hears, what it drives, and how much of the line the host is allowed to spend on
+it. Nothing carries any of it to a host yet, so the whole bar ends in one
+`settings` event on the screen and a `getSettings()` beside it, which is the
+seam the stream is wired to when it lands.
+
+**The bandwidth is the cap, and the resolution is priced against it.** One table
+in `ui/room/index.js` says what each picture costs to send, and the Mbps the peer
+allows is what decides which of them may be asked for at all - a resolution the
+line cannot carry is not paid for in sharpness but in a picture that arrives late
+and in pieces. So the entries over the cap are greyed and inert with their price
+beside them (an entry that is simply gone says nothing - see Permissions), the
+`automatic` entry is the cap itself and follows it, and a resolution that was
+chosen by name is brought **down** when the bandwidth moves under it, with the
+snackbar saying which one it is now. There is no path that leaves the bar showing
+a picture that is not being asked for.
+
+**A wait that is not going to end stops claiming to be one.** The screen gives
+the other device `CONNECT_TIMEOUT` (20 s, longer than ICE needs on any path that
+works) and then swaps the dialog's title, text and bar for *not connected* -
+nothing here retries, so what runs out is the claim that something is happening,
+and the quit button becomes the only thing left to do. A connection that drops
+later goes to the same state.
+
+**The wait ends when the connection does.** `room-loading` is up while
+`ctx["room"]` is not connected: the screen listens for `connected` and lifts it,
+and for `closed` and puts it back with the snackbar saying so - a connection that
+drops leaves the peer looking at the wait it came in through, with the quit
+button in it, rather than at a bar that controls nothing. `open()` asks
+`isConnected()` rather than assuming: the socket dropping and coming back reopens
+this screen, and the connection between the two devices does not run through that
+socket.
+
+**There are two waits and they are not the same wait.** The shell's loading
+layer is the one that covers a server that has gone away; `room-loading` is the
+wait for the *other device*, and it is an ordinary dialog under it (`dialog` is
+z-index 102 in `index.css`, the layer is 300). That ordering is the whole
+behaviour: while the socket is down the shell closes every dialog and raises its
+own layer, so a client that cannot reach a server is never also claiming to be
+reaching a host - and when the socket comes back, `loadPath()` opens the room
+again and its own wait returns with it.
+
+**A room is entered *for* something**, and either the path or the flow says so.
+`/room/<joinId>` is a remembered device - an address this client can be sent back
+to - and the room waits when the route carries one. A pairing the host did not
+remember has no id anywhere to put in a URL, so the dialog that accepted it
+navigates with `isConnecting` instead (`navigate(path, params)`; the params are
+gone after a reload, which is right - so is the pairing). `/room` typed by hand is
+neither, and is the bar with nothing in front of it.
+
+`setConnecting(false)` is what ends the wait, and the room's `connected` event
+is what calls it (`onRoomConnected`, which also draws the relay indicator) - the
+other end is there, and the picture is what is missing now, not the path to it.
+
+**An accepted request now moves both sides, and they move to different places.**
+The peer goes into the room it was asking for (`room/joining`, which handles the
+pairing, the remembered join and the unsupervised one that the server answers in
+the first call). The host goes to its own list: `management/shares` opens, with
+that connection's settings on it where there is a connection to settle, because
+naming it is the one thing worth doing to a connection the moment it is made.
+
+**The host is moved by the room rather than by the flow that made it**, and that
+is the whole reason the listener is on `management/shares` and not in the dialogs
+the flows end in. There are three ways a connection is made on a host: a pairing
+accepted in `room/request`, a remembered device let back in through
+`join-request`, and the unsupervised join, which the server answers itself, so
+nothing on that host is ever asked. What all three have is `room-open`, told to
+both sides alike (`handlers/rooms.js`), and it carries **`isNew`** - set by
+`pair-accept` alone - because only the server knows which flow a room came out
+of. **Only a new connection moves the host**: a pairing is a connection worth
+naming the moment it is made, so the host is brought to the shares screen with
+its settings open; a remembered device coming back, asked or unattended, was
+named when it was made, and the host that answered it from wherever it was is
+left there. `room/create` therefore only stores its half of the join and closes
+itself - it navigates nowhere, and it closes *before* it stores, since opening a
+screen closes the dialogs over it.
+
+Two things that listener has to be careful about. A pairing the host did not ask
+to remember carries **no join id**: the host is moved and the settings are opened
+all the same, on the *room* rather than on a record (`{"joinId": "", "isLive":
+true}`) - what was just accepted is what the host is looking at either way. And
+the record
+may be a moment *behind* the room - the accept answer that carries the new join
+and this push cross on the same socket - so a room whose record is not there yet
+waits for the `change` that stores it rather than deciding it is a room about
+nothing. A join that never arrives at all is the one case with nothing to open:
+there is no card for it on the screen either, so it is logged rather than left as
+a navigation that did half of what it was for.
+
+**A share is not only a record.** `ctx["joins"]` is what a device *keeps*, and a
+pairing nobody remembered is kept by nothing: the room is the whole of it. Drawn
+from the records alone, the one flow that shares nothing but the moment showed
+the host an empty screen and an unlit bar at the exact moment it began sharing
+its machine - so `room.isSharing()` (this client is the host of a room that
+stands) is the second half of the screen and the whole of the badge. The shares
+screen draws a card from it, first in the grid; the shares badge of the rail and
+of the small layout's menu is lit by `isSharing()` and by nothing else, so both
+bars listen to the room's own edges (`connecting`, `closed`) and not to the
+records' `change`. Where the live room
+*is* on a remembered join, `getJoinId()` matches it to the card that is already
+there and marks that one instead - one connection is one card, and the `Sharing`
+chip is what says it is up right now.
+
+**Every card carries the same menu, and the live one answers it from the room.**
+A card whose menu was missing would be the one card on the screen that could not
+be acted on, so both entries are there for the live share too and both mean what
+they mean everywhere else, as far as a connection kept nowhere can: *settings*
+opens `management/connection` with `isLive`, where the name is the room's
+(`setName`/`getName`, and the card follows the room's `name` event) and stands
+only while the connection does - the hint under the field says so - and *delete*
+is `room.leave()`, because deleting a share that **is** only a connection is
+ending it. One dialog for both, since a host that has just let somebody in should
+not have to learn a second screen for the connection it did not tick a box for.
+
+**Neither delete is taken without asking.** `ctx["ui"].confirm()` is the one
+question the shell puts before something is undone for good -
+`ui/management/confirm/`, opened *nested* so whatever asked it is still behind
+it, dispatching `done` the way `room/exit` does. It is handed **localization
+keys** rather than lines: a language switched while a dialog stands re-translates
+the document from `data-localization`, so a line written in as text would go back
+to whatever the markup was built with - which is the same reason
+`management/connection` writes the key of its hint onto the element before
+reading it. The two questions are not one question: forgetting a join is gone from
+both devices for good (`confirm.deleteJoin`), ending a live share only ends what
+is up (`confirm.endRoom`, and the button says *End* rather than *Delete*).
+
+**A rebuild the room asked for is not dropped.** The grid answers two sources and
+they need opposite guards: `joins` fires `change` *because* the build asked it
+(`list()` writes who is online), so answering that one would build for ever - it
+is skipped while `isBuilding`. A room does not move because this screen asked
+something, so `connecting`/`closed`/`name` arriving mid-build set `isPending` and
+the build runs again, rather than leaving a card standing for a connection that is
+already gone. `buildCards` also empties the grid only once the records have
+arrived, so a rebuild does not blink and a call that fails does not leave the
+screen empty.
+
+The wait carries a **quit** button, and it is a button rather than a question:
+the case it exists for is a host that is answering nothing, so asking one more
+thing that needs an answer is the one option it cannot offer. It dispatches
+`quit`, the room leaves, and the close guard goes with the screen.
+
+**A room is left through a question, and there are two of them** - the same
+question, asked by whoever owns the window:
+
+- the leaving button on the bar opens `room-exit`, which decides nothing and
+  hands its answer back as `done`, the way `room/request` does;
+- the window's own close button is the shell's to answer. A browser tab is held
+  by `beforeunload`, and the wording there has not been the page's to write for
+  years - only whether there is a dialog at all. Electron does **not** do the
+  same thing: a renderer that holds a close through `beforeunload` cancels it
+  *silently*, which would leave a window nobody could shut, so the desktop shell
+  is handed the strings instead (`set-close-guard`) and asks natively from
+  `main.js`. That is why the room translates the question itself and passes it
+  down rather than letting the shell word it.
+
+The guard belongs to being in the room and not to the way it is left:
+`open()` takes it and `close()` gives it back, so a navigation, a dropped
+connection and the leaving button all end it the same way.
+
+## The registry
+
+Every `import()` specifier in the route table is a **literal**, on purpose: a
+built specifier works at runtime but hides every path from
+`tests/assets.test.js`, and a mistyped path is the one class of error the browser
+reports badly. A module is its code, its markup, its styles and its strings in
+one round trip; `html`, `css` and `localization` are omitted when a module has
+none. **A registry id is not its path** — `room-create` lives at
+`ui/room/create/` and the id is what the shell, the markup and the router know it
+by.
+
+The localization dictionary grows with the UI: `src/localization.js` holds only
+the shell slice (the loading layer of `index.html`, and the strings the two bars
+share with the menu dialog), and the registry hands each module's
+`localization.json` to `add()` while the module loads.
+
+## Odds and ends worth keeping
+
+- **beercss nav badges** are read as `nav.left > a > .badge`, so the narrow rail
+  wants the badge as a direct child of the entry and the wide one wants it inside
+  the wrapper beside the icon. `nav-left` re-parents it when the width changes.
+- **The theme is applied in two goes.** beercss derives the mode from the theme
+  it just built, so `ui("theme", …)` and `ui("mode", …)` cannot be set in one
+  tick — hence the `setTimeout(…, 1)` in `applyTheme`.
+- **Media device lists** come back unnamed and id-less until the page has been
+  granted access once, so `media-devices.js` asks again after a `getUserMedia`
+  call.
+- **The downloads screen** offers exactly the zips in the generated `index.json`
+  it was served with (`buildConfFile` in `src/server/building.js`). `OS_NAMES`
+  maps every spelling of the same platform — node's names, which the `bin/`
+  folders follow, and the names a user reads — onto the one name the screen holds
+  it under, so a zip is never dropped over the name it carries.
+- **Download links** are root-absolute for the browser, which is served by that
+  same HTTP server. The desktop shell is served by its own `local://` protocol,
+  so it has to be told where the server is and hands the link to the system
+  browser — the one link that leaves the app.
+- **The version dialog** points a desktop client at the HTTP server it was built
+  against, which serves the matching download. A browser tab has nothing to
+  install, so it keeps its translated message and the user is sent to whoever
+  runs the server.
+- **The desktop shell's libs are loaded by path, once.** `src/desktop.js` asks
+  the main process for the app path and `require()`s the three libs from it -
+  `auto-launch` and `ffmpeg-chunkifier` from the shell's own `libs/`, the
+  `easy-control.node` addon from the native folder that the build lays beside it
+  - onto `ctx["desktop"]`, and then sets `globalThis.require` to `undefined`, so
+  nothing that runs after boot can reach Node whatever it was handed. Anything
+  the desktop needs from Node is either on `ctx["desktop"]` already or goes
+  through `ipcRenderer` to `main.js`.
+- **The locked exit shortcuts** (ESC, and F11 in a browser) are the platform's
+  own and cannot be edited or removed, so the row says so in a beercss tooltip
+  rather than only greying its controls. A tooltip is shown by `:hover` on its
+  parent, and a disabled control swallows the pointer in Chrome and Firefox, so
+  `settings/control/view.css` gives the locked row's disabled controls
+  `pointer-events: none` for the hover to reach the row.
+
+## What is not wired yet
+
+The pairing, join, room and account flows are live, account deletion and the
+relayed connection included; what nothing does yet is carry media. The server
+side of that is in `handlers/rooms.js` and the negotiation is proved on both
+legs (see The connection); what is left is what the two ends *do* with the
+connection once it stands, which `dev/plans/ws-pairing-joins.md` describes. The
+previous client implementation is at commit `da3921d`, and it read message types
+the server no longer serves — do not paste it back untouched.
+
+| Module | Waiting on |
+| --- | --- |
+| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, both screens carry the settings and the confirmed delete on every card, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
+| `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
+
+Two modules are markup with nothing behind them. `management/search`: the field
+it mirrors and the button that opens it are both still commented out in the
+shell markup, so nothing opens it. `room/settings` (`room-settings`): the
+dialog a host would set what it shares and under what name in, an empty
+`Dialog` subclass today — the host's half of the room is not built, and the
+name a share carries lives in `management/connection` for now.

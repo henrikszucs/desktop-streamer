@@ -1,0 +1,52 @@
+<div class="hide" id="settings-appearance">
+    <h5 class="small-margin" data-localization="settings.appearance.title">Appearance settings</h5>
+    <div class="small-margin">
+        <fieldset>
+            <legend data-localization="settings.appearance.lang">Language</legend>
+            <div class="field suffix border round select-appearance-lang">
+                <select id="select-appearance-lang">
+                    <option value="auto" data-localization="settings.appearance.autolang">-- Automatic selection --</option>
+                    <option value="en">English</option>
+                    <option value="hu">Magyar</option>
+                </select>
+                <i>arrow_drop_down</i>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.appearance.theme">Theme color</legend>
+            <nav class="wrap">
+                <button class="chip circle small" id="btn-appearance-theme">
+                    <i>dark_mode</i>
+                </button>
+                <button class="chip circle" id="btn-appearance-theme-color">
+                    <i>palette</i>
+                    <input type="color"/>
+                </button>
+                <button class="circle small green" id="btn-appearance-theme-green"></button>
+                <button class="circle small red" id="btn-appearance-theme-red"></button>
+                <button class="circle small pink" id="btn-appearance-theme-pink"></button>
+                <button class="circle small purple" id="btn-appearance-theme-purple"></button>
+                <button class="circle small indigo" id="btn-appearance-theme-indigo"></button>
+                <button class="circle small blue" id="btn-appearance-theme-blue"></button>
+                <button class="circle small yellow" id="btn-appearance-theme-yellow"></button>
+                <button class="circle small orange" id="btn-appearance-theme-orange"></button>
+            </nav>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.appearance.tray.title">System tray</legend>
+            <label class="checkbox hide" id="label-tray">
+                <input type="checkbox" id="checkbox-tray">
+                <span data-localization="settings.appearance.tray.checkbox">Minimizing on close</span>
+            </label>
+            <span class="error-text hide" id="error-tray" data-localization="settings.appearance.tray.error">System tray not supported.</span>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.appearance.autostart.title">Auto startup</legend>
+            <label class="checkbox hide" id="label-auto-launch">
+                <input type="checkbox" id="checkbox-auto-launch">
+                <span data-localization="settings.appearance.autostart.checkbox">Launch with the system</span>
+            </label>
+            <span class="error-text hide" id="error-auto-launch" data-localization="settings.appearance.autostart.error">Auto lanuch not supported.</span>
+        </fieldset>
+    </div>
+</div>

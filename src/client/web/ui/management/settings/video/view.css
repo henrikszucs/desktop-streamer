@@ -1,0 +1,57 @@
+/* the video settings */
+
+/* video fix */
+.video-container {
+    position: relative;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available
+}
+
+.video {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    object-fit: contain; /* Not necessary in Chrome */
+    background-color: black;
+}
+
+/* Video style */
+
+.select-camera-input {
+    margin: 0;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+.select-camera-input-box {
+    display: flex;
+    justify-content: space-between;
+}
+
+#video-camera-test-box {
+    display: flex;
+    justify-content: center;
+    padding-top: 20px;
+    height: 280px;
+}
+
+.select-display-input {
+    margin: 0;
+    width: 100%;
+    width: -moz-available;
+    width: -webkit-fill-available;
+}
+
+.select-display-input-box {
+    display: flex;
+    justify-content: space-between;
+}
+
+#video-display-test-box {
+    justify-content: center;
+    display: flex;
+    padding-top: 20px;
+    height: 280px;
+}

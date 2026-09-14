@@ -1,0 +1,23 @@
+<!--
+    The question the leaving button asks. Two answers and nothing else: what
+    a room is left for is the peer's business, and the room screen is what acts
+    on the yes - see the `done` event in ./index.js.
+-->
+<dialog id="dialog-room-exit">
+    <nav>
+        <h5 class="max" data-localization="room.exit.title">Leave the room</h5>
+        <button class="circle transparent" id="btn-room-exit-close">
+            <i>close</i>
+        </button>
+    </nav>
+    <p data-localization="room.exit.question">Do you want to leave this room?</p>
+    <nav class="right-align">
+        <button class="border" id="btn-room-exit-cancel">
+            <span data-localization="room.exit.cancel">Stay</span>
+        </button>
+        <button class="error" id="btn-room-exit-confirm">
+            <i>logout</i>
+            <span data-localization="room.exit.confirm">Leave</span>
+        </button>
+    </nav>
+</dialog>

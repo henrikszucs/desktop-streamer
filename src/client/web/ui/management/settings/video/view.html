@@ -1,0 +1,62 @@
+<div id="settings-video" class="hide">
+    <h5 class="small-margin" data-localization="settings.video.title">Video settings</h5>
+    <div class="small-margin">
+        <fieldset>
+            <legend data-localization="settings.video.decoder.title">Video play</legend>
+            <span class="green-text hide" id="decoder-video-support" data-localization="settings.video.decoder.supported">Low latency play supported</span>
+            <span class="error-text hide" id="decoder-video-unsupport" data-localization="settings.video.decoder.unsupported">Low latency play not supported</span>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.video.cam.title">Webcams</legend>
+            <div class="select-camera-input-box">
+                <div class="field suffix border round select-camera-input">
+                    <select id="select-camera-input" disabled>
+                        <option data-localization="settings.video.cam.notfound">No webcam detected</option>
+                    </select>
+                    <i>arrow_drop_down</i>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-camera-refresh">
+                        <i>refresh</i>
+                    </button>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-camera-test" disabled>
+                        <i>play_arrow</i>
+                    </button>
+                </div>
+            </div>
+            <div class="hide" id="video-camera-test-box">
+                <div class="video-container">
+                    <video class="video" id="video-camera-test" autoplay="true"></video>
+                </div>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend data-localization="settings.video.display.title">Screen share</legend>
+            <div class="select-display-input-box">
+                <div class="field suffix border round select-display-input">
+                    <select id="select-display-input" disabled>
+                        <option data-localization="settings.video.display.notfound">Only manual share supported</option>
+                    </select>
+                    <i>arrow_drop_down</i>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-display-refresh">
+                        <i>refresh</i>
+                    </button>
+                </div>
+                <div>
+                    <button class="circle large" id="btn-display-test">
+                        <i>play_arrow</i>
+                    </button>
+                </div>
+            </div>
+            <div class="hide" id="video-display-test-box">
+                <div class="video-container">
+                    <video class="video" id="video-display-test" autoplay="true"></video>
+                </div>
+            </div>
+        </fieldset>
+    </div>
+</div>

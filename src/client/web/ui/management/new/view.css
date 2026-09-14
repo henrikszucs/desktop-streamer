@@ -1,0 +1,24 @@
+/* the new screen */
+
+/* The join row: one field and the button that submits it
+ *
+ * beercss sizes a .field in a nav from its own content (flex: 0 0 auto, 227px)
+ * and never shrinks a button, so the pair kept its full 375px on a phone and
+ * hung 24px past the surface on each side - the rounded ends of the pair were
+ * cut off by the window. The field gives way instead - it shrinks but never
+ * grows, so the pair stays the size it was designed at on a television - and
+ * the button keeps its width, which is what the left-round/right-round
+ * pairing needs.
+ */
+#new-join {
+    max-inline-size: 100%;
+}
+
+#new-join > .field {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+}
+
+#new-join > button {
+    flex-shrink: 0;
+}

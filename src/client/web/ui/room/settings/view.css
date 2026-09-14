@@ -1,0 +1,26 @@
+/* the room settings dialog */
+
+/* Room resources */
+.room-settings-resource-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.room-settings-fieldset-box {
+    margin: 0px;
+    height: max-content;
+}
+
+.room-settings-fieldset-add {
+    width: -moz-available;
+    width: -webkit-fill-available;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.room-settings-fieldset-refresh {
+    margin-top: 16px;
+}
