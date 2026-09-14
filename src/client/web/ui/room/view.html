@@ -96,6 +96,21 @@
                 <span id="room-framerate-label">30 fps</span>
                 <menu class="border top no-wrap" id="room-framerate-menu"></menu>
             </a>
+            <!--
+                What this client does to the picture once it has arrived:
+                the enhancements the decoder's worker runs over it (upscale,
+                frame interpolation, frame extrapolation - src/room/
+                stream-enhance.js), any number of them at once. Its rows are
+                filled in ./index.js, and the last of them is a reading
+                rather than a choice: which GPU backend runs them and what a
+                frame costs. Greyed, with the reason in its rows, on a browser
+                with neither WebGPU nor WebGL.
+            -->
+            <a tabindex="0" id="btn-room-enhance">
+                <i>auto_awesome</i>
+                <span id="room-enhance-label">Off</span>
+                <menu class="border top no-wrap" id="room-enhance-menu"></menu>
+            </a>
             <a tabindex="0" id="btn-room-fullscreen">
                 <i id="btn-room-fullscreen-icon">fullscreen</i>
                 <div class="tooltip" id="btn-room-fullscreen-tooltip" data-localization="room.fullscreen.enter">Fullscreen</div>

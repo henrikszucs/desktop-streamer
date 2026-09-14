@@ -86,6 +86,15 @@
     color: inherit;
 }
 
+/* the enhancement entry on a browser with no GPU backend: greyed like a tool
+   the host has not got, but still opened, since the row that says why is
+   inside its menu - so only the icon and the label are dimmed, and not the
+   menu that is their child */
+.room-bar > .toolbar > a.room-tool-dim > i,
+.room-bar > .toolbar > a.room-tool-dim > span {
+    opacity: 0.5;
+}
+
 #btn-room-relay[disabled] {
     background-color: transparent;
     color: inherit;
@@ -200,6 +209,14 @@
 .room-menu-need {
     opacity: 0.7;
     padding-inline-start: 1rem;
+}
+
+/* a row of a menu that is a line of text and not a choice: the reason the
+   rows above it are greyed, or the reading of what they cost */
+.room-menu-note {
+    opacity: 0.7;
+    font-size: 0.75rem;
+    pointer-events: none;
 }
 
 /* A narrow window has room for the tools or for the space around them, not

@@ -98,6 +98,9 @@ const createViewer = function(canvas, onMessage) {
                 : payload.slice().buffer);
             worker.postMessage({"type": "frame", "data": buffer, "isKey": isKey, "timestamp": timestamp}, [buffer]);
         },
+        "enhance": function(options) {
+            worker.postMessage({"type": "enhance", "options": options});
+        },
         "reset": function() {
             worker.postMessage({"type": "reset"});
         },
@@ -788,6 +791,12 @@ const createStream = function(ctx) {
     let settings = {...DEFAULT_SETTINGS};
     let isControlWanted = false;
 
+    // and what it asked of its own picture: the enhancements the worker runs
+    // (src/room/stream-enhance.js) - kept here, since they are this viewer's
+    // and never the host's - and what the worker last said of them
+    let enhanceWanted = {"upscale": false, "interpolate": false, "extrapolate": false};
+    let enhanceState = {"backend": "", "isKnown": false, "options": {...enhanceWanted}};
+
     // the peer's side
     let canvas = null;
     let viewer = null;              // the worker over the room's canvas
@@ -992,6 +1001,19 @@ const createStream = function(ctx) {
             case "stats":
                 workerStats = message;
                 break;
+            case "enhance":
+                // what the enhancer is doing is what the worker says it is:
+                // an option it refused is off here too
+                enhanceState = {
+                    "backend": message["backend"] ?? "",
+                    "isKnown": true,
+                    "options": {...message["options"]}
+                };
+                if (message["error"] !== "") {
+                    enhanceWanted = {...enhanceState["options"]};
+                }
+                emit("enhance", {...enhanceState, "error": message["error"] ?? ""});
+                break;
             case "error":
                 console.error("The stream worker reports:", message["message"]);
                 break;
@@ -1032,7 +1054,8 @@ const createStream = function(ctx) {
                 "receivedKbps": Math.round(receivedBytes * 8 / 1000),
                 "fps": workerStats?.["fps"] ?? 0,
                 "dropped": droppedFrames + (workerStats?.["dropped"] ?? 0),
-                "drawer": workerStats?.["drawer"] ?? ""
+                "drawer": workerStats?.["drawer"] ?? "",
+                "enhance": workerStats?.["enhance"] ?? null
             };
             sentBytes = 0;
             sentFrames = 0;
@@ -1195,6 +1218,20 @@ const createStream = function(ctx) {
             if (role === "peer") {
                 say({"kind": "settings", ...settings});
             }
+        },
+
+        // the enhancements over the picture: the worker is asked, and the
+        // "enhance" event says what it made of the asking
+        "setEnhance": function(wanted) {
+            enhanceWanted = {
+                "upscale": wanted?.["upscale"] === true,
+                "interpolate": wanted?.["interpolate"] === true,
+                "extrapolate": wanted?.["extrapolate"] === true
+            };
+            viewer?.enhance({...enhanceWanted});
+        },
+        "getEnhance": function() {
+            return {...enhanceState, "wanted": {...enhanceWanted}};
         },
 
         // the keyboard and the mouse: taken on the peer, and the host told

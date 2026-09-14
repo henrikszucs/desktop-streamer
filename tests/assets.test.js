@@ -17,7 +17,7 @@ const webPath = path.join(repoPath, "src", "client", "web");
 const electronPath = path.join(repoPath, "src", "client", "electron");
 const builtWebPath = path.join(repoPath, "tmp", "web");
 
-const ASSET_EXTENSIONS = "js|mjs|css|html|svg|png|jpg|jpeg|webp|mp3|json|woff2|ico|webmanifest";
+const ASSET_EXTENSIONS = "js|mjs|css|html|svg|png|jpg|jpeg|webp|mp3|json|woff2|ico|webmanifest|onnx|wasm";
 const SCANNED_EXTENSIONS = [".js", ".mjs", ".html", ".css"];
 
 const exists = async function(filePath) {

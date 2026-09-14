@@ -982,6 +982,90 @@ runs the host's encoder into a viewer on the settings window's own canvas, so
 the one ffmpeg line in the tree is the one a room runs, and it refuses while a
 share stands - one encoder per client.
 
+## The enhancer
+
+`src/room/stream-enhance.js` is the stage between the decoder and the drawer
+in the stream worker, and the bar's *enhance* entry is its whole UI: three
+switches - upscale, frame interpolation, frame extrapolation - that may be on
+in any combination, since a switch that excluded the others would be a choice
+between three things a person wants all of. What is on is this client's and
+not the host's: it never travels in `settings`, it outlives a room, and the
+room screen keeps it beside `settings` rather than in it.
+
+**The models are mocks, and the pipeline is real.** Each enhancement is one
+ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
+a bilinear ×2 followed by an identity 3×3 convolution, and two 1×1
+convolutions that mean the two frames and extrapolate them. They are the
+*shape* of the real thing - the same input and output, real GPU work in
+between, a picture that stays right - so the whole path from decoded frame to
+drawn picture can be built and timed before a trained model exists, and a
+trained one replaces a mock by being exported under the same name. `model/`
+is where those are trained; nothing there runs in the client.
+
+**The runtime is fetched when the first switch is turned on, not at boot.**
+ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
+draws the picture as it comes never needs it. What the worker does at boot is
+the *probe*: which backend this browser could run one on. `probeBackend()`
+asks for a WebGPU adapter, then for a WebGL context, and the answer is posted
+to the bar before anything is asked for, so the entry is greyed with the reason
+in its menu rather than left to fail on the click. There is no third backend
+on purpose: the runtime has a CPU one, and a CPU cannot keep up with a stream,
+so a browser with neither GPU path is told it needs one instead of being given
+a picture that arrives a second late.
+
+**The picture stays on the GPU on WebGPU, and goes through a pixel array on
+WebGL.** On WebGPU a decoded frame is imported as an external texture, a
+compute pass writes it as float32 NCHW into a storage buffer the runtime
+takes as a tensor (`Tensor.fromGpuBuffer`), the runtime answers in another
+(`preferredOutputLocation: "gpu-buffer"`), and a render pass draws that onto a
+canvas of the enhancer's own, which is wrapped as a `VideoFrame` - so the
+drawer draws it exactly the way it draws a decoded frame, whichever of its
+three contexts it holds, and does not know the difference. On WebGL the
+provider takes and returns CPU tensors and nothing else, so a frame is read off
+a 2D canvas and the answer put back through an `ImageData`; it is a fallback,
+it costs seconds a frame at 1080p, and the reading in the menu says so. Two
+things about the WebGPU path were found rather than designed. The runtime's
+buffers are only tensors on the device that made them, and this build of the
+runtime makes its own device from the adapter and takes none it is handed -
+`env.webgpu.device` is written by it, never read - so the enhancer's passes are
+built on the *runtime's* device once the first session exists, and the
+drawer keeps its own; the `VideoFrame` between them is what crosses. And the
+WebGL provider runs static shapes only: a dimension the graph leaves symbolic
+(`H`, `W`, so one file serves every resolution) is read as nothing and refused,
+so for WebGL the graph's bytes are patched - the symbolic input dimensions
+written as the frame's, a small protobuf rewrite of the fields on that path
+alone - and a session made per resolution. `tests/enhance.test.js` proves the
+patch against the mock files.
+
+**A generated frame has a place in the interval, and the real one moves to
+make room.** `schedule()` is pure: for one arriving frame it says which
+pictures are drawn and where each sits in the frame interval, as fractions.
+The interpolated frame stands in *before* the real one (it is the picture
+between this frame and the last) and the extrapolated one *after* it, so with
+interpolation on the real frame is drawn at half the interval, with
+extrapolation on the predicted frame is, and with both on the three are spaced
+by thirds. Upscaling is not a step - it runs over every picture the steps
+produce. The interval is measured from the stream's own timestamps rather than
+assumed. Whatever is still held when the next real frame arrives is drawn
+ahead of it, in order, rather than dropped: a generated frame never covers a
+real one, and none is lost.
+
+**One frame at a time, and the newest waits.** A frame that arrives while one
+is being enhanced waits, and a second one replaces it and is counted dropped:
+an enhancer that is behind should not fall further behind by working through
+what it missed. A `reset` (the stream over, or restarted) bumps a generation,
+and a frame still in flight across it is let go rather than becoming the first
+frame of the next stream's pair.
+
+**What the bar shows is what the worker said, not what was clicked.** A click
+draws the wish at once and greys the rows until the worker answers; the
+`enhance` event carries the options actually in force, and an option the
+runtime refused - a graph that will not load, a run that threw - comes back
+off, with the reason in the snackbar. The label is the short names of what is
+on, joined; the last row of the menu is a reading rather than a choice - the
+backend and what a frame costs from arriving to its last drawn picture - fed
+from the stream's `stats` while a picture is being received.
+
 ## The registry
 
 Every `import()` specifier in the route table is a **literal**, on purpose: a
@@ -1045,8 +1129,9 @@ legs (see The stream). What `dev/plans/room-media.md` still lists as open:
 the desktop host captures no sound (ffmpeg has no system audio input that is
 the same on both platforms), a desktop host cannot answer a keyframe request
 over a pipe, the access unit splitter is one frame behind the encoder (a unit is
-only known whole when the next delimiter arrives), and the upscaler is a later
-plan. The previous client implementation is at commit `da3921d`, and it read
+only known whole when the next delimiter arrives), and the enhancer runs mock
+graphs - the pipeline is there, the trained models are not (see The
+enhancer). The previous client implementation is at commit `da3921d`, and it read
 message types the server no longer serves — do not paste it back untouched.
 
 Two modules are markup with nothing behind them. `management/search`: the field

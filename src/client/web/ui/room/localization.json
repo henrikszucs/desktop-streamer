@@ -145,6 +145,60 @@
                 "en": "Stay",
                 "hu": "Maradok"
             }
+        },
+        "enhance": {
+            "off": {
+                "en": "Off",
+                "hu": "Ki"
+            },
+            "upscale": {
+                "en": "Upscale (2×)",
+                "hu": "Felskálázás (2×)"
+            },
+            "upscaleShort": {
+                "en": "2×",
+                "hu": "2×"
+            },
+            "interpolate": {
+                "en": "Frame interpolation",
+                "hu": "Képkocka-interpoláció"
+            },
+            "interpolateShort": {
+                "en": "Interp.",
+                "hu": "Interp."
+            },
+            "extrapolate": {
+                "en": "Frame extrapolation",
+                "hu": "Képkocka-extrapoláció"
+            },
+            "extrapolateShort": {
+                "en": "Extrap.",
+                "hu": "Extrap."
+            },
+            "unsupported": {
+                "en": "Needs a GPU the browser can use (WebGPU or WebGL)",
+                "hu": "A böngésző által használható GPU kell hozzá (WebGPU vagy WebGL)"
+            },
+            "checking": {
+                "en": "Checking what this browser can run...",
+                "hu": "Ellenőrzés, hogy mit tud futtatni ez a böngésző..."
+            },
+            "loading": {
+                "en": "Loading the models...",
+                "hu": "A modellek betöltése..."
+            },
+            "reading": {
+                "en": "{backend} · {ms} ms per frame",
+                "hu": "{backend} · {ms} ms képkockánként"
+            },
+            "idle": {
+                "en": "{backend} · ready",
+                "hu": "{backend} · készen áll"
+            },
+            "failed": {
+                "en": "The enhancement could not run: {reason}",
+                "hu": "A javítás nem futtatható: {reason}"
+            }
         }
     }
 }

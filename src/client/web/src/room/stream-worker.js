@@ -10,15 +10,18 @@
 // In:  {type: "canvas", canvas}                     the OffscreenCanvas to draw on
 //      {type: "config", config}                     a decoder configuration
 //      {type: "frame", data, isKey, timestamp}      one whole encoded frame
+//      {type: "enhance", options}                   which enhancements to run (./stream-enhance.js)
 //      {type: "reset"}                              the stream is over, the picture stays
 //      {type: "close"}                              the worker is done
 // Out: {type: "need-keyframe"}                      the decoder cannot go on without one
 //      {type: "size", width, height}                the picture changed size
-//      {type: "stats", fps, decoded, dropped, drawer}
+//      {type: "stats", fps, decoded, dropped, drawer, enhance}
+//      {type: "enhance", backend, options, error}   what the enhancer can do and is doing
 //      {type: "error", message}
 
 // first-party dependencies
 import { createDrawer } from "./stream-draw.js";
+import { OFF, isAnyOn, probeBackend, createEnhancer } from "./stream-enhance.js";
 
 // how many frames may be waiting in the decoder before the ones after them are
 // not worth decoding. A hardware decoder is faster than the line, so a queue
@@ -29,6 +32,9 @@ const QUEUE_MAX = 8;
 
 let drawer = null;
 let canvas = null;
+let enhancer = null;        // made on the first enhancement turned on, kept after
+let enhanceBackend = "";    // "webgpu", "webgl", or "" for a browser with neither
+let enhanceQueue = Promise.resolve();   // one enhance message at a time
 let decoder = null;
 let config = null;
 let configKey = "";         // the config as JSON, so the same one is not applied twice
@@ -55,23 +61,76 @@ const askKeyframe = function() {
     post({"type": "need-keyframe"});
 };
 
-const onOutput = function(frame) {
+// a picture onto the canvas - a decoded frame, or one the enhancer made of it
+const draw = function(frame) {
     try {
         if (drawer !== null) {
             drawer.draw(frame);
         }
-        const width = frame.displayWidth || frame.codedWidth;
-        const height = frame.displayHeight || frame.codedHeight;
-        if (width !== lastWidth || height !== lastHeight) {
-            lastWidth = width;
-            lastHeight = height;
-            post({"type": "size", "width": width, "height": height});
-        }
-        decodedCount++;
     } catch (error) {
         post({"type": "error", "message": String(error?.message ?? error)});
     } finally {
         frame.close();
+    }
+};
+
+const onOutput = function(frame) {
+    const width = frame.displayWidth || frame.codedWidth;
+    const height = frame.displayHeight || frame.codedHeight;
+    if (width !== lastWidth || height !== lastHeight) {
+        lastWidth = width;
+        lastHeight = height;
+        post({"type": "size", "width": width, "height": height});
+    }
+    decodedCount++;
+    // the enhancer draws what it makes of the frame, in its own time; the
+    // frame is its from here either way
+    if (enhancer !== null) {
+        enhancer.push(frame);
+        return;
+    }
+    draw(frame);
+};
+
+//
+// the enhancer
+//
+// Made once, on the first enhancement asked for, since making it is fetching
+// the runtime. What it reports back is what the bar draws: the backend it
+// has, the options in force, and the failure that turned one off.
+const reportEnhance = function(error = "") {
+    post({
+        "type": "enhance",
+        "backend": enhanceBackend,
+        "options": (enhancer?.getOptions() ?? {...OFF}),
+        "error": error
+    });
+};
+
+const onEnhance = async function(options) {
+    if (enhanceBackend === "") {
+        reportEnhance(isAnyOn(options ?? {}) === true ? "unsupported" : "");
+        return;
+    }
+    try {
+        if (enhancer === null) {
+            if (isAnyOn(options ?? {}) === false) {
+                reportEnhance();
+                return;
+            }
+            enhancer = await createEnhancer({
+                "backend": enhanceBackend,
+                "onPresent": draw,
+                "onError": function(message) {
+                    reportEnhance(message);
+                }
+            });
+        }
+        await enhancer.setOptions(options);
+        reportEnhance();
+    } catch (error) {
+        console.error("The enhancer cannot start:", error);
+        reportEnhance(String(error?.message ?? error));
     }
 };
 
@@ -187,6 +246,7 @@ const onFrame = function(message) {
 
 const onReset = function() {
     closeDecoder();
+    enhancer?.reset();
     config = null;
     configKey = "";
     isWaitingKey = true;
@@ -201,7 +261,8 @@ const startStats = function() {
             "fps": decodedCount,
             "decoded": decodedCount,
             "dropped": droppedCount,
-            "drawer": drawer?.["name"] ?? ""
+            "drawer": drawer?.["name"] ?? "",
+            "enhance": (enhancer?.getStats() ?? null)
         });
         decodedCount = 0;
         droppedCount = 0;
@@ -220,6 +281,10 @@ self.addEventListener("message", async function(event) {
                 post({"type": "error", "message": String(error?.message ?? error)});
             }
             startStats();
+            // what the enhancer could run on, said before anything asks for
+            // it, so the bar can grey the entry rather than let it fail
+            enhanceBackend = (drawer?.["name"] === "webgpu" ? "webgpu" : await probeBackend());
+            reportEnhance();
             break;
         case "config":
             onConfig(message["config"]);
@@ -227,12 +292,19 @@ self.addEventListener("message", async function(event) {
         case "frame":
             onFrame(message);
             break;
+        case "enhance":
+            enhanceQueue = enhanceQueue.then(function() {
+                return onEnhance(message["options"]);
+            });
+            break;
         case "reset":
             onReset();
             break;
         case "close":
             onReset();
             clearInterval(statsTimerId);
+            await enhancer?.close();
+            enhancer = null;
             drawer?.close?.();
             drawer = null;
             self.close();

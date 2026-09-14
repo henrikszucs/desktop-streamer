@@ -35,6 +35,12 @@ const RESOLUTIONS = [
 const FRAMERATES = [24, 30, 45, 60, 120];
 const DEFAULT_FRAMERATE = 30;
 
+// what this client may do to the picture after it arrives, in the order the
+// menu lists them. Each is a model the decoder's worker runs over the frames
+// (src/room/stream-enhance.js), and any number of them may be on at once; the
+// short name is what the bar shows while one is.
+const ENHANCEMENTS = ["upscale", "interpolate", "extrapolate"];
+
 // the entry that takes whatever the line allows and follows it down when the
 // bandwidth moves - which is what a peer that has not thought about it wants
 const AUTO = "auto";
@@ -104,6 +110,11 @@ const RoomScreen = class extends Screen {
     framerateBtn = null;
     framerateLabel = null;
     framerateMenu = null;
+    enhanceBtn = null;
+    enhanceLabel = null;
+    enhanceMenu = null;
+    enhanceNote = null;
+    enhanceReading = null;
     fullscreenIcon = null;
     fullscreenTooltip = null;
 
@@ -128,6 +139,15 @@ const RoomScreen = class extends Screen {
     // whether the relay is there for this user at all - asked of the room,
     // which answers for the guest and for an account alike
     isRelayAllowed = false;
+
+    // the enhancements over the picture: what is ticked, and what the stream
+    // last said of them - the backend it has ("" for none, and not yet known
+    // until it has said), and which are running. They are this client's and
+    // not the host's, so they are no part of `settings` and outlive a room.
+    enhance = {"upscale": false, "interpolate": false, "extrapolate": false};
+    enhanceBackend = "";
+    isEnhanceKnown = false;
+    isEnhanceLoading = false;
 
     // what the host has to offer besides the picture (the "share" message):
     // sound, and a keyboard and mouse to take. A button for what it has not
@@ -164,6 +184,9 @@ const RoomScreen = class extends Screen {
         this.framerateBtn = document.getElementById("btn-room-framerate");
         this.framerateLabel = document.getElementById("room-framerate-label");
         this.framerateMenu = document.getElementById("room-framerate-menu");
+        this.enhanceBtn = document.getElementById("btn-room-enhance");
+        this.enhanceLabel = document.getElementById("room-enhance-label");
+        this.enhanceMenu = document.getElementById("room-enhance-menu");
         this.fullscreenIcon = document.getElementById("btn-room-fullscreen-icon");
         this.fullscreenTooltip = document.getElementById("btn-room-fullscreen-tooltip");
         this.relayBtn = document.getElementById("btn-room-relay");
@@ -207,7 +230,10 @@ const RoomScreen = class extends Screen {
 
         // the picture: the stream draws on this canvas from now on, and says
         // once a second what it is drawing. The control it takes back on the
-        // peer's shortcut is drawn here as the button letting go.
+        // peer's shortcut is drawn here as the button letting go. The
+        // enhancer's first word - which backend it has - follows the attach,
+        // so the listener is on before it.
+        ctx["stream"].addEventListener("enhance", this.onStreamEnhance);
         ctx["stream"].attach(this.canvas);
         ctx["stream"].addEventListener("stats", this.onStreamStats);
         ctx["stream"].addEventListener("control", this.onStreamControl);
@@ -217,12 +243,14 @@ const RoomScreen = class extends Screen {
         this.buildBandwidthMenu();
         this.buildResolutionMenu();
         this.buildFramerateMenu();
+        this.buildEnhanceMenu();
         this.buildScreenMenu();
         this.setAudio(this.settings["isAudio"]);
         this.setControl(this.settings["isControl"]);
         this.drawBandwidth();
         this.drawResolution();
         this.drawFramerate();
+        this.drawEnhance();
         this.drawScreen();
         this.drawFullscreen();
         this.drawAvailable();
@@ -309,6 +337,31 @@ const RoomScreen = class extends Screen {
             this.framerateMenu.appendChild(item);
             item.dataset["framerate"] = String(framerate);
         }
+    };
+
+    // one row per enhancement, each a switch of its own since any number may
+    // be on, then two rows that are not choices: the reason the rows above are
+    // greyed when they are, and the reading of what they cost when they run
+    buildEnhanceMenu() {
+        const localization = this.ctx["localization"];
+        this.enhanceMenu.innerHTML = "";
+        for (const kind of ENHANCEMENTS) {
+            const item = document.createElement("li");
+            item.appendChild(this.buildCheck());
+            item.appendChild(this.buildText(localization.get("room.enhance." + kind)));
+            item.addEventListener("click", () => {
+                this.blur(this.enhanceBtn);
+                this.setEnhance(kind, this.enhance[kind] !== true);
+            });
+            this.enhanceMenu.appendChild(item);
+            item.dataset["enhance"] = kind;
+        }
+        this.enhanceNote = document.createElement("li");
+        this.enhanceNote.className = "room-menu-note";
+        this.enhanceMenu.appendChild(this.enhanceNote);
+        this.enhanceReading = document.createElement("li");
+        this.enhanceReading.className = "room-menu-note";
+        this.enhanceMenu.appendChild(this.enhanceReading);
     };
 
     // the mark of the entry in force. It is in every row and hidden in all but
@@ -441,6 +494,7 @@ const RoomScreen = class extends Screen {
         this.statsRateEl.innerText = rate;
         this.statsLineEl.innerText = line;
         this.statsEl.title = rate + "\n" + line;    // the whole of it where the bar cuts it short
+        this.drawEnhanceReading(stats["enhance"]);
     };
 
     clearStats() {
@@ -566,6 +620,40 @@ const RoomScreen = class extends Screen {
         this.emit();
     };
 
+    // one enhancement on or off. The bar draws the wish at once and the
+    // stream's "enhance" event settles it: a model that will not load comes
+    // back off, with the reason in the snackbar. Nothing is asked of a browser
+    // with no backend - the rows are inert then.
+    setEnhance(kind, isOn) {
+        if (ENHANCEMENTS.includes(kind) === false || this.enhanceBackend === "") {
+            return;
+        }
+        this.enhance[kind] = (isOn === true);
+        this.isEnhanceLoading = (isOn === true);
+        this.drawEnhance();
+        this.ctx["stream"].setEnhance({...this.enhance});
+    };
+
+    // what the enhancer says: the backend it found (once, after the canvas is
+    // attached), and after every asking the options actually in force
+    onStreamEnhance = (event) => {
+        const state = event.detail ?? {};
+        this.enhanceBackend = (typeof state["backend"] === "string" ? state["backend"] : "");
+        this.isEnhanceKnown = (state["isKnown"] === true);
+        this.isEnhanceLoading = false;
+        for (const kind of ENHANCEMENTS) {
+            this.enhance[kind] = (state["options"]?.[kind] === true);
+        }
+        this.drawEnhance();
+        const error = state["error"];
+        if (typeof error === "string" && error !== "" && this.isOpen === true) {
+            const localization = this.ctx["localization"];
+            this.ctx["ui"].snackbar.show(localization.putParameters(localization.get("room.enhance.failed"), new Map([
+                ["reason", error]
+            ])), true);
+        }
+    };
+
     // which of the host's displays to show. The label does not move yet: the
     // host restarts its encoder on the new one and says so in its next
     // "share", which is what the bar draws - so what is marked is what is on
@@ -656,6 +744,58 @@ const RoomScreen = class extends Screen {
             item.classList.toggle("active", isCurrent);
             item.children.item(0).classList.toggle("room-menu-unchecked", isCurrent === false);
         }
+    };
+
+    // the label is the short names of what is on, the rows carry their checks,
+    // and the two notes say why nothing can be ticked or what ticking costs
+    drawEnhance() {
+        const localization = this.ctx["localization"];
+        const isSupported = (this.enhanceBackend !== "");
+        const on = ENHANCEMENTS.filter((kind) => this.enhance[kind] === true);
+
+        this.enhanceLabel.innerText = (on.length === 0
+            ? localization.get("room.enhance.off")
+            : on.map((kind) => localization.get("room.enhance." + kind + "Short")).join(" + "));
+        this.enhanceBtn.classList.toggle("active", on.length > 0);
+        this.enhanceBtn.classList.toggle("room-tool-dim", this.isEnhanceKnown === true && isSupported === false);
+
+        for (const item of this.enhanceMenu.children) {
+            const kind = item.dataset["enhance"];
+            if (typeof kind === "undefined") {
+                continue;
+            }
+            const isOn = (this.enhance[kind] === true);
+            item.classList.toggle("active", isOn);
+            item.classList.toggle("room-menu-blocked", isSupported === false || this.isEnhanceLoading === true);
+            item.children.item(0).classList.toggle("room-menu-unchecked", isOn === false);
+        }
+
+        // the note: not there while the backend can run them
+        this.enhanceNote.innerText = (this.isEnhanceKnown === false
+            ? localization.get("room.enhance.checking")
+            : (isSupported === false ? localization.get("room.enhance.unsupported")
+                : (this.isEnhanceLoading === true ? localization.get("room.enhance.loading") : "")));
+        this.enhanceNote.classList.toggle("hide", this.enhanceNote.innerText === "");
+        if (isSupported === false) {
+            this.enhanceReading.innerText = "";
+        }
+        this.enhanceReading.classList.toggle("hide", this.enhanceReading.innerText === "");
+    };
+
+    // the reading under the rows, from the stream's stats: which backend, and
+    // what a frame costs from arriving to drawn while anything is on
+    drawEnhanceReading(stats) {
+        if (this.enhanceBackend === "") {
+            return;
+        }
+        const localization = this.ctx["localization"];
+        const backend = (stats?.["backend"] === "webgpu" ? "WebGPU" : (stats?.["backend"] === "webgl" ? "WebGL" : ""));
+        const isRunning = (typeof stats?.["runs"] === "number" && stats["runs"] > 0);
+        this.enhanceReading.innerText = (backend === "" ? "" : localization.putParameters(
+            localization.get(isRunning === true ? "room.enhance.reading" : "room.enhance.idle"),
+            new Map([["backend", backend], ["ms", String(stats["ms"] ?? 0)]])
+        ));
+        this.enhanceReading.classList.toggle("hide", this.enhanceReading.innerText === "");
     };
 
     drawFullscreen() {
