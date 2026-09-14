@@ -140,6 +140,19 @@ test("a frame left in pieces is given up on once HOLD newer ones have started", 
     assert.equal(out.drops[0]["seq"], 20);
 });
 
+test("a chunk of a frame already given up on is not a second drop", () => {
+    const out = collect();
+    const chunks = packFrame(20, 0, 0, payloadOf(20000), 16000);
+    out.push(chunks[0]);
+    for (let seq = 21; seq < 21 + HOLD; seq++) {
+        out.push(packFrame(seq, 0, 0, payloadOf(20000), 16000)[0]);
+    }
+    assert.equal(out.drops.length, 1);
+    out.push(chunks[1]);
+    assert.equal(out.drops.length, 1);
+    assert.equal(out.frames.length, 0);
+});
+
 test("the timestamp unwraps across the 24 bit boundary", () => {
     const out = collect();
     const near = (1 << 24) - 1000;

@@ -375,11 +375,15 @@ const createDesktopEncoder = function(ctx) {
             clearTimeout(restartId);
             restartId = setTimeout(async function() {
                 restartId = -1;
+                const own = generation;
                 const running = encoder;
                 encoder = null;
                 if (running !== null) {
                     running.onEnd = function() {};
                     await running.end();
+                }
+                if (own !== generation) {
+                    return;         // stopped while the old line was ending
                 }
                 try {
                     await start(settings);
@@ -416,6 +420,7 @@ const createWebEncoder = function() {
     let isKeyWanted = false;
     let settings = null;
     let size = null;
+    let generation = 0;
     const api = {
         "onChunk": function() {},
         "onConfig": function() {},
@@ -453,6 +458,9 @@ const createWebEncoder = function() {
         const support = await VideoEncoder.isConfigSupported(config);
         if (support?.supported !== true) {
             throw new Error("The browser cannot encode " + config["codec"] + " at " + config["width"] + "x" + config["height"]);
+        }
+        if (videoEncoder === null || videoEncoder.state === "closed") {
+            return;             // stopped while the question was out
         }
         videoEncoder.configure(config);
         api.onConfig({"codec": CODEC, "codedWidth": size["width"], "codedHeight": size["height"]});
@@ -549,12 +557,22 @@ const createWebEncoder = function() {
                 throw new Error("This browser cannot share its screen");
             }
             settings = {...wanted};
-            stream = await navigator.mediaDevices.getDisplayMedia({
+            const own = ++generation;
+            const picked = await navigator.mediaDevices.getDisplayMedia({
                 "video": {"frameRate": {"ideal": wanted["framerate"]}, "cursor": "always"},
                 "audio": true,
                 "systemAudio": "include",
                 "preferCurrentTab": false
             });
+            // a stop while the picker was open: what was picked is let go,
+            // since nothing is left to send it to
+            if (own !== generation) {
+                for (const track of picked.getTracks()) {
+                    track.stop();
+                }
+                return;
+            }
+            stream = picked;
             const videoTrack = stream.getVideoTracks()[0];
             if (typeof videoTrack === "undefined") {
                 throw new Error("No screen was picked");
@@ -573,6 +591,9 @@ const createWebEncoder = function() {
                 }
             });
             await configureVideo(videoTrack);
+            if (own !== generation) {
+                return;
+            }
 
             // the picker's own stop button ends the share like anything else
             videoTrack.addEventListener("ended", function() {
@@ -587,6 +608,7 @@ const createWebEncoder = function() {
             }
         },
         "stop": async function() {
+            generation++;
             isRunning = false;
             for (const track of stream?.getTracks?.() ?? []) {
                 track.stop();

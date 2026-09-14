@@ -44,9 +44,13 @@
             <!--
                 What the line is doing, once a second: frames drawn and bits
                 received. It is the one reading that says whether a picture
-                that looks wrong is the line's fault or the host's.
+                that looks wrong is the line's fault or the host's. Two short
+                lines rather than one long one, so it fits beside the chip.
             -->
-            <span class="room-stats" id="room-stats"></span>
+            <span class="room-stats" id="room-stats">
+                <span id="room-stats-rate"></span>
+                <span id="room-stats-line"></span>
+            </span>
         </div>
         <nav class="toolbar">
             <a tabindex="0" id="btn-room-audio">

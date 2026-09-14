@@ -75,47 +75,79 @@ const onOutput = function(frame) {
     }
 };
 
-// a decoder that errors is replaced rather than repaired: the error closes it,
-// and the next keyframe is what a fresh one starts from
+// a decoder that errors is replaced rather than repaired, and a configuration
+// refused here (configure() reports it late, not by throwing) is retried
+// without the hardware preference once - see CLIENT.md, "The stream"
 const onError = function(error) {
     console.error("The video decoder failed:", error);
+    if (config === null) {
+        return;
+    }
+    if (error?.name === "NotSupportedError") {
+        if (config["hardwareAcceleration"] === "no-preference") {
+            closeDecoder();
+            post({"type": "error", "message": "The browser cannot decode " + config["codec"]});
+            return;
+        }
+        config["hardwareAcceleration"] = "no-preference";
+    }
     createDecoder();
     askKeyframe();
 };
 
-const createDecoder = function() {
+const closeDecoder = function() {
     try {
         decoder?.close?.();
     } catch (error) {
         // a decoder that is already closed throws on close, and that is fine
     }
-    decoder = new VideoDecoder({"output": onOutput, "error": onError});
-    if (config !== null) {
-        decoder.configure(config);
-    }
-    isWaitingKey = true;
+    decoder = null;
 };
 
-const onConfig = function(next) {
+const createDecoder = function() {
+    closeDecoder();
+    isWaitingKey = true;
+    if (config === null) {
+        return;
+    }
+    try {
+        decoder = new VideoDecoder({"output": onOutput, "error": onError});
+        decoder.configure(config);
+    } catch (error) {
+        closeDecoder();
+        post({"type": "error", "message": String(error?.message ?? error)});
+    }
+};
+
+// the hardware decoder is asked about before it is asked for, since
+// configure() takes any configuration and reports the refused ones to onError
+const onConfig = async function(next) {
     const key = JSON.stringify(next);
     if (key === configKey && decoder !== null && decoder.state === "configured") {
         return;
     }
-    config = {
+    configKey = key;
+    const wanted = {
         "codec": next["codec"],
         "codedWidth": next["codedWidth"],
         "codedHeight": next["codedHeight"],
         "hardwareAcceleration": "prefer-hardware",
         "optimizeForLatency": true
     };
-    configKey = key;
+    let support = null;
     try {
-        createDecoder();
+        support = await VideoDecoder.isConfigSupported(wanted);
     } catch (error) {
-        // the hardware path is what is preferred, not what is required
-        config["hardwareAcceleration"] = "no-preference";
-        createDecoder();
+        support = null;
     }
+    if (support?.supported !== true) {
+        wanted["hardwareAcceleration"] = "no-preference";
+    }
+    if (configKey !== key) {
+        return;         // a newer configuration, or a reset, came while asking
+    }
+    config = wanted;
+    createDecoder();
 };
 
 const onFrame = function(message) {
@@ -154,12 +186,7 @@ const onFrame = function(message) {
 };
 
 const onReset = function() {
-    try {
-        decoder?.close?.();
-    } catch (error) {
-        // see createDecoder
-    }
-    decoder = null;
+    closeDecoder();
     config = null;
     configKey = "";
     isWaitingKey = true;
@@ -189,6 +216,7 @@ self.addEventListener("message", async function(event) {
             try {
                 drawer = await createDrawer(canvas);
             } catch (error) {
+                drawer = null;
                 post({"type": "error", "message": String(error?.message ?? error)});
             }
             startStats();

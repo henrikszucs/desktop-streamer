@@ -220,7 +220,12 @@ const createDrawer = async function(canvas) {
     } catch (error) {
         console.warn("WebGL is not drawing the stream:", error);
     }
-    return create2DDrawer(canvas);
+    const drawer = create2DDrawer(canvas);
+    if (typeof drawer === "undefined") {
+        // a canvas opened as one kind of context cannot be opened as another
+        throw new Error("No drawing context could be opened on the canvas");
+    }
+    return drawer;
 };
 
 export { createDrawer, createWebGPUDrawer, createWebGLDrawer, create2DDrawer };

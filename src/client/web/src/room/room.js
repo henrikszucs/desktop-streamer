@@ -562,9 +562,11 @@ const createRoom = function(ctx) {
             return;
         }
 
-        // the first relayed message is also the other end saying it gave up, for
-        // the case where the signal that says so is the one that went missing
-        startRelay(true);
+        // the first relayed message is also the other end saying it gave up -
+        // while this side is still waiting on its direct attempt, see CLIENT.md
+        if (mode === MODE_DIRECT && state !== "connected") {
+            startRelay(true);
+        }
 
         // bytes are the stream and an object is a message, on this leg as on
         // the direct one - so what listens for either never asks which leg

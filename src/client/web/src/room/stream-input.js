@@ -39,7 +39,10 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     let queue = [];
     let flushId = -1;
     let shortcutTimerId = -1;
-    const held = new Map();         // KeyboardEvent.key -> code of every key down right now
+    // every key down right now, by the physical key: the name moves with
+    // Shift ("a" down, "A" up), and it is what a shortcut is written in
+    const held = new Map();         // KeyboardEvent.code -> KeyboardEvent.key
+    const downButtons = new Set();  // the mouse buttons down right now
 
     const shortcuts = function() {
         const own = (ctx["conf"]["local"]?.["exitShortcuts"] ?? []).filter(function(shortcut) {
@@ -104,7 +107,15 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         }
         event.preventDefault();
         canvas.focus?.();
+        // the release is the canvas's wherever it happens - over the bar, or
+        // outside the window - or the host is left holding the button
+        try {
+            canvas.setPointerCapture(event.pointerId);
+        } catch (error) {
+            // a pointer that is already gone cannot be captured
+        }
         onPointerMove(event);
+        downButtons.add(button);
         push({"t": "down", "b": button});
     };
     const onPointerUp = function(event) {
@@ -113,7 +124,19 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
             return;
         }
         event.preventDefault();
+        downButtons.delete(button);
         push({"t": "up", "b": button});
+    };
+    const releaseButtons = function() {
+        for (const button of downButtons) {
+            push({"t": "up", "b": button});
+        }
+        downButtons.clear();
+    };
+    // a pointer the browser takes away mid-press (a gesture, a device gone)
+    // says nothing about which button, so it is every button coming up
+    const onPointerCancel = function() {
+        releaseButtons();
     };
     const onWheel = function(event) {
         event.preventDefault();
@@ -134,9 +157,10 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         const wasHolding = (shortcutTimerId !== -1);
         clearTimeout(shortcutTimerId);
         shortcutTimerId = -1;
+        const names = new Set(held.values());
         for (const shortcut of shortcuts()) {
             const keys = shortcut["keys"];
-            if (keys.length !== held.size || keys.some(function(key) { return held.has(key) === false; })) {
+            if (keys.length !== held.size || keys.some(function(key) { return names.has(key) === false; })) {
                 continue;
             }
             const delay = Math.max(0.2, Number(shortcut["delay"]) || 1) * 1000;
@@ -163,24 +187,25 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         if (event.repeat === true) {
             return;
         }
-        held.set(event.key, event.code);
+        held.set(event.code || event.key, event.key);
         push({"t": "key", "c": event.code, "d": true});
         checkShortcut();
     };
     const onKeyUp = function(event) {
         event.preventDefault();
-        held.delete(event.key);
+        held.delete(event.code || event.key);
         push({"t": "key", "c": event.code, "d": false});
         checkShortcut();
     };
 
-    // the window losing the keyboard is every key coming up, as far as the
-    // host should know
+    // the window losing the keyboard is every key and button coming up, as
+    // far as the host should know
     const onBlur = function() {
-        for (const code of held.values()) {
+        for (const code of held.keys()) {
             push({"t": "key", "c": code, "d": false});
         }
         held.clear();
+        releaseButtons();
         checkShortcut();
     };
 
@@ -193,6 +218,7 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         canvas.addEventListener("pointermove", onPointerMove);
         canvas.addEventListener("pointerdown", onPointerDown);
         canvas.addEventListener("pointerup", onPointerUp);
+        canvas.addEventListener("pointercancel", onPointerCancel);
         canvas.addEventListener("wheel", onWheel, {"passive": false});
         canvas.addEventListener("contextmenu", onContextMenu);
         canvas.addEventListener("keydown", onKeyDown);
@@ -209,6 +235,7 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerCancel);
         canvas.removeEventListener("wheel", onWheel);
         canvas.removeEventListener("contextmenu", onContextMenu);
         canvas.removeEventListener("keydown", onKeyDown);
@@ -221,10 +248,11 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         }
 
         // whatever is still down comes up, so the host is not left holding a key
-        for (const code of held.values()) {
+        for (const code of held.keys()) {
             push({"t": "key", "c": code, "d": false});
         }
         held.clear();
+        releaseButtons();
         cancelAnimationFrame(flushId);
         flush();
     };

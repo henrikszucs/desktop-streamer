@@ -150,6 +150,11 @@ const createReassembler = function(onFrame, onDrop = function() {}) {
         if (lastDelivered !== null && seqDiff(seq, lastDelivered) <= 0) {
             return;
         }
+        // or a straggler of a frame the sweep below already gave up on: it
+        // would only make the entry again to drop it again, and report it twice
+        if (newestSeq !== null && seqDiff(newestSeq, seq) >= HOLD) {
+            return;
+        }
 
         let entry = pending.get(seq);
         if (typeof entry === "undefined") {

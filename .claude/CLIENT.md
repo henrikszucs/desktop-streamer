@@ -561,13 +561,22 @@ then what would have crossed between the two devices crosses the server instead
 - **both ends have to give up together**, and they will not do it at the same
   moment: whoever gets there first sends a `relay` signal and the other follows
   on the spot. A first relayed message is taken as the same statement, for the
-  case where that signal is the one that went missing;
+  case where that signal is the one that went missing - but only while this
+  side is still `connecting` on its direct attempt. A room that stands direct
+  hears relayed bytes too: the tail of what the other end sent before its own
+  sync took it off the relay, and after a retry that made it, reading those as
+  a surrender would put the room straight back on the relay and close the
+  connection it just proved. A direct connection that is *lost* while
+  connected is the grace timer's and the `relay` signal's to notice, below;
 - **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
   answered to every client in `permissions` (it is off unless the configuration
   says otherwise, since it spends the server's own bandwidth), and where it is
   off a failed direct attempt ends the room rather than hanging on one. It is
   the *guest's* flag: an account's is its own users row, told in the profile
-  as `isRelayAllowed` and kept on the account record, and `isRelayAllowed()`
+  as `isRelayAllowed` and kept on the account record - taken from every
+  profile the server answers or pushes, not the sign-in alone, so a record
+  from before the flag existed and a row changed since both follow the newest
+  answer - and `isRelayAllowed()`
   in `room.js` answers from whichever the client is - the one permission
   `permissions.allows()` in `ui.js` cannot answer, since a signed-in user is
   not simply allowed everything a guest is refused;
@@ -655,7 +664,12 @@ it. The whole bar ends in one `settings` event on the screen and a
 `getSettings()` beside it, and `emit()` hands the same object to `ctx["stream"]`,
 which carries it to the host - see The stream below. The picture is a `<canvas>`
 the screen hands the stream once at mount (`attach`), and the reading beside the
-relay chip is the stream's `stats` event once a second.
+relay chip is the stream's `stats` event once a second - two short lines, the
+frames over the bits, since one line of it was twice the chip's width and a
+flex item keeps its content's width, which ran it into the toolbar in a
+narrowing window; each line is cut with an ellipsis before that can happen
+(the drop count, last on its line, goes first) and the tooltip carries the
+whole reading.
 
 **A tool the host has not got is greyed, not left to do nothing.** The
 `share` message says whether there is sound (`isAudio`, the encoder's
@@ -908,9 +922,27 @@ goes through an `AudioEncoder` as Opus on the same channel. A browser without
 `VideoEncoder` cannot share and the settings preview says so. A share that
 cannot start - the picker cancelled, no encoder - leaves the room, since a peer
 sitting on a black picture is worse than a request the host can answer again.
+Both encoders start across an `await` that nothing above them can cancel - the
+picker on the web, the old line ending before the debounced restart on the
+desktop - so each carries a `generation` that `stop()` bumps, and a start that
+comes back to a newer one lets go of what it got (the tracks picked, the line
+that started) instead of running a share the room has already left, which
+nothing could stop afterwards.
 
 **The peer decodes in a worker** (`src/room/stream-worker.js`) that holds the
-`VideoDecoder` and the canvas: the room screen's `<canvas>` hands its surface
+`VideoDecoder` and the canvas. The hardware decoder is preferred and never
+required, and the two calls that decide it do not fail the same way:
+`configure()` takes any configuration and reports the one it cannot do later,
+through the error callback, so a `try` around it catches nothing - the
+question is put to `isConfigSupported()` first and `prefer-hardware` is dropped
+to `no-preference` on its answer; a `NotSupportedError` that still reaches
+`onError` drops it the same way once, and without the preference there is no
+decoder to make, so the worker reports it and stops rather than building the
+same failing decoder for ever. `createDrawer` is the same shape: a canvas
+opened as one kind of context cannot be opened as another, so a WebGPU or
+WebGL path that opened and then threw leaves nothing for the 2D one, and it
+throws rather than handing back nothing for every frame to call. Beyond that
+the worker holds the decoder and the canvas: the room screen's `<canvas>` hands its surface
 over once (`transferControlToOffscreen`, which is why the element lives for the
 screen's life and `attach` is once), whole frames are posted to it transferred
 rather than copied, and a decoded frame is drawn the moment it comes out - the
@@ -936,7 +968,14 @@ taken keyboard is a shortcut *held* for its delay (Escape for a second in a
 browser, five under the desktop shell, and whatever `settings.control` added),
 because every key the peer presses goes to the host, so a key alone cannot mean
 stop. The screen hears that as the stream's `control` event and lets the button
-go with it.
+go with it. Two bookkeeping rules keep the host from being left holding
+something: the keys down are kept by `KeyboardEvent.code`, the physical key,
+because the name moves with Shift (`a` down and `A` up would be two keys, and
+a map that never empties is a hold that never starts) while the name beside it
+is what a shortcut is written in; and a button pressed on the canvas captures
+the pointer, so its release is the canvas's wherever it happens - over the
+bar, outside the window - and a blur or a cancelled pointer lifts every button
+the way it lifts every key.
 
 **The settings preview is the same pipeline with no line in it**: `preview()`
 runs the host's encoder into a viewer on the settings window's own canvas, so

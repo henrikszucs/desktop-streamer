@@ -70,6 +70,11 @@ const createAccount = function(ctx) {
                 record[key] = user[key];
             }
         }
+        // the relay permission is the server's to say and every profile says
+        // it, so a record follows the newest answer
+        if (typeof user["isRelayAllowed"] === "boolean") {
+            record["isRelayAllowed"] = user["isRelayAllowed"];
+        }
         await store(stored());
     };
 

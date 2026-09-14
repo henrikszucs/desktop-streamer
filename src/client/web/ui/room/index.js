@@ -84,6 +84,8 @@ const RoomScreen = class extends Screen {
     relayIcon = null;
     relayTooltip = null;
     statsEl = null;
+    statsRateEl = null;
+    statsLineEl = null;
     audioBtn = null;
     audioIcon = null;
     audioTooltip = null;
@@ -141,6 +143,8 @@ const RoomScreen = class extends Screen {
         this.stage = document.getElementById("room-stage");
         this.exitRing = document.getElementById("room-exit-ring");
         this.statsEl = document.getElementById("room-stats");
+        this.statsRateEl = document.getElementById("room-stats-rate");
+        this.statsLineEl = document.getElementById("room-stats-line");
 
         this.audioBtn = document.getElementById("btn-room-audio");
         this.audioIcon = document.getElementById("btn-room-audio-icon");
@@ -425,10 +429,24 @@ const RoomScreen = class extends Screen {
         if (stats["role"] !== "peer" || this.isOpen === false) {
             return;
         }
+        const localization = this.ctx["localization"];
         const kbps = stats["receivedKbps"] ?? 0;
-        const mbps = (kbps >= 1000 ? (kbps / 1000).toFixed(1) + " Mbps" : kbps + " kbps");
-        this.statsEl.innerText = (stats["fps"] ?? 0) + " fps · " + mbps
-            + ((stats["dropped"] ?? 0) > 0 ? " · " + stats["dropped"] + " dropped" : "");
+        const line = (kbps >= 1000
+            ? this.bandwidthText((kbps / 1000).toFixed(1))
+            : localization.putParameters(localization.get("room.stats.kbps"), new Map([["value", String(kbps)]])));
+        const dropped = stats["dropped"] ?? 0;
+        const rate = this.framerateText(stats["fps"] ?? 0) + (dropped > 0
+            ? " · " + localization.putParameters(localization.get("room.stats.dropped"), new Map([["value", String(dropped)]]))
+            : "");
+        this.statsRateEl.innerText = rate;
+        this.statsLineEl.innerText = line;
+        this.statsEl.title = rate + "\n" + line;    // the whole of it where the bar cuts it short
+    };
+
+    clearStats() {
+        this.statsRateEl.innerText = "";
+        this.statsLineEl.innerText = "";
+        this.statsEl.title = "";
     };
 
     // the host started or stopped sharing: a host that stops while the room
@@ -449,7 +467,7 @@ const RoomScreen = class extends Screen {
             return;
         }
         if (info === null) {
-            this.statsEl.innerText = "";
+            this.clearStats();
             this.ctx["ui"].snackbar.show(this.ctx["localization"].get("room.share.ended"));
         }
     };
@@ -859,7 +877,7 @@ const RoomScreen = class extends Screen {
         super.open(params);
         this.isOpen = true;
         this.setCloseGuard(true);
-        this.statsEl.innerText = "";
+        this.clearStats();
 
         // A room is entered *for* something, and either the path or the flow
         // says so - see CLIENT.md, "The room". A connection that is already up

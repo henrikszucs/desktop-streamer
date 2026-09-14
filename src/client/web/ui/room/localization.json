@@ -64,6 +64,16 @@
                 "hu": "{value} fps"
             }
         },
+        "stats": {
+            "kbps": {
+                "en": "{value} kbps",
+                "hu": "{value} kbps"
+            },
+            "dropped": {
+                "en": "{value} dropped",
+                "hu": "{value} kiesett"
+            }
+        },
         "fullscreen": {
             "enter": {
                 "en": "Fullscreen",
