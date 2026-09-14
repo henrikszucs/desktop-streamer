@@ -216,7 +216,7 @@ The old client (`da3921d`) only ever called 15 of the 20 types. It never
 implemented `join` (the relay), `join-rename`, `join-remember`, `join-rehost` or
 `join-delete` — so the room and the WebRTC half were never finished on the
 browser side either. **Three of those five are answered now**, and the browser
-half is written against them: `src/client/web/src/room.js` is the connection,
+half is written against them: `src/client/web/src/room/room.js` is the connection,
 `ui/room/index.js` the screen over it, and `join-rename` reaches the server from
 the connection dialog. `join-remember` and `join-rehost` are still on neither
 side.

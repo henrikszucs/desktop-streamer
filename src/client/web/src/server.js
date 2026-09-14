@@ -39,6 +39,10 @@ const FRAME_HEADER = 1 + ROOM_KEY_LENGTH;
 // how long one frame is given to cross, whole rather than packet by packet
 const DATA_TIMEOUT = 60000;
 
+// the packet layer of the socket, the same on the server (src/server/ws/ws.js)
+const SOCKET_PACKET_SIZE = 65536;
+const SOCKET_SEND_THREADS = 64;
+
 const buildRoomFrame = function(roomKey, data) {
     const isBinary = (data instanceof ArrayBuffer);
     const payload = (isBinary === true
@@ -106,10 +110,14 @@ const Server = class extends EventTarget {
             "sender": function() {},
             "interactTimeout": 3000,    //the max timeout between two packet arrive
             "timeout": 5000,            //the time for transmit message
-            "packetSize": 1000,         //the maximum size of one packet in bytes (only for ArrayBuffer)
+            // the packet layer, the same numbers as the server's: a packet is
+            // acknowledged one by one with sendThreads in flight, so their
+            // product is what one round trip carries - the relayed stream
+            // lives on it
+            "packetSize": SOCKET_PACKET_SIZE,
             "packetTimeout": 1000,      //the max timeout for packets
             "packetRetry": Infinity,    //number of retring attemts for one packet
-            "sendThreads": 16
+            "sendThreads": SOCKET_SEND_THREADS
         });
 
         this.reconnect();
@@ -486,7 +494,7 @@ const Server = class extends EventTarget {
     //
     // one signal to the other end of the room this connection is in. The server
     // carries it and reads nothing of it: what is inside is between the two
-    // clients (see src/room.js).
+    // clients (see src/room/room.js).
     async roomSignal(roomKey, signal) {
         const messageObj = this.communicator.invoke({"type": "room-signal", "roomKey": roomKey, "signal": signal});
         await messageObj.wait();

@@ -5,7 +5,7 @@
 // that comes back is answered by the request dialog wherever the shell happens
 // to be - so this screen lists them, says which are online, and lets one be
 // forgotten for good. A share is the machine's rather than a user's (see
-// src/joins.js), so the list is the same whoever is signed in.
+// src/management/joins.js), so the list is the same whoever is signed in.
 //
 // **A share is not only a record.** A pairing the host did not ask to remember
 // leaves no row anywhere, and it is still this device being shared out for as

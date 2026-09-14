@@ -1,10 +1,7 @@
 "use strict";
 
-// the cameras and the screens, a preview for both - under the desktop shell the
-// screen preview goes through the same ffmpeg encoder a room would use
-
-// third-party dependencies
-import { Decoder } from "../../../../libs/ffmpeg-chunkifier/decoder.js";
+// the cameras and the screens, a preview for both - the screen preview goes
+// through the same encoder and decoder a room would use, via ctx["stream"]
 
 // first-party dependencies
 import { Panel } from "../../../../src/view.js";
@@ -60,125 +57,21 @@ const VideoWindow = class extends Panel {
             this.cameraTest.children[0].innerText = "pause";
         });
 
-        // screen test
+        // screen test: the whole of the host's pipeline into a decoder on this
+        // machine, through ctx["stream"] - the one encoder line in the tree.
+        // In a browser it is the screen picker and WebCodecs; under the desktop
+        // shell, ffmpeg on the display chosen here.
         this.displaySelect = document.getElementById("select-display-input");
         this.displayRefresh = document.getElementById("btn-display-refresh");
         this.displayTest = document.getElementById("btn-display-test");
-        this.displayVideo = document.getElementById("video-display-test");
+        this.displayCanvas = document.getElementById("video-display-test");
         this.displayVideoBox = document.getElementById("video-display-test-box");
-        this.displayTestStream = null;
+        this.isPreviewing = false;
         if (desktop.isAvailable) {
             this.displayRefresh.addEventListener("click", () => {
                 this.listDisplay();
             });
-            this.displayTest.addEventListener("click", async () => {
-                if (this.displayTestStream !== null) {
-                    this.stopDisplay();
-                    return;
-                }
-                const screenIndex = Number(this.displaySelect.value);
-                if (screenIndex < 0) {
-                    return;
-                }
-                const trackGenerator = new MediaStreamTrackGenerator({ "kind": "video" });
-                const writer = trackGenerator.writable.getWriter();
-                const stream = new MediaStream([trackGenerator]);
-
-                this.decoder = new Decoder();
-                this.decoder.onVideoFrame = async (frame) => {
-                    try {
-                        await writer.write(frame);
-                    } catch (e) {
-                        console.error("Failed to write frame:", e);
-                    } finally {
-                        frame.close();
-                    }
-                };
-                this.videoEncoderFFmpeg = new desktop["FFmpegVideoEncoder"]();
-                this.videoEncoderFFmpeg.onConfiguration = (config) => {
-                    this.decoder.appendVideoConfiguration(config);
-                };
-                this.videoEncoderFFmpeg.onChunk = (chunk) => {
-                    this.decoder.appendVideoChunk(chunk);
-                };
-                this.videoEncoderFFmpeg.onEnd = (error) => {
-                    console.log("Video encoding ended with error code:", error);
-                };
-
-                const ffpmegParams = [];
-                ffpmegParams.push(
-                    "-fflags", "+nobuffer+flush_packets",
-                    "-flags", "+low_delay",
-                    "-analyzeduration", "0",         // Don't analyze input
-                    "-probesize", "32",              // Minimum probe size
-                    "-thread_queue_size", "8"       // Small queue");
-                );
-                // the capture input and the hardware encoder are the two
-                // platform halves, the rest of the line is the same everywhere
-                if (desktop["os"].platform() === "win32") {
-                    ffpmegParams.push(
-                        "-filter_complex",
-                        "gfxcapture=monitor_idx=" + screenIndex +
-                        ":capture_cursor=true" +
-                        ":max_framerate=30" +
-                        ",hwdownload,format=bgra",
-                        "-c:v", "h264_nvenc",
-                        "-b:v", "10000K",
-                        "-tune:v", "3",
-                        "-profile:v", "2",
-                        "-level:v", "51",
-                        "-rc:v", "1",
-                        "-rgb_mode:v", "1",
-                        "-delay:v", "0",
-                        "-zerolatency:v", "1"
-                    );
-                } else if (desktop["os"].platform() === "darwin") {
-                    // avfoundation lists screens after the cameras, so the
-                    // one to grab is named rather than numbered
-                    ffpmegParams.push(
-                        "-f", "avfoundation",
-                        "-capture_cursor", "1",
-                        "-framerate", "30",
-                        "-i", "Capture screen " + screenIndex + ":none",
-                        "-c:v", "h264_videotoolbox",
-                        "-realtime", "1",
-                        "-b:v", "10000K",
-                        "-profile:v", "high",
-                        "-level:v", "51"
-                    );
-                }
-                ffpmegParams.push(
-                    "-framerate", "30",
-                    "-g", "30",             // Keyframe interval (every 30 frames = 0.5s at 60fps)
-                    "-keyint_min", "30",
-                    "-force_key_frames", "expr:gte(t,n_forced*0.5)",
-                    "-f", "mp4",
-                    "-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
-                    "-frag_duration", "16666",
-                    "pipe:1"
-                );
-                await this.videoEncoderFFmpeg.start(
-                    desktop["ffmpegPath"],
-                    ffpmegParams,
-                    {
-                        "codec": "avc1.640033",
-                        "codedWidth": 1920,
-                        "codedHeight": 1080,
-                        "hardwareAcceleration": "prefer-hardware",
-                        "optimizeForLatency": true
-                    }
-                );
-                this.displayVideo.srcObject = stream;
-                this.displayTestStream = stream;
-                stream.getVideoTracks()[0].addEventListener("ended", async () => {
-                    this.stopDisplay();
-                });
-
-                this.displayVideoBox.classList.remove("hide");
-                this.displayTest.children[0].innerText = "pause";
-            });
             this.listDisplay();
-
         } else {
             this.displayRefresh.parentElement.classList.add("hide");
 
@@ -189,24 +82,33 @@ const VideoWindow = class extends Panel {
             this.displaySelect.disabled = true;
             const option = new Option(localization.get("settings.video.display.notsupported"), "");
             this.displaySelect.add(option);
-
-            this.displayTest.addEventListener("click", async () => {
-                if (this.displayTestStream !== null) {
-                    this.stopDisplay();
-                    return;
-                }
-                const stream = await navigator.mediaDevices.getDisplayMedia({"video": true, "audio": false});
-
-                this.displayVideo.srcObject = stream;
-                this.displayTestStream = stream;
-                stream.getVideoTracks()[0].addEventListener("ended", () => {
-                    this.stopDisplay();
-                });
-
-                this.displayVideoBox.classList.remove("hide");
-                this.displayTest.children[0].innerText = "pause";
-            });
+            if (ctx["stream"].isShareSupported() === false) {
+                this.displayTest.disabled = true;
+            }
         }
+        this.displayTest.addEventListener("click", async () => {
+            if (this.isPreviewing === true) {
+                this.stopDisplay();
+                return;
+            }
+            try {
+                const screenIndex = Number(this.displaySelect.value);
+                await ctx["stream"].preview(this.displayCanvas, {"screenIndex": (Number.isInteger(screenIndex) ? screenIndex : undefined)});
+            } catch (error) {
+                console.error("Cannot preview the screen:", error);
+                ctx["ui"].snackbar.show(String(error?.message ?? error), true);
+                return;
+            }
+            this.isPreviewing = true;
+            this.displayVideoBox.classList.remove("hide");
+            this.displayTest.children[0].innerText = "pause";
+        });
+        // the picker's own stop button, or the encoder giving up, ends it too
+        ctx["stream"].addEventListener("stopped", (event) => {
+            if (event.detail?.["role"] === "preview") {
+                this.stopDisplay();
+            }
+        });
     };
 
     async listCam() {
@@ -274,20 +176,13 @@ const VideoWindow = class extends Panel {
         this.cameraTest.children[0].innerText = "play_arrow";
     };
     async stopDisplay() {
-        if (this.displayTestStream === null) {
+        if (this.isPreviewing === false) {
             return;
         }
-        this.displayVideo.srcObject = null;
-
-        const tracks = this.displayTestStream.getTracks();
-        for (let track of tracks) {
-            track.stop();
+        this.isPreviewing = false;
+        if (this.ctx["stream"].getRole() === "preview") {
+            await this.ctx["stream"].stop();
         }
-        this.displayTestStream = null;
-
-        await this.videoEncoderFFmpeg?.end?.();
-        await this.decoder?.end?.();
-
         this.displayVideoBox.classList.add("hide");
         this.displayTest.children[0].innerText = "play_arrow";
     };

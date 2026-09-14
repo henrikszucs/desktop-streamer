@@ -252,10 +252,16 @@ Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
 | --- | --- | --- |
 | `interactTimeout` | 3000 ms | the gap between two packets of one message |
 | `timeout` | 5000 ms | the whole message, end to end |
-| `packetSize` | 1000 B | one binary chunk |
+| `packetSize` | 65536 B | one binary chunk |
 | `packetTimeout` | 1000 ms | wait for an ack before resending |
 | `packetRetry` | `Infinity` | resend attempts per packet |
-| `sendThreads` | 16 | packets in flight at once |
+| `sendThreads` | 64 | packets in flight at once |
+
+`packetSize × sendThreads` is what one round trip can carry, since every packet
+is acknowledged: the relayed stream lives on that product (4 MB per RTT here),
+and the kilobyte packet it used to be capped a relayed room at about 2.5 Mbps
+on a 50 ms line. Both ends carry the same two numbers
+(`src/server/ws/ws.js`, `src/client/web/src/server.js`).
 
 ### Errors
 
@@ -472,8 +478,8 @@ const com = new Communicator({
     "sender": async function(data) {
         ws.send((data instanceof ArrayBuffer) ? data : JSON.stringify(data));
     },
-    "interactTimeout": 3000, "timeout": 5000, "packetSize": 1000,
-    "packetTimeout": 1000, "packetRetry": Infinity, "sendThreads": 16
+    "interactTimeout": 3000, "timeout": 5000, "packetSize": 65536,
+    "packetTimeout": 1000, "packetRetry": Infinity, "sendThreads": 64
 });
 const ws = new WebSocket("wss://localhost:8444", {"rejectUnauthorized": false});
 ws.binaryType = "arraybuffer";

@@ -5,7 +5,7 @@ sending, Google sign-in, sessions that survive a reconnect, live user data, and
 account deletion.
 
 **Most of this is done** - `src/server/ws/handlers/accounts.js` and
-`src/client/web/src/account.js`, described in `.claude/CLAUDE.md` and
+`src/client/web/src/management/account.js`, described in `.claude/CLAUDE.md` and
 `.claude/CLIENT.md`. What was built differs from the table below in three ways:
 there is no subscription API - every socket signed in as a user is pushed
 `user-change` and `logout`, and the client asks `session-list` when the window

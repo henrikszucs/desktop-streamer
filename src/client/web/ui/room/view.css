@@ -43,11 +43,30 @@
 }
 
 /* the stream takes the space the toolbar leaves and is letterboxed inside it,
-   so a 4:3 desktop on a 16:9 window keeps its shape rather than stretching */
-.room-layout > :nth-child(1) > video {
+   so a 4:3 desktop on a 16:9 window keeps its shape rather than stretching.
+   The canvas is sized to the picture by the decoder and scaled here, so the
+   letterbox is the browser's and costs nothing per frame. */
+.room-layout > :nth-child(1) > canvas {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    outline: none;
+    background-color: #000;
+}
+
+/* while the keyboard and the mouse are the host's, the pointer over the
+   picture is the host's too */
+.room-layout.room-controlling > :nth-child(1) > canvas {
+    cursor: none;
+}
+
+/* the reading beside the relay chip: small, quiet, and only there once a
+   frame has been drawn */
+.room-stats {
+    font-size: 0.75rem;
+    opacity: 0.7;
+    padding-inline-start: 0.5rem;
+    white-space: nowrap;
 }
 
 .room-layout > :nth-child(2) {
@@ -141,6 +160,10 @@
     }
 
     #room-relay > span {
+        display: none;
+    }
+
+    .room-stats {
         display: none;
     }
 

@@ -108,7 +108,7 @@ const ConnectionDialog = class extends Dialog {
 
     // Nothing is handed back to whoever opened this. Both answers change the
     // records themselves and the list behind the dialog follows those - see the
-    // change event in src/joins.js - so closing is the base's requestClose(),
+    // change event in src/management/joins.js - so closing is the base's requestClose(),
     // which leaves the router the one that knows what is open.
 
     currentName() {

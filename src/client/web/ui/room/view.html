@@ -5,8 +5,15 @@
     twice. See .claude/CLIENT.md.
 -->
 <div class="room-layout hide" id="screen-room">
+    <!--
+        The stage is a canvas and not a <video>: the stream arrives as frames
+        this client decodes itself, and the decoder's worker draws them here
+        straight from the GPU - see .claude/CLIENT.md, "The stream". It is one
+        element for the life of the screen, since its surface is handed to that
+        worker once.
+    -->
     <div>
-        <video id="room-video" playsinline></video>
+        <canvas id="room-canvas" tabindex="0"></canvas>
     </div>
 
     <!--
@@ -25,6 +32,12 @@
                 <span data-localization="room.relay.label">Relay</span>
                 <div class="tooltip right" data-localization="room.relay.tooltip">The two devices could not reach each other, so the connection goes through the server.</div>
             </div>
+            <!--
+                What the line is doing, once a second: frames drawn and bits
+                received. It is the one reading that says whether a picture
+                that looks wrong is the line's fault or the host's.
+            -->
+            <span class="room-stats" id="room-stats"></span>
         </div>
         <nav class="toolbar">
             <a tabindex="0" id="btn-room-audio">
@@ -49,6 +62,16 @@
                 <i>aspect_ratio</i>
                 <span id="room-resolution-label">Auto</span>
                 <menu class="border top no-wrap" id="room-resolution-menu"></menu>
+            </a>
+            <!--
+                How many pictures a second, priced by nothing: the bandwidth
+                is spent on sharpness first, and the encoder shares what is
+                left across the frames asked for - see ./index.js.
+            -->
+            <a tabindex="0" id="btn-room-framerate">
+                <i>animation</i>
+                <span id="room-framerate-label">30 fps</span>
+                <menu class="border top no-wrap" id="room-framerate-menu"></menu>
             </a>
             <a tabindex="0" id="btn-room-fullscreen">
                 <i id="btn-room-fullscreen-icon">fullscreen</i>

@@ -40,6 +40,12 @@
                 "hu": "A(z) {from} több sávszélességet igényel az engedélyezettnél - a kép mostantól {to}."
             }
         },
+        "framerate": {
+            "value": {
+                "en": "{value} fps",
+                "hu": "{value} fps"
+            }
+        },
         "fullscreen": {
             "enter": {
                 "en": "Fullscreen",
@@ -64,6 +70,12 @@
             "lost": {
                 "en": "The connection with the other device was lost.",
                 "hu": "A kapcsolat megszakadt a másik eszközzel."
+            }
+        },
+        "share": {
+            "ended": {
+                "en": "The other device stopped sharing its screen.",
+                "hu": "A másik eszköz befejezte a képernyője megosztását."
             }
         },
         "leave": {

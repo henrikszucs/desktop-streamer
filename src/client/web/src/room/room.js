@@ -4,12 +4,12 @@
 // put the two sockets in, and the WebRTC connection negotiated across it.
 //
 // It stands either direct or relayed through the server, speaks the same
-// protocol both ways, carries no media yet, and is opened by the server's
+// protocol both ways, carries the stream on a channel of its own, and is opened by the server's
 // room-open rather than by hand. Why each of those is so - and what the two
 // holding places below are for - is .claude/CLIENT.md, "The connection".
 
 // third-party dependencies
-import Communicator from "../libs/communicator/communicator.js";
+import Communicator from "../../libs/communicator/communicator.js";
 
 // how the two ends are told apart: the peer asked for the connection, so the
 // peer is the one that opens it and the host answers. It is one rule rather than
@@ -18,9 +18,18 @@ const isOfferer = function(isHost) {
     return isHost !== true;
 };
 
-// what the channel is called. Nothing is sent on it yet - it is the handshake
-// that proves the path, and the seam the control protocol lands on.
+// what the two channels are called. The first is the handshake that proves the
+// path and the one the control protocol and the settings go over - ordered,
+// reliable, answered. The second carries the stream and nothing else: unordered
+// and unreliable, because a frame that is late is worth less than the next one
+// (see .claude/CLIENT.md, "The stream").
 const CHANNEL_NAME = "control";
+const VIDEO_CHANNEL_NAME = "video";
+
+// how much the video channel may hold before a frame is refused rather than
+// queued: two frames of a generous size. What is above it is latency, not
+// throughput - the line is not taking it and the picture is falling behind.
+const VIDEO_BACKLOG = 512 * 1024;
 
 // how long the direct connection is given before the fallback is taken. ICE has
 // tried everything it has by then on any path that works, and what is left is a
@@ -49,8 +58,9 @@ const createRoom = function(ctx) {
     const events = new EventTarget();
 
     let connection = null;      // RTCPeerConnection
-    let channel = null;         // RTCDataChannel
+    let channel = null;         // RTCDataChannel - control
     let channelCom = null;      // the Communicator over that channel
+    let videoChannel = null;    // RTCDataChannel - the stream, raw
     let roomKey = "";           // this side's own key for the room - never the other side's
     let joinId = "";            // the join this room is on, "" for a pairing nobody remembered
     let name = "";              // what this side calls it while it stands - see setName
@@ -222,6 +232,21 @@ const createRoom = function(ctx) {
         });
     };
 
+    // The stream's channel is bytes in and bytes out and nothing on top: no
+    // communicator, no acknowledgment, no reassembly - the frame format in
+    // frame.js does the one part of that a picture needs. A chunk that arrives
+    // is handed up as it is; one that does not is nobody's business here.
+    const wireVideoChannel = function() {
+        videoChannel.binaryType = "arraybuffer";
+        videoChannel.bufferedAmountLowThreshold = VIDEO_BACKLOG / 2;
+        videoChannel.addEventListener("message", function(event) {
+            if (mode !== MODE_DIRECT || (event.data instanceof ArrayBuffer) === false) {
+                return;
+            }
+            emit("frame", {"roomKey": roomKey, "data": event.data});
+        });
+    };
+
     //
     // the fallback
     //
@@ -323,9 +348,21 @@ const createRoom = function(ctx) {
         if (isOfferer(isHost) === true) {
             channel = connection.createDataChannel(CHANNEL_NAME);
             wireChannel();
+            // the stream's channel is opened beside it, by the same side, so
+            // both are in the one offer and neither end negotiates twice
+            videoChannel = connection.createDataChannel(VIDEO_CHANNEL_NAME, {
+                "ordered": false,
+                "maxRetransmits": 0
+            });
+            wireVideoChannel();
             negotiate();
         } else {
             connection.addEventListener("datachannel", function(event) {
+                if (event.channel.label === VIDEO_CHANNEL_NAME) {
+                    videoChannel = event.channel;
+                    wireVideoChannel();
+                    return;
+                }
                 channel = event.channel;
                 wireChannel();
             });
@@ -388,12 +425,14 @@ const createRoom = function(ctx) {
             // the channel it was speaking over
             channelCom?.release?.();
             channel?.close?.();
+            videoChannel?.close?.();
             connection?.close?.();
         } catch (error) {
             console.error("Cannot close the connection:", error);
         }
         channelCom = null;
         channel = null;
+        videoChannel = null;
         connection = null;
         earlyCandidates.length = 0;
     };
@@ -450,7 +489,11 @@ const createRoom = function(ctx) {
         // the first relayed message is also the other end saying it gave up, for
         // the case where the signal that says so is the one that went missing
         startRelay(true);
-        emit("message", {"roomKey": roomKey, "data": event.detail?.["data"]});
+
+        // bytes are the stream and an object is a message, on this leg as on
+        // the direct one - so what listens for either never asks which leg
+        const data = event.detail?.["data"];
+        emit((data instanceof ArrayBuffer ? "frame" : "message"), {"roomKey": roomKey, "data": data});
     });
 
     // the other end left, or its socket did: the room is already gone on the
@@ -469,9 +512,10 @@ const createRoom = function(ctx) {
         "leave": leave,
 
         // one way out for whatever the two ends have to say, whichever of the two
-        // is carrying it. Nothing sends anything yet - the stream and the control
-        // protocol are what will - and a relayed message is a call the server
-        // answers, so this one reports rather than throws.
+        // is carrying it: the control protocol and the settings of the stream
+        // (src/room/stream.js), answered and in order. A relayed message is a call
+        // the server answers, so this one reports rather than throws. The
+        // frames themselves take sendFrame below.
         "send": async function(data) {
             if (state !== "connected") {
                 return false;
@@ -499,6 +543,46 @@ const createRoom = function(ctx) {
                 console.error("Cannot send a message:", error);
                 return false;
             }
+        },
+
+        // one chunk of the stream, on whichever leg is carrying the room. Bytes
+        // only, and nothing waits for them: a chunk the channel will not take
+        // right now is refused - reported false - rather than queued behind the
+        // ones already there, because a queue here is latency the peer sees.
+        // Over the relay it is a socket frame, and the socket splits it itself.
+        "sendFrame": function(buffer) {
+            if (state !== "connected" || (buffer instanceof ArrayBuffer) === false) {
+                return false;
+            }
+            if (mode === MODE_RELAY) {
+                if (roomKey === "") {
+                    return false;
+                }
+                ctx["server"].roomDataSend(roomKey, buffer).catch(function(error) {
+                    console.error("Cannot relay a frame:", error);
+                });
+                return true;
+            }
+            if (videoChannel === null || videoChannel.readyState !== "open") {
+                return false;
+            }
+            if (videoChannel.bufferedAmount > VIDEO_BACKLOG) {
+                return false;
+            }
+            try {
+                videoChannel.send(buffer);
+                return true;
+            } catch (error) {
+                console.error("Cannot send a frame:", error);
+                return false;
+            }
+        },
+
+        // the most sendFrame takes in one call: one SCTP message on the direct
+        // leg, since the channel is not wrapped in anything that would split
+        // it; anything at all on the relay, where the socket does
+        "getFrameLimit": function() {
+            return (mode === MODE_RELAY ? Infinity : CHANNEL_PACKET_SIZE);
         },
 
         "getState": function() {
@@ -549,13 +633,15 @@ const createRoom = function(ctx) {
             return isHost === true && state !== "closed";
         },
 
-        // the two objects the media work will hang off, rather than building a
-        // second connection beside this one
+        // the two objects behind the room, for whatever has to look at them
         "getConnection": function() {
             return connection;
         },
         "getChannel": function() {
             return channel;
+        },
+        "getVideoChannel": function() {
+            return videoChannel;
         },
 
         // the protocol over whichever leg is carrying the room: the channel's
@@ -566,5 +652,5 @@ const createRoom = function(ctx) {
     };
 };
 
-export { createRoom, isOfferer, CHANNEL_NAME, DIRECT_TIMEOUT, CLOSE_GRACE };
-export default { createRoom, isOfferer, CHANNEL_NAME, DIRECT_TIMEOUT, CLOSE_GRACE };
+export { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
+export default { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
