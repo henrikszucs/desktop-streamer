@@ -11,8 +11,8 @@
 // stored preference says who it wants to be, the server's answer says who it is.
 
 // first-party dependencies
-import { conf, setLocal, resetUser } from "./conf.js";
-import { getPlatform } from "./env.js";
+import { conf, setLocal, resetUser } from "../conf.js";
+import { getPlatform } from "../env.js";
 
 // the shell builds one of these and hands it to every module in ctx
 const createAccount = function(ctx) {
@@ -43,6 +43,7 @@ const createAccount = function(ctx) {
             "firstName": user["firstName"] ?? "",
             "lastName": user["lastName"] ?? "",
             "picture": user["picture"] ?? "",
+            "isRelayAllowed": user["isRelayAllowed"] === true,
             "sessionId": answer["sessionId"],
             "sessionKey": sessionKey
         };
@@ -69,12 +70,17 @@ const createAccount = function(ctx) {
                 record[key] = user[key];
             }
         }
+        // the relay permission is the server's to say and every profile says
+        // it, so a record follows the newest answer
+        if (typeof user["isRelayAllowed"] === "boolean") {
+            record["isRelayAllowed"] = user["isRelayAllowed"];
+        }
         await store(stored());
     };
 
     // an account this client no longer holds: the record goes, the devices it
     // kept here go with it (the server hands them back at the next sign-in, see
-    // src/joins.js), and the client is the guest if it was that one
+    // src/management/joins.js), and the client is the guest if it was that one
     const dropRecord = async function(userId) {
         await store(stored().filter(function(account) {
             return account["userId"] !== userId;

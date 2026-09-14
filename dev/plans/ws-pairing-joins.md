@@ -148,7 +148,7 @@ for accounts, since there are no user ids to compare yet.
 The name is on the row rather than only in the client so a device presenting the
 same code again is handed it back. The client keeps its own copy for the screens
 it draws offline and adopts the row's when `join-connect` answers a non-empty one
-(`connectAll` in `src/client/web/src/joins.js`); an empty one is a row nobody has
+(`connectAll` in `src/client/web/src/management/joins.js`); an empty one is a row nobody has
 named, not a name somebody cleared.
 
 Every change fans out through `broadcastJoin(joinId, msg, containDevices,
@@ -239,7 +239,7 @@ Differences from the plan below, all deliberate:
   owns: a sequence of some kind, since frames of very different sizes can finish
   out of order on either leg.
 
-The client half is `src/client/web/src/room.js` (`ctx["room"]`): one
+The client half is `src/client/web/src/room/room.js` (`ctx["room"]`): one
 `RTCPeerConnection`, one `control` data channel, and `connecting`/`connected`/
 `closed` events. It carries **no media** - the open channel is what says the two
 ends can reach each other, and the room screen lifts its own wait on it.

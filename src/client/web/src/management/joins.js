@@ -19,7 +19,7 @@
 // sides of a join would be a machine connecting to itself.
 
 // first-party dependencies
-import { getJoins, setJoin, removeJoin, GUEST_ID } from "./conf.js";
+import { getJoins, setJoin, removeJoin, GUEST_ID } from "../conf.js";
 
 // the shell builds one of these and hands it to every module in ctx
 const createJoins = function(ctx) {

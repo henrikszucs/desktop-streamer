@@ -57,13 +57,21 @@ lists where these plan files disagree with that code.
 | [ws-pairing-joins.md](ws-pairing-joins.md) | pair codes, joins and the WebRTC signaling relay | done, the relay in a different shape than planned - see the file |
 | [ws-accounts.md](ws-accounts.md) | e-mail, Google sign-in, persistent sessions, user data | open, and what the three above are still waiting on |
 
-What is left is accounts. Everything a connection can ask about *itself*, about
-the two devices at either end of a pairing, and about the connection they
-negotiate is answered; nothing that needs a user behind it is, and **nothing
-carries media yet** - the relay carries the negotiation, and what the two ends do
-with the connection once it stands is still to be written.
+Everything a connection can ask about *itself*, about the two devices at either
+end of a pairing, and about the connection they negotiate is answered, and the
+accounts are built (the status table above is behind the code). What the two
+ends do with the connection once it stands is [room-media.md](room-media.md).
 
 ## Client
 
 [client-ui-modules.md](client-ui-modules.md) is done - kept as a record of what
 the restructuring landed as and what it planned and dropped, not as work.
+
+[room-media.md](room-media.md) is the stream: what the two ends do with a room
+once it stands - raw encoded bytes over a `video` data channel beside
+`control` and never a WebRTC media track, the frame format both legs carry,
+the ffmpeg desktop host and the WebCodecs web host, the decoder in a Worker
+drawing through WebGPU/WebGL, and the control protocol. **Built** - see the
+"What landed" section at its end for what differs and what is still open (the
+desktop host's sound, a keyframe on request over a pipe, the frame of delay in
+the access unit splitter, the upscaler).

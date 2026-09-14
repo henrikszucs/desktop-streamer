@@ -188,7 +188,7 @@ again is what comes next.
 
 The client is always a user. It starts as the guest and signing in adds an
 account *beside* it rather than replacing it, so there is no signed-out state and
-no second menu for one. `src/account.js` (`ctx["account"]`) is that model: the
+no second menu for one. `src/management/account.js` (`ctx["account"]`) is that model: the
 accounts this client holds are `accounts` in the local configuration — each with
 the `sessionKey` the server answered once to `login-google` and the profile as it
 was last seen — and `userId` is the one the client wants to be, `""` for the
@@ -385,7 +385,7 @@ each holding its own code. **Unattended** appears only once remember is ticked,
 because it says something about a device you are keeping - that it may come back
 without anybody being asked - and means nothing about one you are not.
 
-`src/joins.js` (`ctx["joins"]`) is this client's half of that, and **the two
+`src/management/joins.js` (`ctx["joins"]`) is this client's half of that, and **the two
 sides are kept in different places**. A share is the machine's: its record lives
 in the guest row of the local database (`getJoins`/`setJoin`/`removeJoin` in
 `src/conf.js`, under `GUEST_ID`) whoever is signed in, so the host code never
@@ -396,7 +396,7 @@ codes it holds and go with the guest row when it is reset, and an account's are
 handed to any client it signs in on by `join-sync`, since the server wrote the
 account on the row when the pair was made. `rowOf(isHost)` in `joins.js` is the
 one place that decides which row a record goes in, and an account forgotten here
-(`dropRecord` in `src/account.js`) takes its row with it - the server has the
+(`dropRecord` in `src/management/account.js`) takes its row with it - the server has the
 devices back at the next sign-in.
 
 **One join, one side per client.** The two sides of a join carry the same
@@ -453,7 +453,13 @@ connection nobody has named, not a name somebody cleared, so the local record
 stands. `management/connection` is the dialog, and a rename made while the socket
 is down is local only, since the call cannot be made. The same dialog names the
 live share, where there is no row and no call at all - see "A share is not only a
-record" below.
+record" below. **The dialog follows the connection it is about**: it listens to
+the `change` of `ctx["joins"]` (and the room's `closed`, for the live share)
+while it stands, and when its record is gone - the other side deleted it, the
+push `join-remove` having dropped the row - it closes, its nested confirm with
+it, and says why in the snackbar; a name saved onto a row that no longer exists
+would otherwise be answered `connection.unknown` after the fact. Its own delete
+sets `isRemoving` first, since the records change the same way for both.
 
 Who is on the other side of a join arrives the same way: `join-online` is pushed
 to each side as the other's first socket appears and its last one goes, so
@@ -500,7 +506,7 @@ on either side refreshes it.
 
 ## The connection
 
-`ctx["room"]` (`src/room.js`) is the live connection between this device and the
+`ctx["room"]` (`src/room/room.js`) is the live connection between this device and the
 other one, and it is the shell's rather than the room screen's: **the host holds
 one while it is on its own screens**, so a screen cannot own it.
 
@@ -555,11 +561,25 @@ then what would have crossed between the two devices crosses the server instead
 - **both ends have to give up together**, and they will not do it at the same
   moment: whoever gets there first sends a `relay` signal and the other follows
   on the spot. A first relayed message is taken as the same statement, for the
-  case where that signal is the one that went missing;
+  case where that signal is the one that went missing - but only while this
+  side is still `connecting` on its direct attempt. A room that stands direct
+  hears relayed bytes too: the tail of what the other end sent before its own
+  sync took it off the relay, and after a retry that made it, reading those as
+  a surrender would put the room straight back on the relay and close the
+  connection it just proved. A direct connection that is *lost* while
+  connected is the grace timer's and the `relay` signal's to notice, below;
 - **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
   answered to every client in `permissions` (it is off unless the configuration
   says otherwise, since it spends the server's own bandwidth), and where it is
-  off a failed direct attempt ends the room rather than hanging on one;
+  off a failed direct attempt ends the room rather than hanging on one. It is
+  the *guest's* flag: an account's is its own users row, told in the profile
+  as `isRelayAllowed` and kept on the account record - taken from every
+  profile the server answers or pushes, not the sign-in alone, so a record
+  from before the flag existed and a row changed since both follow the newest
+  answer - and `isRelayAllowed()`
+  in `room.js` answers from whichever the client is - the one permission
+  `permissions.allows()` in `ui.js` cannot answer, since a signed-in user is
+  not simply allowed everything a guest is refused;
 - **a direct connection that is *lost* is the same case as one that was never
   made.** A channel that closes mid-room says nothing about why - the other end
   leaving and the path between them breaking look identical from there, and what
@@ -585,12 +605,25 @@ exists. Two things follow that the stream work has to know:
   reassembly happen on a direct connection too - which is what lets `send()` be
   one call with one behaviour, and lifts the per-message ceiling a raw
   `RTCDataChannel` has (a few hundred kilobytes). Its packet is 16 KB, the size
-  every browser agrees on, against the socket's 1 KB: no proxy sits in the middle
-  of this one. The room bar is the exception, and
-deliberately: a relayed connection is slower and is worth saying so - the
-indicator is in the empty track the centring already leaves, and it is only ever
-shown when it is true, because an indicator for the expected case is one more
-light to learn to ignore.
+  every browser agrees on; the socket's is 64 KB with 64 in flight, since the
+  relayed stream is carried by that product and the kilobyte it used to be
+  capped a relayed room at a few Mbps. The room bar is the exception, and
+deliberately: a relayed connection is slower and is worth saying so. The
+switch (`#btn-room-relay`) is in the empty track the centring already leaves,
+and it is always there: lit while the server is carrying the room, plain for a
+direct room with the server behind it, and `[disabled]` for a direct room with
+**no relay for this user** - so a peer on a line that keeps dropping can see
+whether there is a fallback, and take it. A click is the same move the failures
+make on their own: `useRelay()` is `startRelay`, and `useDirect()` is
+`startDirect` - a fresh `RTCPeerConnection` negotiated while the relay goes on
+carrying the room, taken over only on the new channel's sync (which is where
+`mode` flips, on each end's own proof) and given up on the direct clock or an
+ICE failure with the relay still standing, said in the snackbar since the
+button then looks as it did. The other end follows a `direct` signal the way
+it follows a `relay` one; `attempt` is what keeps a channel of the attempt
+that was given up from reporting for the one that replaced it. `drawRelay`
+asks `ctx["room"].isRelayAllowed()` every time, which answers for whoever the
+client is right now (see below), rather than reading the guest flag once.
 
 **"Connected" means the two ends have exchanged packets**, not that ICE says so
 and not only that the channel opened: the channel opening says *this* end is
@@ -602,9 +635,17 @@ relay - so the sync failing must never report `connected`.
 The communicator is built when the channel is wired rather than when it opens:
 the other end opens at its own moment and can sync into this one first, and a
 packet that arrives before there is anything to receive it is a negotiation that
-hangs. It carries no media and nothing is sent on it yet - it
-is the handshake that proves the path, and the seam the control protocol and the
-stream land on (`getConnection()`/`getChannel()`).
+hangs. It carries no picture - it is the handshake that proves the path, and
+what the control protocol and the stream's settings go over (`send()`/`message`).
+
+**The stream has a channel of its own beside it.** `video` is opened by the same
+side in the same offer, `ordered: false, maxRetransmits: 0`, wrapped in nothing:
+`sendFrame()` hands a chunk to it as it is and reports `false` rather than
+queueing when `bufferedAmount` is past `VIDEO_BACKLOG`, and whatever arrives on
+it is the `frame` event. On the relay the same chunk is the socket's binary frame
+(`roomDataSend`) and the relayed bytes come back as `frame` too, so the stream
+never asks which leg it is on - bytes are the stream and an object is a message,
+on both. Why the picture is not on the control channel is the section below.
 
 The two ways out are not the same. `leave()` is this side deciding: it tears the
 connection down **and** tells the server, so the other end hears `room-close` and
@@ -619,9 +660,48 @@ eventually need.
 The room is the **peer's** side of a connection - the one looking at somebody
 else's screen - and the bar under the stream is that peer's half of it: what it
 hears, what it drives, and how much of the line the host is allowed to spend on
-it. Nothing carries any of it to a host yet, so the whole bar ends in one
-`settings` event on the screen and a `getSettings()` beside it, which is the
-seam the stream is wired to when it lands.
+it. The whole bar ends in one `settings` event on the screen and a
+`getSettings()` beside it, and `emit()` hands the same object to `ctx["stream"]`,
+which carries it to the host - see The stream below. The picture is a `<canvas>`
+the screen hands the stream once at mount (`attach`), and the reading beside the
+relay chip is the stream's `stats` event once a second - two short lines, the
+frames over the bits, since one line of it was twice the chip's width and a
+flex item keeps its content's width, which ran it into the toolbar in a
+narrowing window; each line is cut with an ellipsis before that can happen
+(the drop count, last on its line, goes first) and the tooltip carries the
+whole reading.
+
+**A tool the host has not got is greyed, not left to do nothing.** The
+`share` message says whether there is sound (`isAudio`, the encoder's
+`hasAudio()` - the desktop host has none yet) and a keyboard to take
+(`isControl`, easy-control being there), and the bar greys the two buttons
+(`room-tool-off`) until a share has said, with the reason in the tooltip; a
+keyboard already taken from a host that then says it has none is let go.
+
+**Fullscreen is the stage alone** - `#room-stage`, the canvas and nothing of
+the bar - so the way out is the exit shortcut: the browser's own Escape, or
+under the desktop shell the hold. The hold lets go of the innermost thing
+first, the fullscreen and then the keyboard on a second hold, and while it runs
+the stream's `hold` event (`onHold` in `stream-input.js`, the delay in it)
+fills the ring over the picture, since five seconds on a key that shows nothing
+reads as a key that does nothing.
+
+**The screen entry is drawn from the host, never guessed.** `#btn-room-screen`
+is hidden until the stream's `share` event brings a `screens` list of more than
+one, and its rows are that list in the host's own order - the one thing both
+ends can point at - with the primary display said to be. Choosing one only sends
+`screenIndex` in the settings: the label does not move until the host restarts
+its encoder on that display and says so in its next `share`, so what is marked
+is what is on screen, and a display the host could not open is never claimed to
+be. The choice is of *this* host, so `onRoomClosed` clears it and the next room
+opens on its primary display like any first time.
+
+**The frame rate is priced by nothing.** The third menu (`FRAMERATES`: 24, 30,
+45, 60, 120) is not held under the bandwidth the way a resolution is: an encoder
+keeps the bitrate it was given and spends it across however many frames there
+are, so a higher rate costs sharpness inside the same budget rather than bytes
+the line has not got - which is the peer's trade to make, and the picture is
+what says how it went. It travels in the same `settings` message as the rest.
 
 **The bandwidth is the cap, and the resolution is priced against it.** One table
 in `ui/room/index.js` says what each picture costs to send, and the Mbps the peer
@@ -660,12 +740,17 @@ reaching a host - and when the socket comes back, `loadPath()` opens the room
 again and its own wait returns with it.
 
 **A room is entered *for* something**, and either the path or the flow says so.
-`/room/<joinId>` is a remembered device - an address this client can be sent back
-to - and the room waits when the route carries one. A pairing the host did not
-remember has no id anywhere to put in a URL, so the dialog that accepted it
-navigates with `isConnecting` instead (`navigate(path, params)`; the params are
-gone after a reload, which is right - so is the pairing). `/room` typed by hand is
-neither, and is the bar with nothing in front of it.
+`/room/<joinId>` is a room on a remembered device and the room waits when the
+route carries one. A pairing the host did not remember has no id anywhere to
+put in a URL, so the dialog that accepted it navigates with `isConnecting`
+instead (`navigate(path, params)`; the params are gone after a reload, which is
+right - so is the pairing). **The room is not an address**: `isRoomRoute` in
+`src/router.js` answers a room path only while a flow is entering it or a room
+stands on exactly that id (`getRoomKey()`/`getJoinId()`), and anything else -
+`/room` typed in, a stale bookmark, a reload of a room that died with it, the
+right screen with the wrong id - is normalized to the default screen the way a
+route the server does not offer is. The way back to a remembered device is the
+devices screen, which asks the host; a URL never does.
 
 `setConnecting(false)` is what ends the wait, and the room's `connected` event
 is what calls it (`onRoomConnected`, which also draws the relay indicator) - the
@@ -776,6 +861,127 @@ The guard belongs to being in the room and not to the way it is left:
 `open()` takes it and `close()` gives it back, so a navigation, a dropped
 connection and the leaving button all end it the same way.
 
+## The stream
+
+`ctx["stream"]` (`src/room/stream.js`) is what crosses the room: the host's screen as
+raw encoded frames one way, the peer's mouse and keyboard the other. It follows
+`ctx["room"]` on its own - a room that connects starts the share on the host
+side and the watch on the peer side, and a room that closes stops it - so no
+screen owns it either; the room screen hands it a canvas and the bar's settings,
+and the shares screen reads `isSharing()`. `dev/plans/room-media.md` is the plan
+it was built from.
+
+**Never a WebRTC media track.** The `RTCPeerConnection` carries data channels and
+nothing else, on every host and every peer. A media track puts an encoder pacer,
+an RTP layer and a jitter buffer between the capture and the pixel, each a queue
+tuned for a video call and none of them one this code can empty; a remote
+desktop is measured on the one thing those spend. So every host sends bytes
+its own encoder made, the peer decodes and draws them itself, and the latency is
+capture + encode + line + decode + one vsync.
+
+**The wire format is `src/room/frame.js`**, and it is pure: a 12 byte header (`seq`,
+chunk index and count, `KEY`/`AUDIO`/`CONFIG` flags, a 24 bit timestamp) on
+every chunk, `packFrame` cutting a frame at the leg's limit (16000 bytes on the
+channel, one chunk on the relay since the socket splits it itself) and a
+reassembler with three rules that are the whole of what an unreliable channel
+needs: a frame that completes after a later one was delivered is dropped, a
+frame still in pieces when `HOLD` newer ones have started is dropped, and a
+drop is reported so the peer waits for a keyframe and asks for one - a delta
+frame over a hole decodes to garbage. `tests/frame.test.js` runs it under Node.
+A `CONFIG` frame is the decoder configuration as JSON, sent ahead of every
+keyframe so a peer that missed one has it the next time it could use it; audio
+frames carry `AUDIO` and their own timestamp clock, since the host stamps sound
+and picture from two sources.
+
+**Two hosts, one output.** Under the desktop shell it is ffmpeg
+(`src/room/stream-ffmpeg.js` builds the lines, `encoder-ffmpeg.js` in the Electron
+libs cuts the pipe): raw Annex B H.264 with an access unit delimiter in front of
+every frame, which is what the splitter cuts on, so there is no container to
+parse and the SPS/PPS ride in-band the way a WebCodecs decoder with no
+`description` expects. The lines are tried in order - `h264_nvenc`, `h264_amf`,
+then `libx264` on Windows with the D3D11 capture staying on the GPU into the
+hardware encoders; `h264_videotoolbox` then `libx264` on macOS - and the first
+to produce a frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every
+second, no B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows,
+at the frame rate the bar asked for.
+A settings change is a restart behind `RESTART_DEBOUNCE`, since ffmpeg is told
+nothing over a pipe - which is also why the desktop host cannot answer a
+keyframe request, and the one second GOP is the whole answer to a gap. The
+display shared is a setting like the others (`screenIndex`, an index into
+`Control.Screen.list()`, the primary one when absent or out of range): every
+start of the encoder reports the display it opened and the whole list beside it
+in the `share` message, and re-binds the control to that display, since the
+peer's mouse is mapped into the picture being shared. In a
+browser it is `getDisplayMedia` through a `MediaStreamTrackProcessor` into a
+WebCodecs `VideoEncoder` (`latencyMode: "realtime"`, `avc: {format: "annexb"}`
+so the bytes are the desktop host's bytes), a keyframe every `KEY_INTERVAL`
+seconds and on request, `configure()` again on a settings change - and
+`applyConstraints` on the captured track when the frame rate is what changed,
+since the capture is what paces the encoder; the display's audio track
+goes through an `AudioEncoder` as Opus on the same channel. A browser without
+`VideoEncoder` cannot share and the settings preview says so. A share that
+cannot start - the picker cancelled, no encoder - leaves the room, since a peer
+sitting on a black picture is worse than a request the host can answer again.
+Both encoders start across an `await` that nothing above them can cancel - the
+picker on the web, the old line ending before the debounced restart on the
+desktop - so each carries a `generation` that `stop()` bumps, and a start that
+comes back to a newer one lets go of what it got (the tracks picked, the line
+that started) instead of running a share the room has already left, which
+nothing could stop afterwards.
+
+**The peer decodes in a worker** (`src/room/stream-worker.js`) that holds the
+`VideoDecoder` and the canvas. The hardware decoder is preferred and never
+required, and the two calls that decide it do not fail the same way:
+`configure()` takes any configuration and reports the one it cannot do later,
+through the error callback, so a `try` around it catches nothing - the
+question is put to `isConfigSupported()` first and `prefer-hardware` is dropped
+to `no-preference` on its answer; a `NotSupportedError` that still reaches
+`onError` drops it the same way once, and without the preference there is no
+decoder to make, so the worker reports it and stops rather than building the
+same failing decoder for ever. `createDrawer` is the same shape: a canvas
+opened as one kind of context cannot be opened as another, so a WebGPU or
+WebGL path that opened and then threw leaves nothing for the 2D one, and it
+throws rather than handing back nothing for every frame to call. Beyond that
+the worker holds the decoder and the canvas: the room screen's `<canvas>` hands its surface
+over once (`transferControlToOffscreen`, which is why the element lives for the
+screen's life and `attach` is once), whole frames are posted to it transferred
+rather than copied, and a decoded frame is drawn the moment it comes out - the
+compositor shows what is there at the next vsync, and a queue between the two
+would be latency. Drawing is `src/room/stream-draw.js`: WebGPU (`importExternalTexture`,
+the path the upscaling work will read from), WebGL (`texImage2D` of the frame)
+or the 2D context, the first that opens, all of them the frame staying on the
+GPU. Two drop rules: a delta with no keyframe under it is dropped and one asked
+for (once per gap, `KEY_REQUEST_GAP` apart), and a decoder more than `QUEUE_MAX`
+frames behind drops deltas until the next keyframe - a hardware decoder is
+faster than the line, so a shallower queue is a hiccup that empties on its own.
+Sound is decoded on the main thread, since a worker has no speaker: an
+`AudioDecoder` into an `AudioContext`, each frame scheduled behind the one
+before it and `AUDIO_JITTER` ahead of the clock when the chain restarts.
+
+**Control is the control channel's.** The peer's events (`src/room/stream-input.js`)
+are read off the canvas and mapped into the *picture* - the canvas letterboxes,
+so its rectangle is not the picture's - batched per animation frame with only
+the newest move kept, and sent as `{"kind": "input"}` on `room.send()`; the host
+applies them with easy-control on the screen it is sharing, and lifts every
+button and key it was handed when the peer lets go or leaves. The way out of a
+taken keyboard is a shortcut *held* for its delay (Escape for a second in a
+browser, five under the desktop shell, and whatever `settings.control` added),
+because every key the peer presses goes to the host, so a key alone cannot mean
+stop. The screen hears that as the stream's `control` event and lets the button
+go with it. Two bookkeeping rules keep the host from being left holding
+something: the keys down are kept by `KeyboardEvent.code`, the physical key,
+because the name moves with Shift (`a` down and `A` up would be two keys, and
+a map that never empties is a hold that never starts) while the name beside it
+is what a shortcut is written in; and a button pressed on the canvas captures
+the pointer, so its release is the canvas's wherever it happens - over the
+bar, outside the window - and a blur or a cancelled pointer lifts every button
+the way it lifts every key.
+
+**The settings preview is the same pipeline with no line in it**: `preview()`
+runs the host's encoder into a viewer on the settings window's own canvas, so
+the one ffmpeg line in the tree is the one a room runs, and it refuses while a
+share stands - one encoder per client.
+
 ## The registry
 
 Every `import()` specifier in the route table is a **literal**, on purpose: a
@@ -833,22 +1039,19 @@ share with the menu dialog), and the registry hands each module's
 
 ## What is not wired yet
 
-The pairing, join, room and account flows are live, account deletion and the
-relayed connection included; what nothing does yet is carry media. The server
-side of that is in `handlers/rooms.js` and the negotiation is proved on both
-legs (see The connection); what is left is what the two ends *do* with the
-connection once it stands, which `dev/plans/ws-pairing-joins.md` describes. The
-previous client implementation is at commit `da3921d`, and it read message types
-the server no longer serves — do not paste it back untouched.
-
-| Module | Waiting on |
-| --- | --- |
-| `management/new`, `room/create`, `room/joining`, `room/request`, `management/devices`, `management/shares` — pairing, remembering and reconnecting are live, both screens carry the settings and the confirmed delete on every card, and a connection that is made now opens the room on the peer and the connection's settings on the host, whichever of the three ways made it; what the room leads *into* is not | `dev/plans/ws-pairing-joins.md` |
-| `room` — the peer's bar is built and answers itself (sound, control, the bandwidth cap, fullscreen, leaving), and the connection behind it is negotiated and reported; what none of it does yet is carry a picture — no stream is attached to the `<video>`, nothing is sent on the data channel, and the bar's `settings` event reaches nobody | `dev/plans/ws-pairing-joins.md` |
+The pairing, join, room, account and stream flows are live: the picture, the
+sound of a web host, and the peer's keyboard and mouse cross the room on both
+legs (see The stream). What `dev/plans/room-media.md` still lists as open:
+the desktop host captures no sound (ffmpeg has no system audio input that is
+the same on both platforms), a desktop host cannot answer a keyframe request
+over a pipe, the access unit splitter is one frame behind the encoder (a unit is
+only known whole when the next delimiter arrives), and the upscaler is a later
+plan. The previous client implementation is at commit `da3921d`, and it read
+message types the server no longer serves — do not paste it back untouched.
 
 Two modules are markup with nothing behind them. `management/search`: the field
 it mirrors and the button that opens it are both still commented out in the
 shell markup, so nothing opens it. `room/settings` (`room-settings`): the
 dialog a host would set what it shares and under what name in, an empty
-`Dialog` subclass today — the host's half of the room is not built, and the
-name a share carries lives in `management/connection` for now.
+`Dialog` subclass today — the host shares its primary display and the name a
+share carries lives in `management/connection` for now.

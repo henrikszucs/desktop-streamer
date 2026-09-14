@@ -148,7 +148,7 @@ const createUI = function(ctx) {
             return permissions.get("isAuth");
         },
         // whether this client is the guest right now - the one place the
-        // guest permissions learn about accounts (src/account.js)
+        // guest permissions learn about accounts (src/management/account.js)
         "isGuest": function() {
             return ctx["account"] === null || ctx["account"].isGuest() === true;
         },

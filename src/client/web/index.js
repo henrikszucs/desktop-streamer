@@ -8,9 +8,10 @@ import { domReady } from "./src/env.js";
 import { conf, confLoad, setLocal, resetLocal, getUser, setUser, resetUser } from "./src/conf.js";
 import { desktop, initDesktop } from "./src/desktop.js";
 import Server from "./src/server.js";
-import { createJoins } from "./src/joins.js";
-import { createAccount } from "./src/account.js";
-import { createRoom } from "./src/room.js";
+import { createJoins } from "./src/management/joins.js";
+import { createAccount } from "./src/management/account.js";
+import { createRoom } from "./src/room/room.js";
+import { createStream } from "./src/room/stream.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
 import { applyScale, applyLocal, createUI, buildUI } from "./ui/ui.js";
@@ -46,6 +47,7 @@ const main = async function() {
         "joins": null,
         "account": null,
         "room": null,
+        "stream": null,
         "localization": localization,
         "desktop": desktop,
         "setLocal": setLocal,
@@ -64,6 +66,10 @@ const main = async function() {
     // here rather than by the room screen because it outlives one: the host that
     // accepted a request is on its own screens while it holds one.
     ctx["room"] = createRoom(ctx);
+
+    // and what crosses it: the share on the host, the picture on the peer.
+    // It follows the room on its own, so it is built right behind it.
+    ctx["stream"] = createStream(ctx);
     ctx["ui"] = createUI(ctx);
     const router = new Router(ctx);
     ctx["router"] = router;
@@ -75,6 +81,7 @@ const main = async function() {
     globalThis.localization = localization;
     globalThis.server = server;
     globalThis.room = ctx["room"];
+    globalThis.stream = ctx["stream"];
     globalThis.desktop = desktop;
     globalThis.router = router;
 

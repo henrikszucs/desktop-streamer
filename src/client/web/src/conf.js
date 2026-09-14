@@ -117,7 +117,7 @@ const setUser = async function(id, data) {
 // the joins one user holds, kept in that user record. The guest row holds the
 // machine's shares beside the guest's own devices; an account row holds only
 // that account's devices, which the server hands back at a sign-in on another
-// client - src/joins.js is what decides the row a record goes in.
+// client - src/management/joins.js is what decides the row a record goes in.
 /*{
     <joinId>: {"joinCode", "isHost", "name", "isUnsupervised"}
 }*/

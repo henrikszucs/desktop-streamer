@@ -61,6 +61,14 @@ const FFmpegProcess = class {
         });
     };
 
+    // the process gone whatever state it is in: what a start that is being
+    // given up on calls, since end() only knows a process that produced data
+    kill() {
+        if (this.process !== null && this.process.exitCode === null) {
+            this.process.kill("SIGINT");
+        }
+    };
+
     async end() {
         if (this.isRunning === false) {
             return;
@@ -650,10 +658,40 @@ const FFmpegAudioEncoder = class {
 };
 
 
+
+// The video encoder: ffmpeg writing raw H.264 (Annex B) down a pipe, cut into
+// access units here. There is no container to parse - the stream is NAL units
+// behind start codes, and ffmpeg is asked to open every access unit with an
+// access unit delimiter (nal type 9), which is where one frame ends and the next
+// begins. A keyframe is an access unit holding an IDR slice (nal type 5); the
+// SPS and PPS ride in-band ahead of it, which is what a WebCodecs decoder with
+// no description expects.
+//
+// What comes out of onChunk is {data: Uint8Array, isKey: boolean, timestamp}
+// with the timestamp taken off this clock as the unit is cut - the stream
+// carries no other, and the decoder only needs them to go up.
+
+const NAL_AUD = 9;
+const NAL_IDR = 5;
+const NAL_SPS = 7;
+
+// every NAL unit from `from` on: where its first byte is, and where the start
+// code before it begins (a 4 byte code is a zero and a 3 byte one)
+const findUnits = function(data, from) {
+    const found = [];
+    for (let i = from; i + 3 < data.length; i++) {
+        if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
+            const codeStart = (i > 0 && data[i - 1] === 0 ? i - 1 : i);
+            found.push({"nal": i + 3, "codeStart": codeStart});
+            i += 2;
+        }
+    }
+    return found;
+};
+
 const FFmpegVideoEncoder = class {
     constructor() {
         // callbacks
-        this.onConfiguration = null;
         this.onChunk = null;
         this.onEnd = null;
 
@@ -661,471 +699,69 @@ const FFmpegVideoEncoder = class {
         this.process = null;
         this.error = 0;
         this.isRunning = false;
-        this.decoderConfig = {};
-        this.data = new Uint8Array(0);
-        this.parserState = {};
+        this.buffer = new Uint8Array(0);    // the access unit being collected, from its delimiter on
+        this.hasUnit = false;               // whether a delimiter has been seen at all
     };
 
-    findBox(data, type) {
-        for (let i = 0; i < data.length - 4; i++) {
-            if (String.fromCharCode(data[i], data[i + 1], data[i + 2], data[i + 3]) === type) {
-                return i - 4;
-            }
-        }
-        return -1;
-    };
-
+    // one stdout chunk in, whole access units out. A unit is closed by the
+    // next delimiter, which is the one way to know a frame has ended without
+    // parsing the slices.
     appendData(data) {
-
-    };
-
-    appendDataDefault(data) {
-        // Append incoming new data to buffer
-        const newData = new Uint8Array(this.data.length + data.length);
-        newData.set(this.data);
-        newData.set(data, this.data.length);
-        this.data = newData;
-
-        // Detect container format from first few bytes
-        if (this.data.length >= 4) {
-            const magic = String.fromCharCode(this.data[0], this.data[1], this.data[2], this.data[3]);
-
-            // Check for MP4/M4A
-            if (magic === "ftyp" || (this.data.length >= 8 && this.data[4] === 0x66 && this.data[5] === 0x74 && this.data[6] === 0x79 && this.data[7] === 0x70)) {
-                console.log("Detected container format: MP4");
-                this.parserState = {
-                    "isKeyframe": false,
-                    "frameDuration": 1_000_000 / 48,
-                    "timestamp": 0,
-                    "baseMediaDecodeTime": 0,
-                    "sampleDuration": 0
-                };
-                this.appendData = this.appendDataMP4;
-                this.appendData(new Uint8Array(0)); // Process existing buffer
-                return;
-            }
-            // Check for WebM
-            else if (this.data[0] === 0x1A && this.data[1] === 0x45 && this.data[2] === 0xDF && this.data[3] === 0xA3) {
-                console.log("Detected container format: WebM");
-                this.parserState = {
-                    "offset": 0,
-                    "clusterTimecode": 0,
-                    "codecPrivate": null,
-                    "timecodeScale": 1000000,
-                    "isKeyframe": true,
-                    "configurationSent": false  // Track if onConfiguration has been called
-                };
-                this.appendData = this.appendDataWebM;
-                this.appendData(new Uint8Array(0)); // Process existing buffer
-                return;
-            }
-            // Check for Ogg
-            else if (magic === "OggS") {
-                console.log("Detected container format: Ogg");
-                this.parserState = {
-                    "offset": 0,
-                    "granulePosition": 0
-                };
-                this.appendData = this.appendDataOgg;
-                this.appendData(new Uint8Array(0)); // Process existing buffer
-                return;
-            } else {
-                this.error = 1;
-                this.end();
-            }
+        let joined;
+        if (this.buffer.length === 0) {
+            joined = data;
+        } else {
+            joined = new Uint8Array(this.buffer.length + data.length);
+            joined.set(this.buffer);
+            joined.set(data, this.buffer.length);
         }
-    };
 
-    appendDataMP4(data) {
-        // Append incoming new data to buffer
-        const newData = new Uint8Array(this.data.length + data.length);
-        newData.set(this.data);
-        newData.set(data, this.data.length);
-        this.data = newData;
-
-        // Try to parse complete boxes (multiple boxes may be present)
-        while (this.data.length >= 8) {
-            // get next box
-            const view = new DataView(this.data.buffer);
-
-            const boxType = String.fromCharCode(
-                this.data[4], this.data[5],
-                this.data[6], this.data[7]
-            );
-
-            if (boxType !== "moof" && boxType !== "mdat" && boxType !== "moov") {
-                // Unknown box, skip 1 byte and continue
-                this.data = this.data.slice(7);
+        // a start code may straddle two chunks, so the scan backs up over the
+        // bytes one could have begun in
+        const scanFrom = Math.max(0, this.buffer.length - 4);
+        let cut = 0;
+        for (const unit of findUnits(joined, scanFrom)) {
+            if ((joined[unit["nal"]] & 0x1F) !== NAL_AUD) {
                 continue;
             }
+            if (this.hasUnit === true && unit["codeStart"] > cut) {
+                this.emitUnit(joined.subarray(cut, unit["codeStart"]));
+            }
+            this.hasUnit = true;
+            cut = unit["codeStart"];
+        }
 
-            const boxSize = view.getUint32(0);
-            //console.log(`Found box: ${boxType} (size: ${boxSize})`);
+        // what is left is the open unit, or the bytes before the first
+        // delimiter while there has not been one
+        this.buffer = joined.slice(cut);
+    };
 
-            if (boxSize === 0 || boxSize > this.data.length) {
-                //console.log("Waiting for more data...");
+    emitUnit(unit) {
+        let isKey = false;
+        for (const nal of findUnits(unit, 0)) {
+            const nalType = unit[nal["nal"]] & 0x1F;
+            if (nalType === NAL_IDR || nalType === NAL_SPS) {
+                isKey = true;
                 break;
             }
-
-            const boxData = this.data.slice(0, boxSize);
-            this.data = this.data.slice(boxSize);
-
-            // Handle different box types
-            if (boxType === "moof") {
-                this.parserState.isKeyframe = false;
-
-                // Extract base media decode time from tfdt (Track Fragment Decode Time)
-                const tfdtPos = this.findBox(boxData, "tfdt");
-                if (tfdtPos !== -1) {
-                    const tfdtBox = boxData.slice(tfdtPos);
-                    const tfdtView = new DataView(tfdtBox.buffer);
-                    const version = tfdtView.getUint8(8);
-
-                    if (version === 0) {
-                        this.parserState.baseMediaDecodeTime = tfdtView.getUint32(12);
-                    } else if (version === 1) {
-                        this.parserState.baseMediaDecodeTime = Number(tfdtView.getBigUint64(12));
-                    }
-                }
-
-                // Extract sample info from trun
-                const trunPos = this.findBox(boxData, "trun");
-                if (trunPos !== -1) {
-                    const trunBox = boxData.slice(trunPos);
-                    const trunView = new DataView(trunBox.buffer);
-
-                    // trun box: 4 bytes size + 4 bytes type + 1 byte version + 3 bytes flags
-                    const flags = trunView.getUint32(8) & 0x00FFFFFF;
-                    //const sampleCount = trunView.getUint32(12);
-
-                    let offset = 16;
-
-                    // Skip data-offset if present (flag 0x000001)
-                    if (flags & 0x000001) offset += 4;
-
-                    // Check first-sample-flags (flag 0x000004)
-                    if (flags & 0x000004) {
-                        const firstSampleFlags = trunView.getUint32(offset);
-                        this.parserState.isKeyframe = ((firstSampleFlags >> 24) & 0x03) === 2;
-                        offset += 4;
-                    } else {
-                        // If no first-sample-flags, check tfhd default-sample-flags
-                        const tfhdPos = this.findBox(boxData, "tfhd");
-                        if (tfhdPos !== -1) {
-                            const tfhdBox = boxData.slice(tfhdPos);
-                            const tfhdView = new DataView(tfhdBox.buffer);
-                            const tfhdFlags = tfhdView.getUint32(8) & 0x00FFFFFF;
-
-                            // Check if default-sample-flags present (flag 0x000020)
-                            if (tfhdFlags & 0x000020) {
-                                let tfhdOffset = 16; // After track_ID
-
-                                // Skip base-data-offset if present (flag 0x000001)
-                                if (tfhdFlags & 0x000001) tfhdOffset += 8;
-                                // Skip sample-description-index if present (flag 0x000002)
-                                if (tfhdFlags & 0x000002) tfhdOffset += 4;
-                                // Skip default-sample-duration if present (flag 0x000008)
-                                if (tfhdFlags & 0x000008) tfhdOffset += 4;
-                                // Skip default-sample-size if present (flag 0x000010)
-                                if (tfhdFlags & 0x000010) tfhdOffset += 4;
-
-                                // Now read default-sample-flags
-                                const defaultSampleFlags = tfhdView.getUint32(tfhdOffset);
-                                this.parserState.isKeyframe = ((defaultSampleFlags >> 24) & 0x03) === 2;
-                            }
-                        }
-                    }
-
-                    // Extract sample duration if present (flag 0x000100)
-                    if (flags & 0x000100) {
-                        this.parserState.sampleDuration = trunView.getUint32(offset);
-                    }
-
-                    // Calculate timestamp from base time (in timescale units, convert to microseconds)
-                    // Assuming timescale of 90000 (common for video)
-                    this.parserState.timestamp = Math.floor((this.parserState.baseMediaDecodeTime / 90000) * 1_000_000);
-                }
-            } else if (boxType === "mdat") {
-                // Handle mdat - decode frame
-                // Only process if we have valid timing info
-                if (this.parserState.timestamp >= 0) {
-                    const chunk = new EncodedVideoChunk({
-                        "type": this.parserState.isKeyframe ? "key" : "delta", // "key",
-                        "timestamp": this.parserState.timestamp,
-                        "duration": this.parserState.sampleDuration > 0 ? Math.floor((this.parserState.sampleDuration / 90000) * 1_000_000) : this.parserState.frameDuration,
-                        "data": boxData.slice(8)
-                    });
-                    this.onChunk(chunk);
-                } else {
-                    console.warn("Skipping mdat without valid timestamp");
-                }
-            } else if (boxType === "moov") {
-                const avcCPos = this.findBox(boxData, "avcC");
-                if (avcCPos !== -1) {
-                    const avcC = boxData.slice(avcCPos);
-                    this.decoderConfig.description = avcC.slice(8);
-                    this.onConfiguration(this.decoderConfig);
-                }
-            }
         }
+        this.onChunk?.({
+            "data": unit,
+            "isKey": isKey,
+            "timestamp": Math.round(performance.now() * 1000)
+        });
     };
 
-    appendDataWebM(data) {
-        // Append incoming new data to buffer
-        const newData = new Uint8Array(this.data.length + data.length);
-        newData.set(this.data);
-        newData.set(data, this.data.length);
-        this.data = newData;
-
-        // Process EBML elements
-        while (this.data.length >= 2) {
-            // Read EBML element ID
-            let idLength = 1;
-            const firstIdByte = this.data[0];
-            if ((firstIdByte & 0x80) === 0x80) idLength = 1;
-            else if ((firstIdByte & 0xC0) === 0x40) idLength = 2;
-            else if ((firstIdByte & 0xE0) === 0x20) idLength = 3;
-            else if ((firstIdByte & 0xF0) === 0x10) idLength = 4;
-            else break;
-            if (idLength > this.data.length) break;
-
-            let elementId = 0;
-            for (let i = 0; i < idLength; i++) {
-                elementId = (elementId << 8) | this.data[i];
-            }
-
-            // Read EBML variable-size integer (element size)
-            if (idLength >= this.data.length) break;
-            const firstSizeByte = this.data[idLength];
-            let sizeLength = 1;
-            let sizeMask = 0x80;
-            while (sizeLength <= 8 && !(firstSizeByte & sizeMask)) {
-                sizeLength++;
-                sizeMask >>= 1;
-            }
-            if (sizeLength > 8 || idLength + sizeLength > this.data.length) break;
-
-            let elementSize = firstSizeByte & (sizeMask - 1);
-            for (let i = 1; i < sizeLength; i++) {
-                elementSize = (elementSize << 8) | this.data[idLength + i];
-            }
-
-            const headerSize = idLength + sizeLength;
-
-            // Handle container elements (don't need full size)
-            // Segment, Cluster, Tracks, Info, TrackEntry
-            const containerIds = [0x18538067, 0x1F43B675, 0x1654AE6B, 0x1549A966, 0xAE];
-            if (containerIds.includes(elementId)) {
-                this.data = this.data.slice(headerSize);
-                continue;
-            }
-
-            // For non-container elements, wait for complete data
-            if (headerSize + elementSize > this.data.length) {
-                break;
-            }
-
-            const elementData = this.data.slice(headerSize, headerSize + elementSize);
-
-            // Handle specific elements
-            switch (elementId) {
-                case 0x1A45DFA3: // EBML Header - skip
-                    break;
-
-                case 0x2AD7B1: // TimecodeScale (nanoseconds per tick, default 1000000 = 1ms)
-                    this.parserState.timecodeScale = 0;
-                    for (let i = 0; i < elementData.length; i++) {
-                        this.parserState.timecodeScale = (this.parserState.timecodeScale << 8) | elementData[i];
-                    }
-                    if (!this.parserState.timecodeScale) {
-                        this.parserState.timecodeScale = 1000000; // Default 1ms
-                    }
-                    break;
-
-                case 0xE7: // Cluster Timecode
-                    this.parserState.clusterTimecode = 0;
-                    for (let i = 0; i < elementData.length; i++) {
-                        this.parserState.clusterTimecode = (this.parserState.clusterTimecode << 8) | elementData[i];
-                    }
-                    break;
-
-                case 0x63A2: // CodecPrivate - contains decoder configuration
-                    this.parserState.codecPrivate = elementData.slice();
-                    this.decoderConfig.description = this.parserState.codecPrivate;
-                    if (!this.parserState.configurationSent) {
-                        this.parserState.configurationSent = true;
-                        this.onConfiguration(this.decoderConfig);
-                    }
-                    break;
-
-                case 0xA3: // SimpleBlock
-                    // Trigger configuration before first chunk if not already sent
-                    if (!this.parserState.configurationSent) {
-                        this.parserState.configurationSent = true;
-                        this.onConfiguration(this.decoderConfig);
-                    }
-
-                    if (elementData.length >= 4) {
-                        // Read track number (VINT)
-                        const firstTrackByte = elementData[0];
-                        let trackLength = 1;
-                        let trackMask = 0x80;
-                        while (trackLength <= 8 && !(firstTrackByte & trackMask)) {
-                            trackLength++;
-                            trackMask >>= 1;
-                        }
-
-                        if (trackLength <= 8 && trackLength + 3 <= elementData.length) {
-                            const blockOffset = trackLength;
-
-                            // Read relative timecode (signed 16-bit)
-                            const relativeTimecode = (elementData[blockOffset] << 8) | elementData[blockOffset + 1];
-                            const signedTimecode = relativeTimecode > 32767 ? relativeTimecode - 65536 : relativeTimecode;
-
-                            // Read flags byte
-                            const flags = elementData[blockOffset + 2];
-                            const isKeyframe = (flags & 0x80) !== 0; // Bit 7 = keyframe flag
-
-                            // Calculate absolute timestamp in microseconds
-                            const absoluteTimecode = this.parserState.clusterTimecode + signedTimecode;
-                            const timecodeScale = this.parserState.timecodeScale || 1000000;
-                            const timestamp = Math.floor((absoluteTimecode * timecodeScale) / 1000);
-
-                            // Frame data starts after track number + timecode + flags
-                            const frameData = elementData.slice(blockOffset + 3);
-
-                            if (frameData.length > 0) {
-                                const chunk = new EncodedVideoChunk({
-                                    "type": isKeyframe ? "key" : "delta",
-                                    "timestamp": timestamp,
-                                    "data": frameData
-                                });
-                                this.onChunk(chunk);
-                            }
-                        }
-                    }
-                    break;
-
-                case 0xA0: // BlockGroup - parse contents to find Block and ReferenceBlock
-                    // Trigger configuration before first chunk if not already sent
-                    if (!this.parserState.configurationSent) {
-                        this.parserState.configurationSent = true;
-                        this.onConfiguration(this.decoderConfig);
-                    }
-
-                    if (elementData.length >= 4) {
-                        let isKeyframe = true; // Assume keyframe unless ReferenceBlock exists
-                        let blockContent = null;
-                        let blockTimestamp = 0;
-
-                        // Parse BlockGroup children
-                        let offset = 0;
-                        while (offset < elementData.length - 1) {
-                            // Read child element ID
-                            let childIdLength = 1;
-                            const childFirstIdByte = elementData[offset];
-                            if ((childFirstIdByte & 0x80) === 0x80) childIdLength = 1;
-                            else if ((childFirstIdByte & 0xC0) === 0x40) childIdLength = 2;
-                            else if ((childFirstIdByte & 0xE0) === 0x20) childIdLength = 3;
-                            else if ((childFirstIdByte & 0xF0) === 0x10) childIdLength = 4;
-                            else break;
-                            if (offset + childIdLength > elementData.length) break;
-
-                            let childId = 0;
-                            for (let i = 0; i < childIdLength; i++) {
-                                childId = (childId << 8) | elementData[offset + i];
-                            }
-
-                            // Read child element size
-                            if (offset + childIdLength >= elementData.length) break;
-                            const childFirstSizeByte = elementData[offset + childIdLength];
-                            let childSizeLength = 1;
-                            let childSizeMask = 0x80;
-                            while (childSizeLength <= 8 && !(childFirstSizeByte & childSizeMask)) {
-                                childSizeLength++;
-                                childSizeMask >>= 1;
-                            }
-                            if (childSizeLength > 8 || offset + childIdLength + childSizeLength > elementData.length) break;
-
-                            let childSize = childFirstSizeByte & (childSizeMask - 1);
-                            for (let i = 1; i < childSizeLength; i++) {
-                                childSize = (childSize << 8) | elementData[offset + childIdLength + i];
-                            }
-
-                            const childHeaderSize = childIdLength + childSizeLength;
-                            const childDataStart = offset + childHeaderSize;
-                            const childDataEnd = childDataStart + childSize;
-
-                            if (childDataEnd > elementData.length) break;
-
-                            // Handle specific child elements
-                            if (childId === 0xFB) { // ReferenceBlock - presence means not a keyframe
-                                isKeyframe = false;
-                            } else if (childId === 0xA1) { // Block
-                                const blockData = elementData.slice(childDataStart, childDataEnd);
-                                if (blockData.length >= 4) {
-                                    // Read track number (VINT)
-                                    const firstTrackByte = blockData[0];
-                                    let trackLength = 1;
-                                    let trackMask = 0x80;
-                                    while (trackLength <= 8 && !(firstTrackByte & trackMask)) {
-                                        trackLength++;
-                                        trackMask >>= 1;
-                                    }
-
-                                    if (trackLength <= 8 && trackLength + 3 <= blockData.length) {
-                                        const blockOffset = trackLength;
-
-                                        // Read relative timecode (signed 16-bit)
-                                        const relativeTimecode = (blockData[blockOffset] << 8) | blockData[blockOffset + 1];
-                                        const signedTimecode = relativeTimecode > 32767 ? relativeTimecode - 65536 : relativeTimecode;
-
-                                        // Calculate absolute timestamp in microseconds
-                                        const absoluteTimecode = this.parserState.clusterTimecode + signedTimecode;
-                                        const timecodeScale = this.parserState.timecodeScale || 1000000;
-                                        blockTimestamp = Math.floor((absoluteTimecode * timecodeScale) / 1000);
-
-                                        // Frame data starts after track number + timecode + flags
-                                        blockContent = blockData.slice(blockOffset + 3);
-                                    }
-                                }
-                            }
-
-                            offset = childDataEnd;
-                        }
-
-                        // Create chunk after parsing entire BlockGroup
-                        if (blockContent && blockContent.length > 0) {
-                            const chunk = new EncodedVideoChunk({
-                                "type": isKeyframe ? "key" : "delta",
-                                "timestamp": blockTimestamp,
-                                "data": blockContent
-                            });
-                            this.onChunk(chunk);
-                        }
-                    }
-                    break;
-            }
-
-            this.data = this.data.slice(headerSize + elementSize);
-        }
-    };
-
-    appendDataOgg(data) {
-
-    };
-
-    async start(ffmpegPath, params, decoderConfig) {
+    async start(ffmpegPath, params) {
         if (this.isRunning === true) {
-            throw new Error("FFmpegAudioEncoder is already running.");
+            throw new Error("FFmpegVideoEncoder is already running.");
         }
 
         // reset state
         this.error = 0;
-        this.data = new Uint8Array(0);
-        this.appendData = this.appendDataDefault;
-        this.decoderConfig = decoderConfig;
-        
+        this.buffer = new Uint8Array(0);
+        this.hasUnit = false;
+
         // start process
         this.process = new FFmpegProcess();
         this.process.onData = (data) => {
@@ -1139,6 +775,11 @@ const FFmpegVideoEncoder = class {
         this.isRunning = true;
     };
 
+    // whatever state the start is in, the process goes
+    kill() {
+        this.process?.kill?.();
+    };
+
     async end() {
         if (this.isRunning === false) {
             return;
@@ -1147,16 +788,14 @@ const FFmpegVideoEncoder = class {
         if (this.process && this.process.isRunning) {
             await this.process.end();
         }
-        this.data = new Uint8Array(0);
-        this.appendData = this.appendDataDefault;
-        this.onEnd(this.error);
+        this.buffer = new Uint8Array(0);
+        this.hasUnit = false;
+        this.onEnd?.(this.error);
     };
-
 };
 
-
-
 module.exports = {
+    FFmpegProcess,
     FFmpegAudioEncoder,
     FFmpegVideoEncoder
 };

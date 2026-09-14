@@ -5,8 +5,22 @@
     twice. See .claude/CLIENT.md.
 -->
 <div class="room-layout hide" id="screen-room">
-    <div>
-        <video id="room-video" playsinline></video>
+    <!--
+        The stage is a canvas and not a <video>: the stream arrives as frames
+        this client decodes itself, and the decoder's worker draws them here
+        straight from the GPU - see .claude/CLIENT.md, "The stream". It is one
+        element for the life of the screen, since its surface is handed to that
+        worker once.
+    -->
+    <!--
+        The stage is what goes fullscreen - the picture and nothing else - and
+        it carries the one thing drawn over the picture: the ring that fills
+        while the exit shortcut is held, so a five second hold under the
+        desktop shell reads as a wait and not as a key that does nothing.
+    -->
+    <div id="room-stage">
+        <canvas id="room-canvas" tabindex="0"></canvas>
+        <div class="room-exit-ring hide" id="room-exit-ring"></div>
     </div>
 
     <!--
@@ -16,15 +30,27 @@
     <nav class="room-bar tiny-space">
         <div class="room-bar-side">
             <!--
-                Only there when it is true: a connection that goes through the
-                server is slower than one that does not, and the room is the one
-                place where that is worth knowing without being asked.
+                What is carrying the room, and the switch between the two
+                paths: through the server (lit - a click tries the direct path
+                again), direct (plain - a click moves onto the server), or
+                direct with no relay for this user (disabled, and the tooltip
+                says so) - see ./index.js.
             -->
-            <div class="chip small-elevate hide" id="room-relay">
-                <i>cloud</i>
+            <button class="chip small-round border" id="btn-room-relay">
+                <i id="btn-room-relay-icon">cloud</i>
                 <span data-localization="room.relay.label">Relay</span>
-                <div class="tooltip right" data-localization="room.relay.tooltip">The two devices could not reach each other, so the connection goes through the server.</div>
-            </div>
+                <div class="tooltip right" id="btn-room-relay-tooltip" data-localization="room.relay.on">The two devices could not reach each other, so the connection goes through the server.</div>
+            </button>
+            <!--
+                What the line is doing, once a second: frames drawn and bits
+                received. It is the one reading that says whether a picture
+                that looks wrong is the line's fault or the host's. Two short
+                lines rather than one long one, so it fits beside the chip.
+            -->
+            <span class="room-stats" id="room-stats">
+                <span id="room-stats-rate"></span>
+                <span id="room-stats-line"></span>
+            </span>
         </div>
         <nav class="toolbar">
             <a tabindex="0" id="btn-room-audio">
@@ -45,10 +71,30 @@
                 <span id="room-bandwidth-label">8 Mbps</span>
                 <menu class="border top no-wrap" id="room-bandwidth-menu"></menu>
             </a>
+            <!--
+                Which of the host's displays the picture is of. Only there when
+                the host has more than one: the entry is filled from what the
+                host says it has (the stream's "share" event), never guessed.
+            -->
+            <a tabindex="0" class="hide" id="btn-room-screen">
+                <i>monitor</i>
+                <span id="room-screen-label"></span>
+                <menu class="border top no-wrap" id="room-screen-menu"></menu>
+            </a>
             <a tabindex="0" id="btn-room-resolution">
                 <i>aspect_ratio</i>
                 <span id="room-resolution-label">Auto</span>
                 <menu class="border top no-wrap" id="room-resolution-menu"></menu>
+            </a>
+            <!--
+                How many pictures a second, priced by nothing: the bandwidth
+                is spent on sharpness first, and the encoder shares what is
+                left across the frames asked for - see ./index.js.
+            -->
+            <a tabindex="0" id="btn-room-framerate">
+                <i>animation</i>
+                <span id="room-framerate-label">30 fps</span>
+                <menu class="border top no-wrap" id="room-framerate-menu"></menu>
             </a>
             <a tabindex="0" id="btn-room-fullscreen">
                 <i id="btn-room-fullscreen-icon">fullscreen</i>

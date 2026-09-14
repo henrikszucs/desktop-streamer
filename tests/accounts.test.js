@@ -161,7 +161,8 @@ test("login-google makes the account, the session and the signed-in connection",
             "email": "alice@example.com",
             "firstName": "Alice",
             "lastName": "Liddell",
-            "picture": ""
+            "picture": "",
+            "isRelayAllowed": true
         });
 
         const held = heldUser(server, "one");

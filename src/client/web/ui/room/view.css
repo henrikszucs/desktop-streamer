@@ -27,6 +27,9 @@
     justify-content: space-between;
     height: 100%;
     max-height: 100%;
+    /* the bar's steps below are queried against this width - the bar's own,
+       since a container cannot be queried by its own rules */
+    container-type: inline-size;
 }
 
 .room-layout > :nth-child(1) {
@@ -35,6 +38,7 @@
     display: flex;
     min-height: 0;
     min-width: 0;
+    position: relative;
 
     /* the stage is black in both themes, the way every player's is: what is
        letterboxed beside a stream should read as the edge of the picture and
@@ -43,11 +47,78 @@
 }
 
 /* the stream takes the space the toolbar leaves and is letterboxed inside it,
-   so a 4:3 desktop on a 16:9 window keeps its shape rather than stretching */
-.room-layout > :nth-child(1) > video {
+   so a 4:3 desktop on a 16:9 window keeps its shape rather than stretching.
+   The canvas is sized to the picture by the decoder and scaled here, so the
+   letterbox is the browser's and costs nothing per frame. */
+.room-layout > :nth-child(1) > canvas {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    outline: none;
+    background-color: #000;
+}
+
+/* the ring over the picture while the exit shortcut is held: a conic fill
+   from --p (0..100), since beercss's circle progress only ever spins */
+.room-exit-ring {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: 50%;
+    translate: -50% -50%;
+    inline-size: 4rem;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: conic-gradient(var(--primary) calc(var(--p, 0) * 1%), rgb(255 255 255 / 0.3) 0);
+    mask: radial-gradient(farthest-side, transparent calc(100% - 0.5rem), #000 calc(100% - 0.5rem + 1px));
+    pointer-events: none;
+}
+
+/* a tool the host has not got - no sound, no keyboard to take - is greyed and
+   inert rather than removed, the way a refused entry is everywhere else. It is
+   also never tinted: the colour of a live setting on a button that cannot be
+   pressed says "on" where it means "not here", so the neutral look is forced
+   whatever state the tool was in. The same for the relay switch when this
+   user has no relay. */
+.room-bar > .toolbar > a.room-tool-off {
+    opacity: 0.5;
+    pointer-events: none;
+    background-color: transparent;
+    color: inherit;
+}
+
+#btn-room-relay[disabled] {
+    background-color: transparent;
+    color: inherit;
+    border-color: var(--outline-variant);
+}
+
+/* while the keyboard and the mouse are the host's, the pointer over the
+   picture is the host's too */
+.room-layout.room-controlling > :nth-child(1) > canvas {
+    cursor: none;
+}
+
+/* the reading beside the relay chip: small, quiet, and only there once a
+   frame has been drawn. Two lines - the frames over the bits - since one line
+   of it is as wide as the chip twice over, and it is the one thing in its
+   track that gives way: a flex item keeps its content's width unless told
+   otherwise, and that width ran into the toolbar in a narrowing window. So
+   each line is cut with an ellipsis instead, the whole reading is the
+   tooltip, and the step below takes it off altogether. */
+.room-stats {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.75rem;
+    line-height: 1.25;
+    opacity: 0.7;
+    padding-inline-start: 0.5rem;
+    min-inline-size: 0;
+}
+
+.room-stats > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .room-layout > :nth-child(2) {
@@ -81,10 +152,31 @@
     justify-content: flex-end;
 }
 
-/* the relay indicator: it sits in the track the centring leaves empty, so it
-   costs the tools no room and moves nothing when it appears */
-#room-relay {
-    cursor: default;
+/* the relay switch: it sits in the track the centring leaves empty, so it
+   costs the tools no room. The button's own look for a direct room, filled
+   while the server is carrying it, beercss's [disabled] when this user has no
+   relay at all, and a turning icon while the direct path is being tried again.
+   It is never shrunk: a flex item gives way before its content does, which put
+   the label outside the button in a narrowing window - the steps below take
+   the label off instead. */
+#btn-room-relay {
+    flex: none;
+}
+
+#btn-room-relay.room-relay-on {
+    background-color: var(--primary-container);
+    color: var(--on-primary-container);
+    border-color: transparent;
+}
+
+#btn-room-relay.room-relay-trying > i {
+    animation: room-relay-turn 1.2s linear infinite;
+}
+
+@keyframes room-relay-turn {
+    to {
+        rotate: 360deg;
+    }
 }
 
 /* the two menus of the bar
@@ -110,38 +202,39 @@
     padding-inline-start: 1rem;
 }
 
-/* A phone has room for the tools or for the space around them, not both.
+/* A narrow window has room for the tools or for the space around them, not
+ * both, and the bar gives up what it holds in steps, on the width it is drawn
+ * in rather than the window's (a container query on .room-layout, in rem, so
+ * the steps follow the size the UI is drawn at - see applyScale in ui/ui.js).
  *
- * The labels go first - each one is repeated by the menu that opens under it -
- * and then the centring: the empty track on the left is what pushed the
- * leaving button off the edge of a narrow window, so the tools take the row
- * and the button keeps its own end of it.
+ * The labels go first - each one is repeated by the menu that opens under it
+ * - since the labelled toolbar is ~50rem on its own; then the reading and the
+ * switch's label, which the side tracks can no longer hold beside an
+ * icon-only toolbar; and last the centring: an empty track on the left is what
+ * would push the leaving button off the edge of a phone, so the tools take
+ * the row and the button keeps its own end of it. The switch keeps its track
+ * even there, as the icon alone: it is worth the width it takes, and it moves
+ * nothing by changing state.
  */
-@media only screen and (max-width: 600px) {
+@container (max-width: 70rem) {
     .room-bar > .toolbar > a > span {
         display: none;
     }
+}
 
+@container (max-width: 46rem) {
+    #btn-room-relay > span {
+        display: none;
+    }
+
+    .room-stats {
+        display: none;
+    }
+}
+
+@container (max-width: 37.5rem) {
     .room-bar {
-        grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .room-bar > .room-bar-side:not(.room-bar-end) {
-        display: none;
-    }
-
-    /* except when it is carrying the indicator, which is worth the width it
-       takes even here - as the icon alone */
-    .room-bar.room-bar-relayed {
         grid-template-columns: auto minmax(0, 1fr) auto;
-    }
-
-    .room-bar.room-bar-relayed > .room-bar-side:not(.room-bar-end) {
-        display: flex;
-    }
-
-    #room-relay > span {
-        display: none;
     }
 
     .room-bar > .toolbar {

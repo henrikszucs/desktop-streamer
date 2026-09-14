@@ -2,7 +2,7 @@
 
 // deleting the account, behind a key the server mails out first. Two halves:
 // the send button asks for the key, and the key typed back is what deletes.
-// The key is only good on the device that asked (src/account.js keeps which
+// The key is only good on the device that asked (src/management/account.js keeps which
 // one that was), so the field and the button of the second half stay off
 // until this device has asked - a key typed anywhere else would be refused
 // anyway. The question before the second half is the shared confirm dialog,

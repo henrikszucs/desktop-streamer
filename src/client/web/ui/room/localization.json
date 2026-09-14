@@ -8,6 +8,10 @@
             "unmute": {
                 "en": "Turn the sound on",
                 "hu": "Hang bekapcsolása"
+            },
+            "none": {
+                "en": "The other device shares no sound",
+                "hu": "A másik eszköz nem oszt meg hangot"
             }
         },
         "control": {
@@ -18,6 +22,10 @@
             "release": {
                 "en": "Give the keyboard and the mouse back",
                 "hu": "Billentyűzet és egér elengedése"
+            },
+            "none": {
+                "en": "The other device does not let its keyboard and mouse be taken",
+                "hu": "A másik eszköz nem engedi átvenni a billentyűzetét és az egerét"
             }
         },
         "bandwidth": {
@@ -40,6 +48,32 @@
                 "hu": "A(z) {from} több sávszélességet igényel az engedélyezettnél - a kép mostantól {to}."
             }
         },
+        "screen": {
+            "value": {
+                "en": "Screen {value}",
+                "hu": "{value}. képernyő"
+            },
+            "primary": {
+                "en": "Screen {value} (primary)",
+                "hu": "{value}. képernyő (elsődleges)"
+            }
+        },
+        "framerate": {
+            "value": {
+                "en": "{value} fps",
+                "hu": "{value} fps"
+            }
+        },
+        "stats": {
+            "kbps": {
+                "en": "{value} kbps",
+                "hu": "{value} kbps"
+            },
+            "dropped": {
+                "en": "{value} dropped",
+                "hu": "{value} kiesett"
+            }
+        },
         "fullscreen": {
             "enter": {
                 "en": "Fullscreen",
@@ -55,15 +89,37 @@
                 "en": "Relay",
                 "hu": "Átjátszás"
             },
-            "tooltip": {
-                "en": "The two devices could not reach each other, so the connection goes through the server.",
-                "hu": "A két eszköz nem éri el közvetlenül egymást, ezért a kapcsolat a kiszolgálón keresztül megy."
+            "on": {
+                "en": "The connection goes through the server. Click to try a direct connection again.",
+                "hu": "A kapcsolat a kiszolgálón keresztül megy. Kattints a közvetlen kapcsolat újbóli megpróbálásához."
+            },
+            "direct": {
+                "en": "The two devices are connected directly. Click to route the connection through the server.",
+                "hu": "A két eszköz közvetlenül kapcsolódik. Kattints, hogy a kapcsolat a kiszolgálón keresztül menjen."
+            },
+            "off": {
+                "en": "The two devices are connected directly. The server is not allowed to carry the connection for you.",
+                "hu": "A két eszköz közvetlenül kapcsolódik. A kiszolgáló nem továbbíthatja neked a kapcsolatot."
+            },
+            "trying": {
+                "en": "Trying a direct connection again...",
+                "hu": "Közvetlen kapcsolat újbóli megpróbálása..."
+            },
+            "failed": {
+                "en": "The two devices still cannot reach each other directly - the connection stays on the server.",
+                "hu": "A két eszköz továbbra sem éri el közvetlenül egymást - a kapcsolat a kiszolgálón marad."
             }
         },
         "connection": {
             "lost": {
                 "en": "The connection with the other device was lost.",
                 "hu": "A kapcsolat megszakadt a másik eszközzel."
+            }
+        },
+        "share": {
+            "ended": {
+                "en": "The other device stopped sharing its screen.",
+                "hu": "A másik eszköz befejezte a képernyője megosztását."
             }
         },
         "leave": {

@@ -1,7 +1,7 @@
 "use strict";
 
 // the devices this client may connect to: the joins it holds the peer side of,
-// for the user it is right now. The records are the user's (src/joins.js) -
+// for the user it is right now. The records are the user's (src/management/joins.js) -
 // the guest's are its codes, an account's follow it to every client it signs
 // in on - and only who is online comes from the server, so the list is built
 // when somebody opens this screen and kept right while it is open.

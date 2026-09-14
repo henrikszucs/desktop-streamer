@@ -31,6 +31,12 @@ const dict = {
             "en": "New",
             "hu": "Új"
         },
+        "share": {
+            "failed": {
+                "en": "The screen could not be shared, so the connection was ended.",
+                "hu": "A képernyőt nem sikerült megosztani, ezért a kapcsolat megszakadt."
+            }
+        },
         "services": {
             "en": "Services",
             "hu": "Szolgáltatások"

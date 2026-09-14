@@ -22,6 +22,12 @@ import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.
 import { startDatabase, stopDatabase } from "./database.js";
 import { createMailer } from "./mail.js";
 
+// the packet layer of every socket, the same on the client (src/client/web/src/server.js):
+// one video chunk of the stream is one packet, and a whole frame is a handful
+// in flight rather than a hundred acknowledged one by one
+const SOCKET_PACKET_SIZE = 65536;
+const SOCKET_SEND_THREADS = 64;
+
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
     wsServer = null;
@@ -168,10 +174,14 @@ const ServerWS = class {
             },
             "interactTimeout": 3000,
             "timeout": 5000,
-            "packetSize": 1000,
+            // a packet is acknowledged one by one with sendThreads of them in
+            // flight, so packetSize * sendThreads is what one round trip can
+            // carry: the relayed stream lives on this number, and a WebSocket
+            // frame is not limited to the kilobyte it used to be
+            "packetSize": SOCKET_PACKET_SIZE,
             "packetTimeout": 1000,
             "packetRetry": Infinity,
-            "sendThreads": 16
+            "sendThreads": SOCKET_SEND_THREADS
         });
 
         // Create state, the session id is taken before the first await.
@@ -348,5 +358,5 @@ const ServerWS = class {
 // the server is a singleton, the module hands out the running instance
 const serverWS = new ServerWS();
 
-export { serverWS };
+export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS };
 export default serverWS;
