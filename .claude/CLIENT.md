@@ -399,6 +399,23 @@ one place that decides which row a record goes in, and an account forgotten here
 (`dropRecord` in `src/account.js`) takes its row with it - the server has the
 devices back at the next sign-in.
 
+**One join, one side per client.** The two sides of a join carry the same
+`joinId`, and `records` holds one record per id - so a join this machine hosts
+is a share here and nothing else, and the device side of it is the other
+machine's whoever is signed in on both. `join-sync` cannot know that: the row
+carries the peer's account and no host, so when the *same* account is signed
+in on both machines (one person, two devices - or two windows of one browser,
+which share the stored accounts) the host is handed its own share back as a
+device of that account. `syncAccount()` skips an entry whose id is a share
+here, `load()` skips a device record with a share's id and drops the row entry
+an older sync wrote, and `remember()` refuses the device side of a join already
+hosted here. Without the three the sync overwrote the share record at every
+sign-in as that account - the shares screen emptied on the switch and the host
+presented the peer code from its own socket. What is still not supported is two
+windows of one browser pairing *with each other*: they are one client on both
+sides of one join and one guest row, and neither side's record can stand
+without the other's going.
+
 `connectAll()` runs on every `online`, before the screen is even up: a host is
 only reachable on the joins it has connected, and nothing on screen asks for
 that. It loads the rows, asks `join-sync` for an account, and presents every code
@@ -470,7 +487,10 @@ host agreed to.
 Asking to come back in is the same wait as a first pairing, so it is the same
 dialog: `room/joining` takes a `mode` and sends either `pair-request` or
 `join-request` itself. An unsupervised join is answered by the server in that
-first call, so that one is over before the bar has moved.
+first call, so that one is over before the bar has moved - and it goes into the
+room without the snackbar an accept is announced with (`enterRoom` alone, not
+`onPairAccept`): nobody decided anything, and a device that walks in every time
+would be told "the host accepted" every time.
 
 The code is the server's to make - six digits, so it can be read out loud - and
 it belongs to the socket it was asked on: the server drops it when the connection

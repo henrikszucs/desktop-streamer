@@ -82,9 +82,13 @@ const RoomJoiningDialog = class extends Dialog {
             }
 
             // nobody was asked: the host agreed to this device once, for every
-            // time, and the server let it straight through
+            // time, and the server let it straight through. There is no answer
+            // to announce either - a snackbar saying the host accepted would be
+            // reporting a decision nobody made, on every connect
             if (request["isAccepted"] === true) {
-                this.onPairAccept(new CustomEvent("join-accept"));
+                this.requestId++;
+                this.ctx["ui"].closeDialog(this.constructor.id);
+                this.enterRoom(this.joinId);
                 return;
             }
 
@@ -140,15 +144,17 @@ const RoomJoiningDialog = class extends Dialog {
         const localization = this.ctx["localization"];
         this.ctx["ui"].snackbar.show(localization.get(record === undefined ? "new.join.accepted" : "new.join.accepted-remembered"));
         this.ctx["ui"].closeDialog(this.constructor.id);
+        this.enterRoom(event.detail?.["joinId"] ?? this.joinId);
+    };
 
-        // and into the room, which is what was being asked for. It opens on its
-        // own wait: the host said yes, the picture is the next thing to arrive
-        // and nothing sends one yet (dev/plans/ws-pairing-joins.md).
-        //
-        // A remembered join is a room this device can be sent back to, so it is
-        // in the path; a pairing that was not remembered is gone with the
-        // dialog, so there is nothing to put in one.
-        const joinId = event.detail?.["joinId"] ?? this.joinId;
+    // and into the room, which is what was being asked for. It opens on its own
+    // wait: the host said yes, the picture is the next thing to arrive and
+    // nothing sends one yet (dev/plans/ws-pairing-joins.md).
+    //
+    // A remembered join is a room this device can be sent back to, so it is in
+    // the path; a pairing that was not remembered is gone with the dialog, so
+    // there is nothing to put in one.
+    enterRoom(joinId) {
         const path = (typeof joinId === "string" && joinId !== "") ? ("room/" + joinId) : "room";
         this.ctx["ui"].navigate(path, {"isConnecting": true});
     };

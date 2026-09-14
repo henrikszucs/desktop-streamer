@@ -11,6 +11,12 @@
 // that user's, and for an account the server hands the same devices to any
 // client it signs in on (join-sync) - the guest's are the codes it holds, and
 // a guest that loses its row has lost them.
+//
+// One join, one side per client: a join this machine hosts is a share here and
+// nothing else, since the device side of it is the other machine's - whoever
+// is signed in on both. The two sides carry the same join id, so a device
+// record with a share's id is never held or presented: one socket on both
+// sides of a join would be a machine connecting to itself.
 
 // first-party dependencies
 import { getJoins, setJoin, removeJoin, GUEST_ID } from "./conf.js";
@@ -64,9 +70,17 @@ const createJoins = function(ctx) {
             }
         }
         for (const [joinId, record] of Object.entries(userRow)) {
-            if (record["isHost"] !== true) {
-                wanted.set(joinId, record);
+            if (record["isHost"] === true) {
+                continue;
             }
+            // a device with a share's id is this machine's own join, handed to
+            // the account by a sync before the shares were kept apart from it:
+            // the share is the record, and the row is put right
+            if (wanted.get(joinId)?.["isHost"] === true) {
+                await removeJoin(joinId, id);
+                continue;
+            }
+            wanted.set(joinId, record);
         }
         for (const joinId of [...records.keys()]) {
             if (wanted.has(joinId) === false) {
@@ -81,7 +95,11 @@ const createJoins = function(ctx) {
     // the account's devices, from the server: a client this account signs in
     // on for the first time holds none of them, and one that does may be
     // behind on a name given elsewhere. A row it holds that the server does
-    // not know is dropped by connectAll() below, on the code.
+    // not know is dropped by connectAll() below, on the code. A join this
+    // machine hosts is among them when the peer was this same account, and it
+    // stays the share it is here: the server cannot tell the two machines of
+    // one person apart, and overwriting the share with its own device side is
+    // how the shares went missing at a sign-in.
     const syncAccount = async function() {
         const id = userId();
         if (id === GUEST_ID || ctx["server"].isOnline !== true) {
@@ -97,6 +115,9 @@ const createJoins = function(ctx) {
         for (const entry of synced) {
             const joinId = entry["joinId"];
             const held = records.get(joinId);
+            if (held?.["isHost"] === true) {
+                continue;
+            }
             const record = {
                 "joinCode": entry["joinCode"],
                 "isHost": false,
@@ -273,9 +294,15 @@ const createJoins = function(ctx) {
             await sync;
         },
 
-        // what a pair-accept hands back, on either side of it
+        // what a pair-accept hands back, on either side of it. The device side
+        // of a join this machine already hosts is not kept - see the top of
+        // this file - which only ever happens to two windows of one browser
+        // pairing with each other over the one guest row they share.
         async remember(detail, isHost) {
             if (detail?.["isRemember"] !== true || typeof detail["joinId"] !== "string") {
+                return undefined;
+            }
+            if (isHost !== true && records.get(detail["joinId"])?.["isHost"] === true) {
                 return undefined;
             }
             const record = {
