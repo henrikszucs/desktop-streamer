@@ -67,3 +67,10 @@ with the connection once it stands is still to be written.
 
 [client-ui-modules.md](client-ui-modules.md) is done - kept as a record of what
 the restructuring landed as and what it planned and dropped, not as work.
+
+[room-media.md](room-media.md) is the stream: what the two ends do with a room
+once it stands - a `video` data channel beside `control`, the frame format both
+legs carry, the ffmpeg host and the `addTrack` web host, the decoder in a
+Worker drawing through WebGPU/WebGL, and the control protocol. Open; it starts
+with a measured account of why the relay and the preview encoder cannot carry
+it as they are.
