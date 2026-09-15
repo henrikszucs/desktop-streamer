@@ -1095,9 +1095,13 @@ draws the wish at once and greys the rows until the worker answers; the
 `enhance` event carries the options actually in force, and an option the
 runtime refused - a graph that will not load, a run that threw - comes back
 off, with the reason in the snackbar. The label is the short names of what is
-on, joined; the last row of the menu is a reading rather than a choice - the
-backend and what a frame costs from arriving to its last drawn picture - fed
-from the stream's `stats` while a picture is being received.
+on, joined; the last row of the menu is a status rather than a choice - the
+probe, its refusal, a load in progress, and otherwise the reading: the backend
+and what a frame costs from arriving to its last drawn picture, fed from the
+stream's `stats` while a picture is being received, or the backend alone until
+there has been one. It is **one row that is always there** and only ever
+changes its text: a row that appears or goes moves the rows under the pointer
+of an open menu, which is what it did first.
 
 ## The registry
 

@@ -113,8 +113,7 @@ const RoomScreen = class extends Screen {
     enhanceBtn = null;
     enhanceLabel = null;
     enhanceMenu = null;
-    enhanceNote = null;
-    enhanceReading = null;
+    enhanceStatus = null;
     fullscreenIcon = null;
     fullscreenTooltip = null;
 
@@ -148,6 +147,7 @@ const RoomScreen = class extends Screen {
     enhanceBackend = "";
     isEnhanceKnown = false;
     isEnhanceLoading = false;
+    enhanceReading = "";    // the last cost reading, kept so the row never empties
 
     // what the host has to offer besides the picture (the "share" message):
     // sound, and a keyboard and mouse to take. A button for what it has not
@@ -340,8 +340,10 @@ const RoomScreen = class extends Screen {
     };
 
     // one row per enhancement, each a switch of its own since any number may
-    // be on, then two rows that are not choices: the reason the rows above are
-    // greyed when they are, and the reading of what they cost when they run
+    // be on, then one row that is not a choice: the state of the enhancer -
+    // why the rows above are greyed when they are, or what they cost when
+    // they run. It is one row and it is always there: a row that appears or
+    // goes moves the rows under the pointer of an open menu.
     buildEnhanceMenu() {
         const localization = this.ctx["localization"];
         this.enhanceMenu.innerHTML = "";
@@ -356,12 +358,9 @@ const RoomScreen = class extends Screen {
             this.enhanceMenu.appendChild(item);
             item.dataset["enhance"] = kind;
         }
-        this.enhanceNote = document.createElement("li");
-        this.enhanceNote.className = "room-menu-note";
-        this.enhanceMenu.appendChild(this.enhanceNote);
-        this.enhanceReading = document.createElement("li");
-        this.enhanceReading.className = "room-menu-note";
-        this.enhanceMenu.appendChild(this.enhanceReading);
+        this.enhanceStatus = document.createElement("li");
+        this.enhanceStatus.className = "room-menu-note";
+        this.enhanceMenu.appendChild(this.enhanceStatus);
     };
 
     // the mark of the entry in force. It is in every row and hidden in all but
@@ -747,7 +746,7 @@ const RoomScreen = class extends Screen {
     };
 
     // the label is the short names of what is on, the rows carry their checks,
-    // and the two notes say why nothing can be ticked or what ticking costs
+    // and the status row says why nothing can be ticked or what ticking costs
     drawEnhance() {
         const localization = this.ctx["localization"];
         const isSupported = (this.enhanceBackend !== "");
@@ -770,32 +769,38 @@ const RoomScreen = class extends Screen {
             item.children.item(0).classList.toggle("room-menu-unchecked", isOn === false);
         }
 
-        // the note: not there while the backend can run them
-        this.enhanceNote.innerText = (this.isEnhanceKnown === false
+        // the status row, in the order the states are reached: the probe,
+        // its refusal, a load in progress, then the reading - the last one
+        // seen, or the backend alone until there has been one
+        this.enhanceStatus.innerText = (this.isEnhanceKnown === false
             ? localization.get("room.enhance.checking")
             : (isSupported === false ? localization.get("room.enhance.unsupported")
-                : (this.isEnhanceLoading === true ? localization.get("room.enhance.loading") : "")));
-        this.enhanceNote.classList.toggle("hide", this.enhanceNote.innerText === "");
-        if (isSupported === false) {
-            this.enhanceReading.innerText = "";
-        }
-        this.enhanceReading.classList.toggle("hide", this.enhanceReading.innerText === "");
+                : (this.isEnhanceLoading === true ? localization.get("room.enhance.loading")
+                    : (this.enhanceReading !== "" ? this.enhanceReading : this.enhanceText(this.enhanceBackend, null)))));
     };
 
-    // the reading under the rows, from the stream's stats: which backend, and
-    // what a frame costs from arriving to drawn while anything is on
+    // the reading of the status row: which backend, and what a frame costs
+    // from arriving to drawn while anything is on - or that it is ready
+    enhanceText(backend, ms) {
+        const localization = this.ctx["localization"];
+        const name = (backend === "webgpu" ? "WebGPU" : (backend === "webgl" ? "WebGL" : backend));
+        return localization.putParameters(
+            localization.get(ms === null ? "room.enhance.idle" : "room.enhance.reading"),
+            new Map([["backend", name], ["ms", String(ms ?? 0)]])
+        );
+    };
+
+    // the stream's stats carry the enhancer's reading once a second: kept,
+    // and drawn into the status row only when nothing else has to be said
     drawEnhanceReading(stats) {
-        if (this.enhanceBackend === "") {
+        if (this.enhanceBackend === "" || typeof stats?.["backend"] !== "string" || stats["backend"] === "") {
             return;
         }
-        const localization = this.ctx["localization"];
-        const backend = (stats?.["backend"] === "webgpu" ? "WebGPU" : (stats?.["backend"] === "webgl" ? "WebGL" : ""));
-        const isRunning = (typeof stats?.["runs"] === "number" && stats["runs"] > 0);
-        this.enhanceReading.innerText = (backend === "" ? "" : localization.putParameters(
-            localization.get(isRunning === true ? "room.enhance.reading" : "room.enhance.idle"),
-            new Map([["backend", backend], ["ms", String(stats["ms"] ?? 0)]])
-        ));
-        this.enhanceReading.classList.toggle("hide", this.enhanceReading.innerText === "");
+        const isRunning = (typeof stats["runs"] === "number" && stats["runs"] > 0);
+        this.enhanceReading = this.enhanceText(stats["backend"], isRunning === true ? stats["ms"] : null);
+        if (this.isEnhanceKnown === true && this.isEnhanceLoading === false) {
+            this.enhanceStatus.innerText = this.enhanceReading;
+        }
     };
 
     drawFullscreen() {
