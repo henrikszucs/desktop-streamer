@@ -994,10 +994,17 @@ room screen keeps it beside `settings` rather than in it.
 
 **The models are mocks, and the pipeline is real.** Each enhancement is one
 ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
-an identity 3×3 convolution followed by a bilinear ×2 (the convolution before
-the resize, at the input resolution, the way a real upscaler computes low and
-upsamples last - after it, the same convolution cost three times the frame),
-and two 1×1 convolutions that mean the two frames and extrapolate them. They are the
+a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
+convolution before the resize, at the input resolution, the way a real
+upscaler computes low and upsamples last), and the two blends as the
+elementwise arithmetic they are. The shapes were chosen by what the runtime's
+WebGPU provider runs well, and the measurements are in the generator's
+docstring: its generic `Conv` has no vectorised path for a channel count that
+is not a multiple of four and took 25 ms on a 1080p frame where the depthwise
+kernel takes 1.4 ms; a 1×1 convolution cost 17 ms where `Add`/`Mul` cost
+nothing; `Resize` at 11 ms is the floor and what a real upscaler pays; float16
+and graph capture changed nothing, since the cost is compute inside the
+kernels. A trained model will pay those prices for whatever it is built from. They are the
 *shape* of the real thing - the same input and output, real GPU work in
 between, a picture that stays right - so the whole path from decoded frame to
 drawn picture can be built and timed before a trained model exists, and a
@@ -1015,12 +1022,17 @@ on purpose: the runtime has a CPU one, and a CPU cannot keep up with a stream,
 so a browser with neither GPU path is told it needs one instead of being given
 a picture that arrives a second late.
 
-**A model never sees a whole frame.** Every picture is cut into tiles of one
-size and each tile is run on its own, then the kept centres are merged back.
-Two reasons, and the first was a bug: the runtime's kernels are only right up
-to a size - a whole 1080p frame through the upscaler came back as the same 640
-pixels repeated across the picture, silently, and 270 ms late - and a session
-is then one shape whatever the stream's resolution, which is what the WebGL
+**A model never sees a whole frame, and every tile of a frame is one run.**
+Every picture is cut into tiles of one size, the tiles go through the model as
+one batch (`[N, C, h, w]`, the graphs carry a symbolic `N`), and the kept
+centres are merged back. Three reasons, and the first was a bug: the runtime's
+convolution is only right up to a size *per image* - a whole 1080p frame
+through the upscaler came back as the same 640 pixels repeated across the
+picture, silently, and 1440p is where the kernel breaks - while a batch is a
+dimension of its own and thirty-six tiles of 328×188 come back right; one run
+of every tile costs a frame far less than thirty-six runs of one (56 → 41 ms
+measured, the rest being the runtime's per-run overhead); and a session is
+then one shape whatever the stream's resolution, which is what the WebGL
 provider wants anyway. `planTiles()` is pure and tested: a 320×180 step, which
 divides every 16:9 resolution exactly (720p is 4×4 of it, 1080p 6×6, 4K
 12×12), and a halo of 4 pixels every model is given beyond it - the geometry
@@ -1033,19 +1045,22 @@ size. A model exported for the client has to be right on a 328×188 tile and
 read no further than the halo.
 
 **The picture stays on the GPU on WebGPU, and goes through a pixel array on
-WebGL.** On WebGPU a decoded frame is imported as an external texture, one
-compute pass per tile writes its window as float32 NCHW into a storage buffer
-the runtime takes as a tensor (`Tensor.fromGpuBuffer`), the runtime answers in
-another (`preferredOutputLocation: "gpu-buffer"`), and one render pass draws
-every tile's kept region - a scissor rectangle per tile - onto a canvas of the
-enhancer's own, which is wrapped as a `VideoFrame` - so the drawer draws it
-exactly the way it draws a decoded frame, whichever of its three contexts it
-holds, and does not know the difference. The per-tile uniforms of a pass sit
-in one buffer at the uniform offset alignment, written once per frame. On
-WebGL the provider takes and returns CPU tensors and nothing else, so a frame
-is read off a 2D canvas and cut into `Float32Array` tiles, and the answers put
-back through an `ImageData`; it is a fallback, it costs most of a second a
-frame at 720p, and the reading in the menu says so. Two things about the
+WebGL.** On WebGPU a decoded frame is imported as an external texture and one
+compute dispatch - a workgroup per 8×8 of a tile, the tile index on the third
+axis, each tile's window origin in a small table - writes the whole batch as
+float32 NCHW into one storage buffer the runtime takes as a tensor
+(`Tensor.fromGpuBuffer`); the runtime answers in another
+(`preferredOutputLocation: "gpu-buffer"`); and one draw of a full-screen
+triangle finds, for every canvas pixel, the tile it is kept from by dividing
+by the step (the tiles are batched in row-major order for exactly that) and
+reads it there, onto a canvas of the enhancer's own, which is wrapped as a
+`VideoFrame` - so the drawer draws it exactly the way it draws a decoded
+frame, whichever of its three contexts it holds, and does not know the
+difference. A frame is one dispatch, one run per model, one draw. On WebGL
+the provider takes and returns CPU tensors and nothing else, so a frame is
+read off a 2D canvas and cut into one `Float32Array` batch, and the answer
+put back through an `ImageData`; it is a fallback, it costs seconds a frame,
+and the reading in the menu says so. Two things about the
 WebGPU path were found rather than designed. The runtime's
 buffers are only tensors on the device that made them, and this build of the
 runtime makes its own device from the adapter and takes none it is handed -
@@ -1081,12 +1096,10 @@ at *submit*, so without the wait a frame whose GPU work costs more than the
 interval queued behind the last one for ever - the CPU clock said a few
 milliseconds while the picture fell seconds behind and nothing was ever
 dropped, which is the freeze the tiling was first blamed for. With it the
-reading is the GPU's own time per frame (~60 ms for a 1080p→4K mock upscale
-on an Apple GPU, ~220 ms with all three on), the queue is bounded, and the
-drop count says what the GPU could not keep up with. A single run is ~0.25 ms
-per tile, so batching tiles into one tensor is the next step when a trained
-model needs it - the graphs would carry a symbolic batch, and nothing else
-would move. A `reset` (the stream over, or restarted) bumps a generation,
+reading is the GPU's own time per frame (~26 ms for a 1080p→4K mock upscale
+on an 8-core Apple GPU, which keeps 30 fps; ~90 ms with all three on), the
+queue is bounded, and the drop count says what the GPU could not keep up
+with. A `reset` (the stream over, or restarted) bumps a generation,
 and a frame still in flight across it is let go rather than becoming the first
 frame of the next stream's pair.
 

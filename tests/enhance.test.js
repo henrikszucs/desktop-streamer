@@ -93,38 +93,39 @@ test("a picture's bytes are its float32 count rounded to 16", () => {
     assert.equal(bytesOf([1, 6, 3, 3]) % 16, 0);
 });
 
-test("every mock graph is there and takes a dynamic picture", async () => {
+test("every mock graph is there and takes a batch of tiles of any size", async () => {
     for (const kind of KINDS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
         const inputs = readInputDims(bytes);
         assert.equal(inputs.length, 1, kind + " has one input");
         assert.equal(inputs[0].length, 4, kind + " takes NCHW");
-        assert.equal(inputs[0][0], 1);
+        assert.equal(inputs[0][0], "N");
         assert.equal(inputs[0][1], (kind === "upscale" ? 3 : 6), kind + " takes " + (kind === "upscale" ? "one frame" : "two frames"));
         assert.equal(inputs[0][2], "H");
         assert.equal(inputs[0][3], "W");
     }
 });
 
-test("the symbolic input dimensions are written as the frame's, and nothing else moves", async () => {
+test("the symbolic input dimensions are written as the batch's, and nothing else moves", async () => {
     for (const kind of KINDS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
-        const patched = patchInputDims(bytes, [1080, 1920]);
+        const patched = patchInputDims(bytes, [36, 188, 328]);
         const inputs = readInputDims(patched);
-        assert.deepEqual(inputs[0], [1, (kind === "upscale" ? 3 : 6), 1080, 1920]);
+        assert.deepEqual(inputs[0], [36, (kind === "upscale" ? 3 : 6), 188, 328]);
 
-        // the fixed dimensions were left as they were, and the file is the
-        // same size: a one letter name (key, length, letter) is three bytes,
-        // and so is a value under 16384 (key, two byte varint)
-        assert.equal(patched.length, bytes.length, kind + ": two names became two values of the same size");
-        assert.deepEqual(readInputDims(patchInputDims(patched, [7, 7]))[0], [1, (kind === "upscale" ? 3 : 6), 1080, 1920], "a fixed dimension is not rewritten");
+        // the fixed dimension was left as it was, and the file is the same
+        // size: a one letter name (key, length, letter) is three bytes, and
+        // so is a value under 16384 (key, two byte varint) - the batch under
+        // 128 is two, one less, and the check below says so
+        assert.equal(patched.length, bytes.length - 1, kind + ": three names became three values");
+        assert.deepEqual(readInputDims(patchInputDims(patched, [7, 7, 7]))[0], [36, (kind === "upscale" ? 3 : 6), 188, 328], "a fixed dimension is not rewritten");
     }
 });
 
 test("a varint over one byte round-trips through the patch", async () => {
     const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, "upscale.onnx")));
-    assert.deepEqual(readInputDims(patchInputDims(bytes, [2160, 3840]))[0], [1, 3, 2160, 3840]);
-    assert.deepEqual(readInputDims(patchInputDims(bytes, [16, 300000]))[0], [1, 3, 16, 300000]);
+    assert.deepEqual(readInputDims(patchInputDims(bytes, [144, 2160, 3840]))[0], [144, 3, 2160, 3840]);
+    assert.deepEqual(readInputDims(patchInputDims(bytes, [1, 16, 300000]))[0], [1, 3, 16, 300000]);
 });
 
 test("a frame is tiled so every pixel is kept once and every window is inside it", () => {
@@ -151,10 +152,16 @@ test("every 16:9 frame from 720p up is whole steps, each with its halo", () => {
         assert.equal(plan["tiles"].length, across * down);
         assert.equal(plan["tileWidth"], TILE_STEP["width"] + 2 * HALO);
         assert.equal(plan["tileHeight"], TILE_STEP["height"] + 2 * HALO);
+        assert.equal(plan["across"], across);
         for (const tile of plan["tiles"]) {
             assert.equal(tile["w"], TILE_STEP["width"]);
             assert.equal(tile["h"], TILE_STEP["height"]);
         }
+        // the row-major order the tiles are batched in is the order a frame
+        // pixel finds its tile by division, which is what the draw relies on
+        plan["tiles"].forEach(function(tile, index) {
+            assert.equal(Math.floor(tile["y"] / TILE_STEP["height"]) * across + Math.floor(tile["x"] / TILE_STEP["width"]), index);
+        });
         // an inner tile has its halo on every side, an edge tile has the
         // window slid back into the frame instead
         const inner = plan["tiles"][across + 1];
