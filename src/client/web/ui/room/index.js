@@ -710,6 +710,15 @@ const RoomScreen = class extends Screen {
             const isBlocked = (typeof entry !== "undefined" && entry["bandwidth"] > this.settings["bandwidth"]);
             const isCurrent = (id === this.settings["resolution"]);
 
+            // the automatic row says what it comes out as, the way the label
+            // does, so the choice is made knowing what it is a choice of
+            if (id === AUTO) {
+                item.children.item(1).innerText = localization.putParameters(
+                    localization.get("room.resolution.autoValue"),
+                    new Map([["value", cap["id"]]])
+                );
+            }
+
             item.classList.toggle("active", isCurrent);
             item.classList.toggle("room-menu-blocked", isBlocked);
             item.children.item(0).classList.toggle("room-menu-unchecked", isCurrent === false);
