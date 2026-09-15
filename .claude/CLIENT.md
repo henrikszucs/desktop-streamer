@@ -994,8 +994,10 @@ room screen keeps it beside `settings` rather than in it.
 
 **The models are mocks, and the pipeline is real.** Each enhancement is one
 ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
-a bilinear ×2 followed by an identity 3×3 convolution, and two 1×1
-convolutions that mean the two frames and extrapolate them. They are the
+an identity 3×3 convolution followed by a bilinear ×2 (the convolution before
+the resize, at the input resolution, the way a real upscaler computes low and
+upsamples last - after it, the same convolution cost three times the frame),
+and two 1×1 convolutions that mean the two frames and extrapolate them. They are the
 *shape* of the real thing - the same input and output, real GPU work in
 between, a picture that stays right - so the whole path from decoded frame to
 drawn picture can be built and timed before a trained model exists, and a
@@ -1013,18 +1015,38 @@ on purpose: the runtime has a CPU one, and a CPU cannot keep up with a stream,
 so a browser with neither GPU path is told it needs one instead of being given
 a picture that arrives a second late.
 
+**A model never sees a whole frame.** Every picture is cut into tiles of one
+size and each tile is run on its own, then the kept centres are merged back.
+Two reasons, and the first was a bug: the runtime's kernels are only right up
+to a size - a whole 1080p frame through the upscaler came back as the same 640
+pixels repeated across the picture, silently, and 270 ms late - and a session
+is then one shape whatever the stream's resolution, which is what the WebGL
+provider wants anyway. `planTiles()` is pure and tested: a 320×180 step, which
+divides every 16:9 resolution exactly (720p is 4×4 of it, 1080p 6×6, 4K
+12×12), and a halo of 4 pixels every model is given beyond it - the geometry
+`model/upscale/webexport.py` measured as the cheapest, and one halo for the
+whole chain, so a tile out of one model is a tile into the next. A tile near
+an edge is not cut short: its input window is slid back into the frame, so
+every tile of a frame has the same input size and the kept region moves
+inside the window instead; a frame smaller than a tile is one tile of its own
+size. A model exported for the client has to be right on a 328×188 tile and
+read no further than the halo.
+
 **The picture stays on the GPU on WebGPU, and goes through a pixel array on
-WebGL.** On WebGPU a decoded frame is imported as an external texture, a
-compute pass writes it as float32 NCHW into a storage buffer the runtime
-takes as a tensor (`Tensor.fromGpuBuffer`), the runtime answers in another
-(`preferredOutputLocation: "gpu-buffer"`), and a render pass draws that onto a
-canvas of the enhancer's own, which is wrapped as a `VideoFrame` - so the
-drawer draws it exactly the way it draws a decoded frame, whichever of its
-three contexts it holds, and does not know the difference. On WebGL the
-provider takes and returns CPU tensors and nothing else, so a frame is read off
-a 2D canvas and the answer put back through an `ImageData`; it is a fallback,
-it costs seconds a frame at 1080p, and the reading in the menu says so. Two
-things about the WebGPU path were found rather than designed. The runtime's
+WebGL.** On WebGPU a decoded frame is imported as an external texture, one
+compute pass per tile writes its window as float32 NCHW into a storage buffer
+the runtime takes as a tensor (`Tensor.fromGpuBuffer`), the runtime answers in
+another (`preferredOutputLocation: "gpu-buffer"`), and one render pass draws
+every tile's kept region - a scissor rectangle per tile - onto a canvas of the
+enhancer's own, which is wrapped as a `VideoFrame` - so the drawer draws it
+exactly the way it draws a decoded frame, whichever of its three contexts it
+holds, and does not know the difference. The per-tile uniforms of a pass sit
+in one buffer at the uniform offset alignment, written once per frame. On
+WebGL the provider takes and returns CPU tensors and nothing else, so a frame
+is read off a 2D canvas and cut into `Float32Array` tiles, and the answers put
+back through an `ImageData`; it is a fallback, it costs most of a second a
+frame at 720p, and the reading in the menu says so. Two things about the
+WebGPU path were found rather than designed. The runtime's
 buffers are only tensors on the device that made them, and this build of the
 runtime makes its own device from the adapter and takes none it is handed -
 `env.webgpu.device` is written by it, never read - so the enhancer's passes are
@@ -1050,10 +1072,21 @@ assumed. Whatever is still held when the next real frame arrives is drawn
 ahead of it, in order, rather than dropped: a generated frame never covers a
 real one, and none is lost.
 
-**One frame at a time, and the newest waits.** A frame that arrives while one
-is being enhanced waits, and a second one replaces it and is counted dropped:
-an enhancer that is behind should not fall further behind by working through
-what it missed. A `reset` (the stream over, or restarted) bumps a generation,
+**One frame at a time, and the newest waits - and a frame is not done until
+the GPU is.** A frame that arrives while one is being enhanced waits, and a
+second one replaces it and is counted dropped: an enhancer that is behind
+should not fall further behind by working through what it missed. That only
+holds because a frame ends with `queue.onSubmittedWorkDone()`: a run resolves
+at *submit*, so without the wait a frame whose GPU work costs more than the
+interval queued behind the last one for ever - the CPU clock said a few
+milliseconds while the picture fell seconds behind and nothing was ever
+dropped, which is the freeze the tiling was first blamed for. With it the
+reading is the GPU's own time per frame (~60 ms for a 1080p→4K mock upscale
+on an Apple GPU, ~220 ms with all three on), the queue is bounded, and the
+drop count says what the GPU could not keep up with. A single run is ~0.25 ms
+per tile, so batching tiles into one tensor is the next step when a trained
+model needs it - the graphs would carry a symbolic batch, and nothing else
+would move. A `reset` (the stream over, or restarted) bumps a generation,
 and a frame still in flight across it is let go rather than becoming the first
 frame of the next stream's pair.
 

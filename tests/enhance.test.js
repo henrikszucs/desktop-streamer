@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { KINDS, OFF, schedule, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
+import { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
 
 const modelsPath = path.resolve(import.meta.dirname, "..", "src", "client", "web", "media", "models");
 
@@ -18,7 +18,9 @@ const modelsPath = path.resolve(import.meta.dirname, "..", "src", "client", "web
 // got, but what it decides *before* touching one is plain arithmetic: which
 // pictures one arriving frame turns into and where each sits in the frame
 // interval, which models a choice needs, and how big a picture is on the GPU.
-// That is what is proved here - and the one thing it does to a model file:
+// That is what is proved here - the tiling a frame is cut into as well, since
+// a model is never handed a whole frame - and the one thing it does to a
+// model file:
 // the WebGL provider runs static shapes only, so the symbolic input
 // dimensions of a graph are written as the frame's in the protobuf bytes
 // before a session is made of it.
@@ -123,4 +125,49 @@ test("a varint over one byte round-trips through the patch", async () => {
     const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, "upscale.onnx")));
     assert.deepEqual(readInputDims(patchInputDims(bytes, [2160, 3840]))[0], [1, 3, 2160, 3840]);
     assert.deepEqual(readInputDims(patchInputDims(bytes, [16, 300000]))[0], [1, 3, 16, 300000]);
+});
+
+test("a frame is tiled so every pixel is kept once and every window is inside it", () => {
+    for (const [width, height] of [[1920, 1080], [1280, 720], [1000, 700], [500, 200], [328, 188], [64, 32]]) {
+        const plan = planTiles(width, height);
+        const covered = new Uint8Array(width * height);
+        for (const tile of plan["tiles"]) {
+            assert.equal(tile["ix"] >= 0 && tile["iy"] >= 0, true);
+            assert.equal(tile["ix"] + plan["tileWidth"] <= width && tile["iy"] + plan["tileHeight"] <= height, true, "a window over the edge");
+            assert.equal(tile["ox"] + tile["w"] <= plan["tileWidth"] && tile["oy"] + tile["h"] <= plan["tileHeight"], true, "a kept region outside its window");
+            for (let y = tile["y"]; y < tile["y"] + tile["h"]; y++) {
+                for (let x = tile["x"]; x < tile["x"] + tile["w"]; x++) {
+                    covered[y * width + x]++;
+                }
+            }
+        }
+        assert.equal(covered.every((count) => count === 1), true, width + "x" + height + " is not covered exactly once");
+    }
+});
+
+test("every 16:9 frame from 720p up is whole steps, each with its halo", () => {
+    for (const [width, height, across, down] of [[1280, 720, 4, 4], [1920, 1080, 6, 6], [2560, 1440, 8, 8], [3840, 2160, 12, 12]]) {
+        const plan = planTiles(width, height);
+        assert.equal(plan["tiles"].length, across * down);
+        assert.equal(plan["tileWidth"], TILE_STEP["width"] + 2 * HALO);
+        assert.equal(plan["tileHeight"], TILE_STEP["height"] + 2 * HALO);
+        for (const tile of plan["tiles"]) {
+            assert.equal(tile["w"], TILE_STEP["width"]);
+            assert.equal(tile["h"], TILE_STEP["height"]);
+        }
+        // an inner tile has its halo on every side, an edge tile has the
+        // window slid back into the frame instead
+        const inner = plan["tiles"][across + 1];
+        assert.deepEqual([inner["ox"], inner["oy"]], [HALO, HALO]);
+        assert.deepEqual([plan["tiles"][0]["ox"], plan["tiles"][0]["oy"]], [0, 0]);
+        const last = plan["tiles"][plan["tiles"].length - 1];
+        assert.equal(last["ox"], 2 * HALO);
+    }
+});
+
+test("a frame smaller than a tile is one tile of its own size", () => {
+    const plan = planTiles(64, 32);
+    assert.equal(plan["tiles"].length, 1);
+    assert.deepEqual([plan["tileWidth"], plan["tileHeight"]], [64, 32]);
+    assert.deepEqual(plan["tiles"][0], {"x": 0, "y": 0, "w": 64, "h": 32, "ix": 0, "iy": 0, "ox": 0, "oy": 0});
 });
