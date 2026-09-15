@@ -75,7 +75,7 @@ Layout: `index.html`, `index.css`, `index.js` and `index.json` at the web root, 
 
 ### `model/`
 
-A `uv`-managed Python project (pinned to 3.14, Torch from a CUDA 13.2 index) for the video upscaling and frame-generation work: `upscale/`, `frame_gen_intra/`, `frame_gen_extra/`, each with a `summary.md` of where it stands, and `model/README.md` over the three. Separate from the Node app; nothing in `src/` calls it. What the client *does* run is `mock/make_mock_models.py`'s output — the three stand-in graphs it writes into `src/client/web/media/models/` — and a trained model replaces a mock by being exported under the same name with the same input and output (`input` float32 NCHW in [0, 1], `N`, `H` and `W` symbolic — the client runs every tile of a frame as one batch; `output` the same shape, or twice it for the upscaler).
+A `uv`-managed Python project (pinned to 3.14, Torch from a CUDA 13.2 index) for the video upscaling and frame-generation work: `upscale/`, `frame_gen_intra/`, `frame_gen_extra/`, each with a `summary.md` of where it stands, and `model/README.md` over the three. Separate from the Node app; nothing in `src/` calls it. What the client *does* run is `mock/make_mock_models.py`'s output — the three stand-in graphs it writes into `src/client/web/media/models/` — and a trained model replaces a mock by being exported under the same name with the same input and output (float32 NCHW in [0, 1], `N`, `H` and `W` symbolic — the client runs every tile of a frame as one batch; `input` for the upscaler, `previous` and `current` as two inputs for the two-frame models; `output` the same shape, or twice it for the upscaler).
 
 ### `dev/`
 

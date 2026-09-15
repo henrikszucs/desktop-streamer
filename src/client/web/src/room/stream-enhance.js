@@ -20,13 +20,17 @@
 // runtime opens the WebAssembly through an XMLHttpRequest of its own.
 const ORT_URL = new URL("/libs/onnxruntime/ort.all.min.mjs", import.meta.url).href;
 const ORT_WASM_PATH = new URL("/libs/onnxruntime/", import.meta.url).href;
+// Each graph is fed by the input names it declares: the one-frame model takes
+// `input`, the two-frame ones `previous` and `current` as two tensors - two
+// inputs rather than one stacked six channel one, since stacking was a copy
+// here and a Slice in the graph to take them apart again, more than half of
+// what an interpolated frame cost.
 const MODELS = {
-    "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "frames": 1, "scale": 2},
-    "interpolate": {"url": new URL("/media/models/interpolate.onnx", import.meta.url).href, "frames": 2, "scale": 1},
-    "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "frames": 2, "scale": 1}
+    "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
+    "interpolate": {"url": new URL("/media/models/interpolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
+    "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1}
 };
 const KINDS = Object.keys(MODELS);
-const INPUT_NAME = "input";
 const OUTPUT_NAME = "output";
 
 // the frame interval a generated frame is placed inside when the stream has
@@ -107,9 +111,9 @@ const bytesOf = function(dims) {
 // The WebGL provider runs static shapes and nothing else: a dimension the
 // graph leaves symbolic (N, H, W) is read as nothing and refused against a
 // real tensor. The graphs are exported dynamic so one file serves every
-// resolution, so for WebGL the file is patched instead - the symbolic input
-// dimensions written as the batch's, in the protobuf bytes, and a session
-// made of the result per shape. Only the fields on the path to the input
+// resolution, so for WebGL the file is patched instead - the symbolic
+// dimensions of every input written as the batch's, in the protobuf bytes,
+// and a session made of the result per shape. Only the fields on the path to the input
 // dims are decoded; everything else is copied as it was.
 //
 // ModelProto.graph(7) > GraphProto.input(11) > ValueInfoProto.type(2)
@@ -359,8 +363,8 @@ const planTiles = function(width, height) {
 // A picture here is {plan, scale, dims, buffer, tensor?}: every tile of the
 // frame as one float32 NCHW batch in one storage buffer the runtime reads
 // directly (Tensor.fromGpuBuffer) and writes directly (preferredOutputLocation
-// "gpu-buffer"), `dims` its [N, C, h, w] and `scale` how many output pixels a
-// frame pixel has become. A frame becomes one through a single compute
+// "gpu-buffer"), `dims` its [N, 3, h, w] and `scale` how many output pixels a
+// frame pixel has become. A two-frame model is fed two of them. A frame becomes one through a single compute
 // dispatch over its external texture - a workgroup per 8x8 of a tile, the
 // tile on the third axis - and one becomes a frame through a single draw that
 // finds, for every canvas pixel, the tile it is kept from and reads it there,
@@ -530,30 +534,23 @@ const createGPUBackend = async function(ort) {
             return {"plan": plan, "scale": 1, "dims": dims, "buffer": buffer};
         },
 
-        // two pictures as one six channel batch: tile by tile, the planes of
-        // the first and then of the second, every copy staying on the GPU
-        "concat": function(a, b) {
-            const count = a["dims"][0];
-            const planeBytes = a["dims"][2] * a["dims"][3] * 4 * 3;
-            const dims = [count, 6, a["dims"][2], a["dims"][3]];
-            const buffer = acquire(dims);
-            const encoder = device.createCommandEncoder();
-            for (let index = 0; index < count; index++) {
-                encoder.copyBufferToBuffer(a["buffer"], index * planeBytes, buffer, index * 2 * planeBytes, planeBytes);
-                encoder.copyBufferToBuffer(b["buffer"], index * planeBytes, buffer, index * 2 * planeBytes + planeBytes, planeBytes);
+        // every tile of every picture through the session at once: the feeds
+        // are the graph's input names to pictures, each handed over as the
+        // tensor its buffer already is, nothing copied
+        "run": async function(session, feeds, scale) {
+            const inputs = {};
+            let picture = null;
+            for (const [name, fed] of Object.entries(feeds)) {
+                inputs[name] = ort.Tensor.fromGpuBuffer(fed["buffer"], {"dataType": "float32", "dims": fed["dims"]});
+                picture = fed;
             }
-            device.queue.submit([encoder.finish()]);
-            return {"plan": a["plan"], "scale": a["scale"], "dims": dims, "buffer": buffer};
-        },
-
-        // every tile of the picture through the session at once
-        "run": async function(session, picture, scale) {
-            const input = ort.Tensor.fromGpuBuffer(picture["buffer"], {"dataType": "float32", "dims": picture["dims"]});
             let output;
             try {
-                output = (await session.run({[INPUT_NAME]: input}))[OUTPUT_NAME];
+                output = (await session.run(inputs))[OUTPUT_NAME];
             } finally {
-                input.dispose?.();
+                for (const input of Object.values(inputs)) {
+                    input.dispose?.();
+                }
             }
             const dims = [...output.dims];
             if (output.location !== "gpu-buffer") {
@@ -692,20 +689,14 @@ const createCPUBackend = function(ort) {
             return {"plan": plan, "scale": 1, "dims": [plan["tiles"].length, 3, tileHeight, tileWidth], "data": data};
         },
 
-        "concat": function(a, b) {
-            const count = a["dims"][0];
-            const planeSize = a["dims"][2] * a["dims"][3] * 3;
-            const data = new Float32Array(count * 2 * planeSize);
-            for (let index = 0; index < count; index++) {
-                data.set(a["data"].subarray(index * planeSize, (index + 1) * planeSize), index * 2 * planeSize);
-                data.set(b["data"].subarray(index * planeSize, (index + 1) * planeSize), index * 2 * planeSize + planeSize);
+        "run": async function(session, feeds, scale) {
+            const inputs = {};
+            let picture = null;
+            for (const [name, fed] of Object.entries(feeds)) {
+                inputs[name] = new ort.Tensor("float32", fed["data"], fed["dims"]);
+                picture = fed;
             }
-            return {"plan": a["plan"], "scale": a["scale"], "dims": [count, 6, a["dims"][2], a["dims"][3]], "data": data};
-        },
-
-        "run": async function(session, picture, scale) {
-            const input = new ort.Tensor("float32", picture["data"], picture["dims"]);
-            const output = (await session.run({[INPUT_NAME]: input}))[OUTPUT_NAME];
+            const output = (await session.run(inputs))[OUTPUT_NAME];
             const data = (output.data instanceof Float32Array ? output.data : Float32Array.from(output.data));
             return {"plan": picture["plan"], "scale": picture["scale"] * scale, "dims": [...output.dims], "data": data};
         },
@@ -885,17 +876,13 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         for (const step of steps) {
             let picture = current;
             if (step["kind"] !== "frame") {
-                const input = engine.concat(previous, current);
-                try {
-                    picture = await engine.run(await loadSession(step["kind"], input["dims"]), input, MODELS[step["kind"]]["scale"]);
-                } finally {
-                    engine.release(input);
-                }
+                const session = await loadSession(step["kind"], current["dims"]);
+                picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"]);
             }
             if (options["upscale"] === true) {
                 const source = picture;
                 try {
-                    picture = await engine.run(await loadSession("upscale", source["dims"]), source, MODELS["upscale"]["scale"]);
+                    picture = await engine.run(await loadSession("upscale", source["dims"]), {"input": source}, MODELS["upscale"]["scale"]);
                 } finally {
                     if (source !== current) {
                         engine.release(source);

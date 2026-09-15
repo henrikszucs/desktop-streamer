@@ -997,14 +997,22 @@ ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
 a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
 convolution before the resize, at the input resolution, the way a real
 upscaler computes low and upsamples last), and the two blends as the
-elementwise arithmetic they are. The shapes were chosen by what the runtime's
+elementwise arithmetic they are. **A two-frame model takes two inputs**,
+`previous` and `current`, never one stacked six channel tensor: stacked, the
+enhancer paid a copy to stack them and the graph a `Slice` to take them apart
+again - 11 of the 17 ms an interpolated 1080p frame cost - where two inputs
+are two buffers handed over as the tensors they already are. The shapes were chosen by what the runtime's
 WebGPU provider runs well, and the measurements are in the generator's
 docstring: its generic `Conv` has no vectorised path for a channel count that
 is not a multiple of four and took 25 ms on a 1080p frame where the depthwise
 kernel takes 1.4 ms; a 1×1 convolution cost 17 ms where `Add`/`Mul` cost
-nothing; `Resize` at 11 ms is the floor and what a real upscaler pays; float16
-and graph capture changed nothing, since the cost is compute inside the
-kernels. A trained model will pay those prices for whatever it is built from. They are the
+1-2; `Resize` at 11 ms is the floor and what a real upscaler pays, and the
+NCHW↔NHWC `Transpose` pair the provider puts around a graph's convolutions is
+4.3 ms once per graph; float16 and graph capture changed nothing - the kernels
+are index-bound, not bandwidth- or arithmetic-bound. A trained model will pay
+those prices for whatever it is built from. Where a 1080p frame's ~26 ms go
+with the upscaler on: `Resize` 11, the transposes 4, the draw onto the canvas
+~4, the frame into planes ~2.5, the convolution 1.4. They are the
 *shape* of the real thing - the same input and output, real GPU work in
 between, a picture that stays right - so the whole path from decoded frame to
 drawn picture can be built and timed before a trained model exists, and a
@@ -1049,8 +1057,10 @@ WebGL.** On WebGPU a decoded frame is imported as an external texture and one
 compute dispatch - a workgroup per 8×8 of a tile, the tile index on the third
 axis, each tile's window origin in a small table - writes the whole batch as
 float32 NCHW into one storage buffer the runtime takes as a tensor
-(`Tensor.fromGpuBuffer`); the runtime answers in another
-(`preferredOutputLocation: "gpu-buffer"`); and one draw of a full-screen
+(`Tensor.fromGpuBuffer`, one tensor per graph input - a two-frame model is
+handed the previous picture's buffer and this one's, nothing stacked); the
+runtime answers in another (`preferredOutputLocation: "gpu-buffer"`); and
+one draw of a full-screen
 triangle finds, for every canvas pixel, the tile it is kept from by dividing
 by the step (the tiles are batched in row-major order for exactly that) and
 reads it there, onto a canvas of the enhancer's own, which is wrapped as a
@@ -1097,7 +1107,8 @@ interval queued behind the last one for ever - the CPU clock said a few
 milliseconds while the picture fell seconds behind and nothing was ever
 dropped, which is the freeze the tiling was first blamed for. With it the
 reading is the GPU's own time per frame (~26 ms for a 1080p→4K mock upscale
-on an 8-core Apple GPU, which keeps 30 fps; ~90 ms with all three on), the
+on an 8-core Apple GPU, which keeps 30 fps; ~10 ms for interpolation; ~75 ms
+with all three on), the
 queue is bounded, and the drop count says what the GPU could not keep up
 with. A `reset` (the stream over, or restarted) bumps a generation,
 and a frame still in flight across it is let go rather than becoming the first

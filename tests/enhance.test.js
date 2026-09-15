@@ -93,32 +93,34 @@ test("a picture's bytes are its float32 count rounded to 16", () => {
     assert.equal(bytesOf([1, 6, 3, 3]) % 16, 0);
 });
 
-test("every mock graph is there and takes a batch of tiles of any size", async () => {
+test("every mock graph is there and takes a batch of tiles of any size, one frame per input", async () => {
     for (const kind of KINDS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
         const inputs = readInputDims(bytes);
-        assert.equal(inputs.length, 1, kind + " has one input");
-        assert.equal(inputs[0].length, 4, kind + " takes NCHW");
-        assert.equal(inputs[0][0], "N");
-        assert.equal(inputs[0][1], (kind === "upscale" ? 3 : 6), kind + " takes " + (kind === "upscale" ? "one frame" : "two frames"));
-        assert.equal(inputs[0][2], "H");
-        assert.equal(inputs[0][3], "W");
+        assert.equal(inputs.length, (kind === "upscale" ? 1 : 2), kind + " takes " + (kind === "upscale" ? "one frame" : "two frames"));
+        for (const dims of inputs) {
+            assert.deepEqual(dims, ["N", 3, "H", "W"], kind + " takes a batch of NCHW frames");
+        }
     }
 });
 
-test("the symbolic input dimensions are written as the batch's, and nothing else moves", async () => {
+test("the symbolic dimensions of every input are written as the batch's, and nothing else moves", async () => {
     for (const kind of KINDS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
         const patched = patchInputDims(bytes, [36, 188, 328]);
         const inputs = readInputDims(patched);
-        assert.deepEqual(inputs[0], [36, (kind === "upscale" ? 3 : 6), 188, 328]);
+        for (const dims of inputs) {
+            assert.deepEqual(dims, [36, 3, 188, 328]);
+        }
 
-        // the fixed dimension was left as it was, and the file is the same
-        // size: a one letter name (key, length, letter) is three bytes, and
-        // so is a value under 16384 (key, two byte varint) - the batch under
-        // 128 is two, one less, and the check below says so
-        assert.equal(patched.length, bytes.length - 1, kind + ": three names became three values");
-        assert.deepEqual(readInputDims(patchInputDims(patched, [7, 7, 7]))[0], [36, (kind === "upscale" ? 3 : 6), 188, 328], "a fixed dimension is not rewritten");
+        // the fixed dimension was left as it was, and the file is one byte
+        // per input shorter: a one letter name (key, length, letter) is three
+        // bytes, and so is a value under 16384 (key, two byte varint) - the
+        // batch under 128 is two
+        assert.equal(patched.length, bytes.length - inputs.length, kind + ": three names became three values per input");
+        for (const dims of readInputDims(patchInputDims(patched, [7, 7, 7]))) {
+            assert.deepEqual(dims, [36, 3, 188, 328], "a fixed dimension is not rewritten");
+        }
     }
 });
 
