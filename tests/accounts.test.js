@@ -120,6 +120,23 @@ const pushesOf = function(server, sessionId, type) {
     });
 };
 
+// an account put in by hand: what an organization's address list is once it is
+// in the table - a row per person, an e-mail and whatever else was known, and
+// no provider behind any of them until somebody signs in
+const seedUser = async function(db, email, fields = {}) {
+    const user = {
+        "user_id": "seed-" + email,
+        "email": email,
+        "first_name": "",
+        "last_name": "",
+        "is_relay_allowed": false,
+        "created": Date.now(),
+        ...fields
+    };
+    await db("users").insert(user);
+    return user;
+};
+
 const signIn = async function(server, sessionId, who, sessionKey) {
     const message = {"credential": who, "userAgent": {"os": "darwin"}};
     if (typeof sessionKey !== "undefined") {
@@ -275,6 +292,121 @@ test("an unknown account is refused when registering is off", async () => {
         assert.equal(answer["error"], "register-disabled");
     } finally {
         await dropDatabase(db, file);
+    }
+});
+
+//
+// the addresses put in by hand
+//
+// an organization that knows who its people are seeds the table with their
+// addresses and turns registering off: the domain is public, the accounts are
+// the list, and a credential is what proves somebody is on it.
+test("an address that is already a row signs in with registering off, and the row is filled in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        const seeded = await seedUser(db, "alice@example.com");
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["success"], true);
+        assert.equal(answer["user"]["userId"], seeded["user_id"]);
+        assert.equal(answer["user"]["email"], "alice@example.com");
+
+        // what the row did not say, the credential did
+        assert.equal(answer["user"]["firstName"], "Alice");
+        assert.equal(answer["user"]["lastName"], "Liddell");
+        const row = await db("users").where("user_id", seeded["user_id"]).first();
+        assert.equal(row["first_name"], "Alice");
+        assert.equal(row["last_name"], "Liddell");
+
+        // the row was claimed rather than copied: one account, one link, and
+        // the connection is that person
+        assert.equal((await db("users")).length, 1);
+        const link = await db("users_google").where("sub", "sub-alice").first();
+        assert.equal(link["user_id"], seeded["user_id"]);
+        assert.equal(heldUser(server, "one")["userId"], seeded["user_id"]);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a name already on the seeded row is the row's, not Google's", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        await seedUser(db, "alice@example.com", {"first_name": "Ada", "last_name": ""});
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["user"]["firstName"], "Ada");
+        assert.equal(answer["user"]["lastName"], "Liddell");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("the claimed row is found by its Google id the next time, and no second row is made", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        const seeded = await seedUser(db, "alice@example.com");
+        await signIn(server, "one", "alice");
+        const again = await signIn(server, "two", "alice");
+        assert.equal(again["success"], true);
+        assert.equal(again["user"]["userId"], seeded["user_id"]);
+        assert.equal((await db("users")).length, 1);
+        assert.equal((await db("users_google")).length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("the relay permission of a claimed row is the row's, not the register rule", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false, "userRegisterRelay": false});
+        await seedUser(db, "alice@example.com", {"is_relay_allowed": true});
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["user"]["isRelayAllowed"], true);
+        assert.equal(server.clients.get("one").get("isRelayAllowed"), true);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an address nobody put in is still refused when registering is off", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        await seedUser(db, "bob@example.com");
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["success"], false);
+        assert.equal(answer["error"], "register-disabled");
+        assert.equal((await db("users_google")).length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an address that is already somebody's account is refused, whatever the register rule says", async () => {
+    for (const permissions of [{"userRegister": false}, {"userRegister": true}]) {
+        const {db, file} = await buildDatabase();
+        try {
+            const server = buildServer(db, permissions);
+            await seedUser(db, "alice@example.com");
+            await signIn(server, "one", "alice");
+
+            // the same address, another Google person: one account for one
+            // person is what the row is, so the second one is nobody here
+            server.auth["verifyGoogle"] = async function() {
+                return {"sub": "sub-mallory", "email": "alice@example.com", "given_name": "M", "family_name": "", "picture": ""};
+            };
+            const answer = await signIn(server, "two", "mallory");
+            assert.equal(answer["success"], false);
+            assert.equal(answer["error"], "email-taken");
+            assert.equal((await db("users")).length, 1);
+            assert.equal((await db("users_google")).length, 1);
+            assert.equal(heldUser(server, "two"), undefined);
+        } finally {
+            await dropDatabase(db, file);
+        }
     }
 });
 

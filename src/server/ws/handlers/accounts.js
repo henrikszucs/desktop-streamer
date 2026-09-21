@@ -144,8 +144,24 @@ const findSession = async function(db, sessionKey) {
     return await db("sessions").where("session_key", sessionKey).first();
 };
 
-// the account behind a Google credential: the existing row, or a new one when
-// the server allows that. Returns the users row, or the error name.
+// what a credential says that a row does not. The names are the user's own
+// once they were edited here, so only an empty one is filled in - which is
+// also what makes a row seeded with an e-mail and nothing else a whole
+// account the moment somebody signs in on it.
+const fillFromGoogle = function(user, info) {
+    const change = {};
+    if ((user["first_name"] ?? "") === "" && typeof info["given_name"] === "string") {
+        change["first_name"] = info["given_name"].substring(0, NAME_MAX);
+    }
+    if ((user["last_name"] ?? "") === "" && typeof info["family_name"] === "string") {
+        change["last_name"] = info["family_name"].substring(0, NAME_MAX);
+    }
+    return change;
+};
+
+// the account behind a Google credential: the existing row, the row that was
+// already waiting under that address, or a new one when the server allows
+// that. Returns the users row, or the error name.
 const findOrCreateGoogleUser = async function(server, info) {
     const db = server.db;
     const link = await db("users_google").where("sub", info["sub"]).first();
@@ -156,17 +172,10 @@ const findOrCreateGoogleUser = async function(server, info) {
         }
 
         // what Google says about the person is what the row was made from, and
-        // the picture follows it; the names are the user's own once they edited
-        // them here, so only an empty one is filled in
-        const change = {};
+        // the picture follows it
+        const change = fillFromGoogle(user, info);
         if (user["email"] !== info["email"]) {
             change["email"] = info["email"];
-        }
-        if ((user["first_name"] ?? "") === "" && typeof info["given_name"] === "string") {
-            change["first_name"] = info["given_name"].substring(0, NAME_MAX);
-        }
-        if ((user["last_name"] ?? "") === "" && typeof info["family_name"] === "string") {
-            change["last_name"] = info["family_name"].substring(0, NAME_MAX);
         }
         if (Object.keys(change).length > 0) {
             await db("users").where("user_id", user["user_id"]).update(change);
@@ -177,15 +186,38 @@ const findOrCreateGoogleUser = async function(server, info) {
         return {"user": {...user, ...change}, "pictureUrl": info["picture"] ?? ""};
     }
 
-    if (server.auth["isRegisterAllowed"] !== true) {
-        return {"error": "register-disabled"};
-    }
-
-    // an address already on a row that another provider made would be a second
-    // account for one person; there is one provider today, so it is refused
+    // an address that is already a row is the person that row is for, as long
+    // as nothing has claimed it yet: the credential is what proves them, and
+    // the row is filled in rather than made. That is what a list of addresses
+    // put in by hand is - an account each, waiting to be signed in on - and it
+    // is how an organization opens a public domain to its own people alone,
+    // with `userRegister` off so that nobody else is made a row by arriving.
+    // Registering is not what happens here, so neither rule of it applies: the
+    // relay permission answered is the one the row carries.
     const byEmail = await db("users").where("email", info["email"]).first();
     if (typeof byEmail !== "undefined") {
-        return {"error": "email-taken"};
+        // a row somebody is already signed in on is theirs, and a second
+        // credential under the same address is a second account for one person
+        const claimed = await db("users_google").where("user_id", byEmail["user_id"]).first();
+        if (typeof claimed !== "undefined") {
+            return {"error": "email-taken"};
+        }
+        const change = fillFromGoogle(byEmail, info);
+        if (Object.keys(change).length > 0) {
+            await db("users").where("user_id", byEmail["user_id"]).update(change);
+        }
+        await db("users_google").insert({
+            "sub": info["sub"],
+            "user_id": byEmail["user_id"],
+            "picture": info["picture"] ?? ""
+        });
+        return {"user": {...byEmail, ...change}, "pictureUrl": info["picture"] ?? ""};
+    }
+
+    // nobody this server knows, under any address: only registering can make
+    // one, and it is the permission that says whether it may
+    if (server.auth["isRegisterAllowed"] !== true) {
+        return {"error": "register-disabled"};
     }
 
     const userId = await generateUnique(db, "users", "user_id");
