@@ -28,6 +28,32 @@
                 "hu": "A másik eszköz nem engedi átvenni a billentyűzetét és az egerét"
             }
         },
+        "clipboard": {
+            "share": {
+                "en": "Share the clipboard with the other device",
+                "hu": "Vágólap megosztása a másik eszközzel"
+            },
+            "stop": {
+                "en": "Stop sharing the clipboard",
+                "hu": "Vágólap megosztásának leállítása"
+            },
+            "none": {
+                "en": "The other device does not share its clipboard",
+                "hu": "A másik eszköz nem osztja meg a vágólapját"
+            },
+            "unsupported": {
+                "en": "This browser does not let the page use the clipboard",
+                "hu": "Ez a böngésző nem engedi az oldalnak a vágólap használatát"
+            },
+            "refused": {
+                "en": "The browser refused to read the clipboard, so nothing copied here is shared.",
+                "hu": "A böngésző nem engedte kiolvasni a vágólapot, így az itt másolt tartalom nem kerül át."
+            },
+            "large": {
+                "en": "What was copied is too large to share.",
+                "hu": "A másolt tartalom túl nagy a megosztáshoz."
+            }
+        },
         "bandwidth": {
             "value": {
                 "en": "{value} Mbps",

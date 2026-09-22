@@ -20,7 +20,7 @@ const initDesktop = async function() {
     const { spawn } = require("node:child_process");
 
     // load electron modules
-    const { ipcRenderer } = require("electron");
+    const { ipcRenderer, clipboard } = require("electron");
     const appPath = await ipcRenderer.invoke("api", "path-app");
     const exePath = await ipcRenderer.invoke("api", "path-exe");
 
@@ -35,6 +35,11 @@ const initDesktop = async function() {
     desktop["os"] = os;
     desktop["spawn"] = spawn;
     desktop["ipcRenderer"] = ipcRenderer;
+    // the system clipboard, read and written straight from the renderer: it is
+    // what a shared clipboard is made of on either side of a room (see
+    // src/room/clipboard.js), and a browser peer has navigator.clipboard in
+    // its place
+    desktop["clipboard"] = clipboard;
     desktop["appPath"] = appPath;
     desktop["autoLaunch"] = new AutoLaunch({
         "name": "Desktop Streamer",

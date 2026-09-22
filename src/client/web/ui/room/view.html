@@ -62,6 +62,17 @@
                 <div class="tooltip" id="btn-room-control-tooltip" data-localization="room.control.take">Take the keyboard and the mouse</div>
             </a>
             <!--
+                Whether the two machines share one clipboard: what is copied
+                here goes over when the picture is clicked back into, and what
+                is copied there lands here - see ./index.js and
+                src/room/clipboard.js. Greyed when the host has no clipboard to
+                share, or this browser will not hand the page one.
+            -->
+            <a tabindex="0" id="btn-room-clipboard">
+                <i id="btn-room-clipboard-icon">content_paste_off</i>
+                <div class="tooltip" id="btn-room-clipboard-tooltip" data-localization="room.clipboard.share">Share the clipboard</div>
+            </a>
+            <!--
                 The line first and the picture after it: the bandwidth is what
                 the resolutions are priced against, so what it is set to is what
                 the menu below can offer at all - see the cap in ./index.js.

@@ -98,6 +98,9 @@ const RoomScreen = class extends Screen {
     controlBtn = null;
     controlIcon = null;
     controlTooltip = null;
+    clipboardBtn = null;
+    clipboardIcon = null;
+    clipboardTooltip = null;
     bandwidthBtn = null;
     bandwidthLabel = null;
     bandwidthMenu = null;
@@ -150,10 +153,19 @@ const RoomScreen = class extends Screen {
     enhanceReading = "";    // the last cost reading, kept so the row never empties
 
     // what the host has to offer besides the picture (the "share" message):
-    // sound, and a keyboard and mouse to take. A button for what it has not
-    // got is greyed, and nothing until a share has said.
+    // sound, a keyboard and mouse to take, and its clipboard. A button for what
+    // it has not got is greyed, and nothing until a share has said.
     isAudioAvailable = false;
     isControlAvailable = false;
+    isHostClipboard = false;
+
+    // the one clipboard the two machines share while it is on. It is no part of
+    // `settings`: the host is told it in a message of its own, the way the
+    // keyboard is, and it says nothing about the picture. `isClipboardSaid` is
+    // so a browser that refuses to be read says so once per switch rather than
+    // on every click back onto the picture.
+    isClipboard = false;
+    isClipboardSaid = false;
 
     // the exit ring's clock, while a shortcut is held
     holdFrameId = -1;
@@ -172,6 +184,9 @@ const RoomScreen = class extends Screen {
         this.controlBtn = document.getElementById("btn-room-control");
         this.controlIcon = document.getElementById("btn-room-control-icon");
         this.controlTooltip = document.getElementById("btn-room-control-tooltip");
+        this.clipboardBtn = document.getElementById("btn-room-clipboard");
+        this.clipboardIcon = document.getElementById("btn-room-clipboard-icon");
+        this.clipboardTooltip = document.getElementById("btn-room-clipboard-tooltip");
         this.bandwidthBtn = document.getElementById("btn-room-bandwidth");
         this.bandwidthLabel = document.getElementById("room-bandwidth-label");
         this.bandwidthMenu = document.getElementById("room-bandwidth-menu");
@@ -209,6 +224,11 @@ const RoomScreen = class extends Screen {
                 this.setControl(this.settings["isControl"] === false);
             }
         });
+        this.clipboardBtn.addEventListener("click", () => {
+            if (this.isClipboardAvailable() === true) {
+                this.setClipboard(this.isClipboard === false);
+            }
+        });
         document.getElementById("btn-room-fullscreen").addEventListener("click", () => {
             this.toggleFullscreen();
         });
@@ -238,6 +258,7 @@ const RoomScreen = class extends Screen {
         ctx["stream"].addEventListener("stats", this.onStreamStats);
         ctx["stream"].addEventListener("control", this.onStreamControl);
         ctx["stream"].addEventListener("share", this.onStreamShare);
+        ctx["stream"].addEventListener("clipboard", this.onStreamClipboard);
         ctx["stream"].addEventListener("hold", this.onStreamHold);
 
         this.buildBandwidthMenu();
@@ -247,6 +268,7 @@ const RoomScreen = class extends Screen {
         this.buildScreenMenu();
         this.setAudio(this.settings["isAudio"]);
         this.setControl(this.settings["isControl"]);
+        this.setClipboard(this.isClipboard);
         this.drawBandwidth();
         this.drawResolution();
         this.drawFramerate();
@@ -468,6 +490,40 @@ const RoomScreen = class extends Screen {
         this.emit();
     };
 
+    // the one clipboard: on, and what is copied on either machine is on both -
+    // what this one copies goes over when the picture is clicked back into,
+    // what the other one copies lands here (src/room/clipboard.js). Off, and
+    // neither machine reads or writes anything of the other's.
+    setClipboard(isClipboard) {
+        this.isClipboard = (isClipboard === true);
+        this.isClipboardSaid = false;
+        this.ctx["stream"].setClipboard(this.isClipboard);
+        this.drawAvailable();
+    };
+
+    // whether there is one to share at all: the host has to have a clipboard
+    // and so does this client, and either side may be the one that has not
+    isClipboardAvailable() {
+        return (this.isHostClipboard === true && this.ctx["stream"].isClipboardAvailable() === true);
+    };
+
+    // what the clipboard could not do, said once: a browser that will not be
+    // read is refusing every click back onto the picture, not just this one
+    onStreamClipboard = (event) => {
+        const error = event.detail?.["error"];
+        if (this.isOpen === false || typeof error !== "string" || error === "") {
+            return;
+        }
+        if (error === "refused") {
+            if (this.isClipboardSaid === true) {
+                return;
+            }
+            this.isClipboardSaid = true;
+        }
+        this.ctx["ui"].snackbar.show(this.ctx["localization"].get(error === "too-large"
+            ? "room.clipboard.large" : "room.clipboard.refused"), true);
+    };
+
     onStreamControl = (event) => {
         if (event.detail?.["isControl"] === false && this.settings["isControl"] === true) {
             this.setControl(false);
@@ -514,7 +570,7 @@ const RoomScreen = class extends Screen {
         this.screenIndex = (Number.isInteger(info?.["screenIndex"]) ? info["screenIndex"] : undefined);
         this.buildScreenMenu();
         this.drawScreen();
-        this.setAvailable(info?.["isAudio"] === true, info?.["isControl"] === true);
+        this.setAvailable(info?.["isAudio"] === true, info?.["isControl"] === true, info?.["isClipboard"] === true);
 
         if (this.isOpen === false) {
             return;
@@ -527,10 +583,13 @@ const RoomScreen = class extends Screen {
 
     // what the host has to offer, from its "share" message. A keyboard taken
     // from a host that then says it has none is let go here, since the host
-    // has stopped listening for it either way.
-    setAvailable(isAudio, isControl) {
+    // has stopped listening for it either way. The clipboard is not let go the
+    // same way: it is a setting rather than something taken, so a host without
+    // one greys the button and leaves the switch where the peer put it.
+    setAvailable(isAudio, isControl, isClipboard) {
         this.isAudioAvailable = (isAudio === true);
         this.isControlAvailable = (isControl === true);
+        this.isHostClipboard = (isClipboard === true);
         if (this.isControlAvailable === false && this.settings["isControl"] === true) {
             this.setControl(false);
         }
@@ -542,10 +601,21 @@ const RoomScreen = class extends Screen {
     // button that cannot be pressed reads as a setting rather than a refusal.
     drawAvailable() {
         const localization = this.ctx["localization"];
+        const isClipboard = this.isClipboardAvailable();
         this.audioBtn.classList.toggle("room-tool-off", this.isAudioAvailable === false);
         this.controlBtn.classList.toggle("room-tool-off", this.isControlAvailable === false);
+        this.clipboardBtn.classList.toggle("room-tool-off", isClipboard === false);
         this.audioBtn.classList.toggle("active", this.settings["isAudio"] === true && this.isAudioAvailable === true);
         this.controlBtn.classList.toggle("active", this.settings["isControl"] === true && this.isControlAvailable === true);
+        this.clipboardBtn.classList.toggle("active", this.isClipboard === true && isClipboard === true);
+        this.clipboardIcon.innerText = (this.isClipboard === true ? "content_paste" : "content_paste_off");
+
+        // the tooltip of a greyed clipboard says which of the two machines is
+        // the one without one, since neither the peer nor the host can see the
+        // other's browser
+        this.clipboardTooltip.innerText = localization.get(isClipboard === false
+            ? (this.ctx["stream"].isClipboardAvailable() === false ? "room.clipboard.unsupported" : "room.clipboard.none")
+            : (this.isClipboard === true ? "room.clipboard.stop" : "room.clipboard.share"));
         this.audioTooltip.innerText = localization.get(this.isAudioAvailable === false ? "room.audio.none"
             : (this.settings["isAudio"] === true ? "room.audio.mute" : "room.audio.unmute"));
         this.controlTooltip.innerText = localization.get(this.isControlAvailable === false ? "room.control.none"
@@ -908,7 +978,7 @@ const RoomScreen = class extends Screen {
         this.buildScreenMenu();
         this.drawScreen();
         this.emit();
-        this.setAvailable(false, false);
+        this.setAvailable(false, false, false);
 
         if (this.isOpen === false) {
             return;

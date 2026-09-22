@@ -982,6 +982,58 @@ runs the host's encoder into a viewer on the settings window's own canvas, so
 the one ffmpeg line in the tree is the one a room runs, and it refuses while a
 share stands - one encoder per client.
 
+## The clipboard
+
+The bar's *clipboard* button is one switch over one idea: while it is on, the
+two machines have the same clipboard, and while it is off neither of them reads
+or writes the other's. `src/room/clipboard.js` is this machine's clipboard
+behind one interface - the Electron one under the desktop shell, and
+`navigator.clipboard` in a browser - and `stream.js` is what carries it, as two
+messages on the control channel beside the input: `{"kind": "clipboard",
+"isClipboard"}` for the switch and `{"kind": "clipboard-text", "text"}` for
+what was copied, which travels in both directions.
+
+**The switch is the peer's.** A host is a machine somebody else is driving, so
+the side that asked for the connection is the side that decides whether its
+clipboard goes over; the host has no button for it and is simply told. It
+outlives a room the way the peer's other settings do - a new host is told it in
+`startPeer` - and a host that says it has no clipboard in its `share` message,
+or a browser that hands the page none, greys the button rather than flipping
+the switch: it is a setting, not something taken, and the sound beside it
+behaves the same way.
+
+**One side watches, the other waits for a gesture.** Neither shell reports a
+copy, so a clipboard is only ever read by looking at it. The host looks every
+`CLIPBOARD_POLL`, which is what makes a copy on the shared machine land on the
+peer's clipboard a moment later. The peer does not poll at all, because
+something better says when to look: *it came back to the picture*. A
+`pointerdown` or a `focus` on the canvas, and a `focus` on the window for the
+peer that never left the canvas at all, is both the moment its clipboard could
+have changed and - in a browser - the user gesture that a first
+`readText()` has to be asked inside. So the flow the button promises is the one
+that happens: copy on this machine, click back onto the remote picture, paste
+there.
+
+**Nothing echoes.** Two watches over one text would send it back and forth for
+ever, so `clipboard.js` keeps what both ends are known to hold: a text read
+that is what was last read or last written is not news, and `put()` records the
+text *before* writing it. That one rule is also why `onCanvasActive` flushes
+before it reads - a write still in flight would otherwise be read back as
+something this machine had just copied.
+
+**Turning it on has a direction.** The host primes - it reads its clipboard and
+remembers it without sending it - and the peer sends its own straight over, so
+switching on means "this machine's clipboard, onto that one" rather than a race
+between two machines to overwrite each other with something copied hours ago.
+
+**What it will not do is said.** A text longer than `MAX_LENGTH` is not sent:
+the relay answers a `room-data` call of at most 64 KB and JSON escaping grows a
+string on the way, so the cap is on the text with room to spare, and the bar
+says so in the snackbar rather than truncating what somebody copied. A browser
+that refuses to be read is said once per switch, not once per click. A write
+the browser refuses for want of focus is not lost either - it is kept and
+written at the next gesture.
+
 ## The enhancer
 
 `src/room/stream-enhance.js` is the stage between the decoder and the drawer

@@ -15,9 +15,12 @@
 //     {"kind": "keyframe"}
 //     {"kind": "control", "isControl"}
 //     {"kind": "input", "events": [...]}          see stream-input.js
+//     {"kind": "clipboard", "isClipboard"}        the peer's switch
 // and host to peer:
-//     {"kind": "share", "width", "height", "isAudio", "isControl", "screens", "screenIndex"}
+//     {"kind": "share", "width", "height", "isAudio", "isControl", "isClipboard", "screens", "screenIndex"}
 //     {"kind": "share-end"}
+// and either way while that switch is on:
+//     {"kind": "clipboard-text", "text"}          see clipboard.js
 // `screens` is the host's displays as it lists them ({width, height,
 // isPrimary} each, in the order a screenIndex names them) - empty for a web
 // host, whose picker chose - and `screenIndex` the one the picture is of.
@@ -27,6 +30,7 @@
 import { HEADER_SIZE, FLAG_KEY, FLAG_AUDIO, FLAG_CONFIG, packFrame, packConfig, readConfig, createReassembler } from "./frame.js";
 import { buildLines, CODEC } from "./stream-ffmpeg.js";
 import { createInput } from "./stream-input.js";
+import { createClipboard } from "./clipboard.js";
 
 // what the host runs at before the peer says anything: the room bar's own
 // defaults, so the first frames are what the bar shows. No screenIndex: the
@@ -70,6 +74,13 @@ const AUDIO_JITTER = 0.06;
 // how many frames the web encoder may hold before the next is dropped rather
 // than queued
 const ENCODE_QUEUE_MAX = 2;
+
+// how often the host looks at its own clipboard while the switch is on. Neither
+// shell reports a copy, so a watch is a poll; it costs a string comparison, and
+// a paste that is a moment behind the copy is one the peer has not reached yet.
+// The peer needs none: what says it has copied something is that it came back
+// to the picture - see attach() below.
+const CLIPBOARD_POLL = 700;
 
 //
 // the peer's picture: a worker holding the decoder and the canvas
@@ -791,6 +802,16 @@ const createStream = function(ctx) {
     let settings = {...DEFAULT_SETTINGS};
     let isControlWanted = false;
 
+    // the clipboard the two machines share while the peer's switch is on: this
+    // machine's own (clipboard.js, either shell behind it), the switch as the
+    // peer holds it - kept across rooms, like the control above - and as the
+    // host was told it, which is the only thing the host has to go on. The
+    // host's watch over its own clipboard is the timer beside them.
+    const clipboard = createClipboard(ctx);
+    let isClipboardWanted = false;
+    let isClipboardOn = false;
+    let clipboardTimerId = -1;
+
     // and what it asked of its own picture: the enhancements the worker runs
     // (src/room/stream-enhance.js) - kept here, since they are this viewer's
     // and never the host's - and what the worker last said of them
@@ -821,6 +842,75 @@ const createStream = function(ctx) {
         room().send(message).catch?.(function(error) {
             console.error("Cannot send on the control channel:", error);
         });
+    };
+
+    //
+    // the shared clipboard, both ends
+    //
+    // what this machine has copied since the last asking, onto the other one.
+    // Nothing is sent for a clipboard that has not changed, so the two watches
+    // cannot echo one text back and forth between them.
+    const pushClipboard = async function() {
+        if (isClipboardOn === false || room().isConnected() === false) {
+            return;
+        }
+        const taken = await clipboard.take();
+        if (taken["error"] !== "") {
+            emit("clipboard", {"isClipboard": isClipboardOn, "error": taken["error"]});
+            return;
+        }
+        if (taken["text"] === null) {
+            return;
+        }
+        say({"kind": "clipboard-text", "text": taken["text"]});
+    };
+
+    // and what the other machine copied, onto this one. A browser that refuses
+    // the write for want of focus keeps it: the click that brings the peer back
+    // to the picture is what it was waiting for.
+    const takeClipboard = async function(text) {
+        if (isClipboardOn === false || typeof text !== "string") {
+            return;
+        }
+        const put = await clipboard.put(text);
+        if (put["error"] === "too-large") {
+            emit("clipboard", {"isClipboard": isClipboardOn, "error": "too-large"});
+        }
+    };
+
+    // the switch, wherever it was thrown. What is on the clipboard at that
+    // moment is not news on the side that did not ask: the host primes and
+    // watches, the peer sends its own over at once, so turning it on has one
+    // direction and it is the one the peer chose.
+    const setClipboardOn = async function(isOn) {
+        isClipboardOn = (isOn === true && clipboard.isAvailable() === true);
+        clearInterval(clipboardTimerId);
+        clipboardTimerId = -1;
+        clipboard.forget();
+        if (isClipboardOn === false) {
+            return;
+        }
+        if (role === "host") {
+            await clipboard.prime();
+            if (isClipboardOn === false) {
+                return;     // turned off again while the clipboard was read
+            }
+            clipboardTimerId = setInterval(pushClipboard, CLIPBOARD_POLL);
+            return;
+        }
+        pushClipboard();
+    };
+
+    // the peer is back on the picture: whatever was copied here while it was
+    // away goes over, and a write the browser would not take is tried again.
+    // The write first and the read after it, or the read would find the text
+    // the flush is in the middle of putting there and send it back as news.
+    const onCanvasActive = async function() {
+        if (role !== "peer" || isClipboardOn === false) {
+            return;
+        }
+        await clipboard.flush();
+        pushClipboard();
     };
 
     //
@@ -882,7 +972,8 @@ const createStream = function(ctx) {
             "kind": "share",
             ...hostInfo,
             "isAudio": encoder?.hasAudio?.() === true,
-            "isControl": control?.isAvailable() === true
+            "isControl": control?.isAvailable() === true,
+            "isClipboard": clipboard.isAvailable()
         };
     };
 
@@ -894,6 +985,7 @@ const createStream = function(ctx) {
         seq = 0;
         videoConfig = null;
         audioConfig = null;
+        setClipboardOn(false);      // the peer is the side that has the switch
         const desktop = ctx["desktop"];
         encoder = (desktop.isAvailable === true ? createDesktopEncoder(ctx) : createWebEncoder());
         // every start of the encoder - the first and each restart - says what
@@ -1036,6 +1128,12 @@ const createStream = function(ctx) {
             say({"kind": "control", "isControl": true});
             input?.enable();
         }
+        // the switch is the peer's and outlives a room: a new host is told it
+        // the way the bar would, and what is on this clipboard goes over
+        if (isClipboardWanted === true) {
+            say({"kind": "clipboard", "isClipboard": true});
+            setClipboardOn(true);
+        }
         startStats();
         emit("started", {"role": role});
     };
@@ -1074,6 +1172,7 @@ const createStream = function(ctx) {
         role = "";
         clearInterval(statsTimerId);
         statsTimerId = -1;
+        setClipboardOn(false);
 
         if (was === "host" || was === "preview") {
             const running = encoder;
@@ -1164,6 +1263,12 @@ const createStream = function(ctx) {
                 case "input":
                     control?.apply(message["events"]);
                     break;
+                case "clipboard":
+                    setClipboardOn(message["isClipboard"] === true);
+                    break;
+                case "clipboard-text":
+                    takeClipboard(message["text"]);
+                    break;
             }
             return;
         }
@@ -1178,6 +1283,9 @@ const createStream = function(ctx) {
                     viewer?.reset();
                     audioPlayer?.reset();
                     emit("share", null);
+                    break;
+                case "clipboard-text":
+                    takeClipboard(message["text"]);
                     break;
             }
         }
@@ -1202,6 +1310,16 @@ const createStream = function(ctx) {
             }, function(delay) {
                 emit("hold", {"delay": delay});
             });
+            // coming back to the picture is what says this machine may have
+            // copied something - a browser will not read its clipboard
+            // without a gesture either, and this is the one
+            canvas.addEventListener("pointerdown", onCanvasActive);
+            canvas.addEventListener("focus", onCanvasActive);
+            // and the window coming back, for the peer that never left the
+            // picture at all - it switched to another application, copied
+            // something there and came back to this window with the canvas
+            // still holding the focus it had
+            window.addEventListener("focus", onCanvasActive);
         },
 
         // what the bar asked for. Sent when there is a host to send it to, and
@@ -1232,6 +1350,22 @@ const createStream = function(ctx) {
         },
         "getEnhance": function() {
             return {...enhanceState, "wanted": {...enhanceWanted}};
+        },
+
+        // the clipboard the two machines share: the host told, and this one
+        // read or written from here on. It is the peer's switch alone - a host
+        // shares the clipboard of the machine somebody else is driving, so the
+        // side that asked is the side that decides.
+        "setClipboard": function(isClipboard) {
+            isClipboardWanted = (isClipboard === true);
+            if (role !== "peer") {
+                return;
+            }
+            say({"kind": "clipboard", "isClipboard": isClipboardWanted});
+            setClipboardOn(isClipboardWanted);
+        },
+        "isClipboardAvailable": function() {
+            return clipboard.isAvailable();
         },
 
         // the keyboard and the mouse: taken on the peer, and the host told
