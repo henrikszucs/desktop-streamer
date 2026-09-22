@@ -12,7 +12,7 @@ import https from "node:https";
 // first-party dependencies 
 import { getMIMEType } from "./mime.js";
 import { binarySearch } from "./common.js";
-import { getPublicAddress } from "./config.js";
+import { getPublicAddress, getPublicRedirect } from "./config.js";
 
 // the folders holding the client assets, everything else is an SPA route
 const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
@@ -498,7 +498,17 @@ const ServerHTTP = class {
         if (typeof conf["http"]["redirect"] !== "undefined") {
             this.httpRedirect = http.createServer(this.httpRedirectHandler);
             await this.listen(this.httpRedirect, conf["http"]["redirect"]);
-            process.stdout.write("    Redirect: http://" + conf["http"]["domain"] + (conf["http"]["redirect"] !== 80 ? ":" + conf["http"]["redirect"] : "") + "\n");
+
+            // the plaintext address from outside, which a proxy only knows
+            // when it was given one - the socket is named either way
+            const redirect = getPublicRedirect(conf);
+            if (redirect !== null) {
+                process.stdout.write("    Redirect: http://" + redirect["domain"] + (redirect["port"] !== 80 ? ":" + redirect["port"] : "") + "\n");
+            }
+            if (redirect === null || typeof conf["http"]["proxy"] === "object") {
+                const label = redirect === null ? "Redirect: " : "Listening: ";
+                process.stdout.write("    " + label + "http://" + this.httpDomain + (conf["http"]["redirect"] !== 80 ? ":" + conf["http"]["redirect"] : "") + "\n");
+            }
         }
         process.stdout.write("done\n");
     };

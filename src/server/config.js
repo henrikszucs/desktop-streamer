@@ -76,7 +76,23 @@ const httpSchema = {
         // proxy stands in front of it - what a client is told, and what a
         // redirect points at, instead of the domain and port it listens on
         "proxy": {
-            "$ref": "#/definitions/address"
+            "type": "object",
+            "required": ["domain", "port"],
+            "additionalProperties": false,
+            "properties": {
+                "domain": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                },
+                // (optional) the plaintext port of the proxy, the one in front
+                // of "redirect" below - it only says where that redirect is
+                // reached, so it needs a "redirect" to stand in front of
+                "redirect": {
+                    "$ref": "#/definitions/port"
+                }
+            }
         },
         // (optional) HTTP port that redirects to HTTPS
         "redirect": {
@@ -407,6 +423,30 @@ const getPublicWsAddress = (config) => {
     };
 };
 
+// where the HTTP redirect is reached from outside, null when nothing says: a
+// proxy hides the port the redirect listens on, and a port it was not given is
+// not one to guess
+const getPublicRedirect = (config) => {
+    const http = config["http"];
+    if (typeof http !== "object" || http === null || typeof http["redirect"] !== "number") {
+        return null;
+    }
+    const proxy = http["proxy"];
+    if (typeof proxy === "object") {
+        if (typeof proxy["redirect"] !== "number") {
+            return null;
+        }
+        return {
+            "domain": proxy["domain"],
+            "port": proxy["redirect"]
+        };
+    }
+    return {
+        "domain": http["domain"],
+        "port": http["redirect"]
+    };
+};
+
 // check the constraints that the schema cannot express
 const checkConstraints = (config) => {
     const http = config["http"];
@@ -430,6 +470,14 @@ const checkConstraints = (config) => {
                 return ports[j][0] + " cannot be the same as the " + ports[i][0] + ": " + ports[i][1];
             }
         }
+    }
+
+    // the proxy redirect port is the address of the redirect server, so it
+    // says nothing on its own - a configuration carrying one without the
+    // redirect it names is a mistake rather than a port to open
+    if (typeof http === "object" && typeof http["proxy"] === "object"
+        && typeof http["proxy"]["redirect"] === "number" && typeof http["redirect"] !== "number") {
+        return "HTTP proxy redirect port is configured without an HTTP redirect port!";
     }
 
     // check HTTP and WS server constraints
@@ -517,5 +565,5 @@ const loadConfig = async (confPath) => {
     return config;
 };
 
-export { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress };
-export default { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress };
+export { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress, getPublicRedirect };
+export default { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress, getPublicRedirect };

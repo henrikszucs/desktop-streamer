@@ -11,7 +11,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { checkConfig, loadConfig, getPublicAddress, getPublicWsAddress } from "../src/server/config.js";
+import { checkConfig, loadConfig, getPublicAddress, getPublicWsAddress, getPublicRedirect } from "../src/server/config.js";
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 
@@ -371,4 +371,54 @@ test("getPublicWsAddress answers the remote server, which is client-facing alrea
     http["proxy"] = {"domain": "botto.hu", "port": 443};
     http["remote"] = {"host": "ws.example.com", "port": 444};
     assert.deepEqual(getPublicWsAddress({"http": http}), {"domain": "ws.example.com", "port": 444});
+});
+
+test("loadConfig accepts a redirect port on the http proxy", async (t) => {
+    const http = httpSection();
+    http["redirect"] = 8080;
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    const conf = await writeConf(t, {"http": http, "ws": wsSection()});
+    const config = await loadConfig(conf["path"]);
+    assert.equal(config["http"]["proxy"]["redirect"], 80);
+});
+
+test("loadConfig rejects a proxy redirect port with no redirect to stand in front of", async (t) => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    assert.match(
+        await loadError(t, {"http": http, "ws": wsSection()}),
+        /HTTP proxy redirect port is configured without an HTTP redirect port/
+    );
+});
+
+test("the ws proxy takes no redirect port, it redirects nothing", async () => {
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    assert.equal(checkConfig({"ws": ws})["valid"], false);
+});
+
+test("getPublicRedirect answers the configured redirect when nothing proxies it", () => {
+    const http = httpSection();
+    http["redirect"] = 8080;
+    assert.deepEqual(getPublicRedirect({"http": http}), {"domain": "localhost", "port": 8080});
+});
+
+test("getPublicRedirect answers the proxy port on the proxy domain", () => {
+    const http = httpSection();
+    http["redirect"] = 8080;
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    assert.deepEqual(getPublicRedirect({"http": http}), {"domain": "botto.hu", "port": 80});
+});
+
+test("getPublicRedirect answers null where the outside address is unknown", () => {
+    // a proxy that was given no redirect port hides the one the socket is on,
+    // and a port nobody named is not one to guess
+    const http = httpSection();
+    http["redirect"] = 8080;
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    assert.equal(getPublicRedirect({"http": http}), null);
+
+    // and there is no redirect at all to have an address
+    assert.equal(getPublicRedirect({"http": httpSection()}), null);
+    assert.equal(getPublicRedirect({"ws": wsSection()}), null);
 });

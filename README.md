@@ -77,8 +77,10 @@ servers may share a port only when it is `http.port`.
         "cert": "server.crt",           //private cert path
         "proxy": {                      //(optional) the address the clients reach this server at, when a proxy
             "domain": "botto.hu",       //  stands in front of it. The server still listens on "domain"/"port"
-            "port": 443                 //  above; this is what is built into the clients and what a redirect
-        },                              //  points at, so delete it when nothing proxies the server.
+            "port": 443,                //  above; this is what is built into the clients and what a redirect
+            "redirect": 80              //  points at, so delete it when nothing proxies the server.
+        },                              //  "redirect" is the plaintext port of the proxy, in front of the
+                                        //  "redirect" below - drop it when the proxy carries no plaintext port.
         "redirect": 80,                 //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
         "cache": {                      //(optional) cache HTTP server data into memory (delete to load directly from disk)
             "size": 524288000,          //max cache size in bytes
@@ -161,6 +163,14 @@ clients (`index.json`), the one the HTTPS redirect sends a plaintext request
 to, and the one the account mail names the server by. The boot prints both, the
 proxy address as `Available` and the socket as `Listening`.
 
+`http.proxy.redirect` is the same thing for the plaintext side: `http.redirect`
+stays the port the redirect server binds to, and `proxy.redirect` is the port
+the proxy answers on in front of it. It only names that address — the redirect
+itself already answers with the public HTTPS one — so it is refused without an
+`http.redirect` to stand in front of, and left out the boot reports the bound
+port as before rather than guessing a public one. The `ws` proxy takes no
+`redirect`; there is nothing to redirect on a socket.
+
 A `ws` section without a `proxy` of its own is still pointed at the `http`
 host, as before — and at the whole `http` address when the two share a port,
 since that is one listener behind the proxy. Give `ws.proxy` its own value
@@ -170,8 +180,17 @@ whenever the proxy reaches the two servers at different addresses.
 "http": {
     "domain": "localhost",
     "port": 8443,
-    "proxy": {"domain": "botto.hu", "port": 443}
+    "redirect": 8080,
+    "proxy": {"domain": "botto.hu", "port": 443, "redirect": 80}
 }
+```
+
+```
+Starting HTTP server...
+    Available: https://botto.hu
+    Listening: https://localhost:8443
+    Redirect: http://botto.hu
+    Listening: http://localhost:8080
 ```
 
 > [!NOTE]
