@@ -9,6 +9,7 @@
 
 // first-party dependencies
 import { Screen } from "../../src/view.js";
+import { pictureBox } from "../../src/room/stream-input.js";
 
 // what the peer allows the stream to cost, in Mbps. Steps rather than a slider:
 // these are the numbers the resolutions below are priced against, so every step
@@ -84,6 +85,7 @@ const RoomScreen = class extends Screen {
     // the stage and the bar over it, all taken in mount()
     canvas = null;
     stage = null;
+    cursorEl = null;
     exitRing = null;
     bar = null;
     relayBtn = null;
@@ -167,12 +169,23 @@ const RoomScreen = class extends Screen {
     isClipboard = false;
     isClipboardSaid = false;
 
+    // the host's mouse pointer, drawn over the picture rather than sent inside
+    // it - see drawCursor() below. `picture` is what the decoder is producing,
+    // which is what says where the letterboxed picture is inside the stage;
+    // `cursorAt` is where the pointer is in it, 0..1 both ways, as the host
+    // said or as this machine's own pointer puts it while it is driving.
+    picture = null;
+    cursorShape = null;
+    cursorAt = null;
+    cursorObserver = null;
+
     // the exit ring's clock, while a shortcut is held
     holdFrameId = -1;
 
     async mount(ctx) {
         this.canvas = document.getElementById("room-canvas");
         this.stage = document.getElementById("room-stage");
+        this.cursorEl = document.getElementById("room-cursor");
         this.exitRing = document.getElementById("room-exit-ring");
         this.statsEl = document.getElementById("room-stats");
         this.statsRateEl = document.getElementById("room-stats-rate");
@@ -260,6 +273,17 @@ const RoomScreen = class extends Screen {
         ctx["stream"].addEventListener("share", this.onStreamShare);
         ctx["stream"].addEventListener("clipboard", this.onStreamClipboard);
         ctx["stream"].addEventListener("hold", this.onStreamHold);
+
+        // the host's pointer - the picture of it and where it is. The stage
+        // changing shape - a window resized, the fullscreen taken - moves the
+        // picture under it, so the box it is placed in is measured again
+        // rather than remembered.
+        ctx["stream"].addEventListener("cursor", this.onStreamCursor);
+        ctx["stream"].addEventListener("size", this.onStreamSize);
+        this.cursorObserver = new ResizeObserver(() => {
+            this.drawCursor();
+        });
+        this.cursorObserver.observe(this.stage);
 
         this.buildBandwidthMenu();
         this.buildResolutionMenu();
@@ -487,6 +511,7 @@ const RoomScreen = class extends Screen {
         this.controlTooltip.innerText = localization.get(isControl === true ? "room.control.release" : "room.control.take");
         this.el.classList.toggle("room-controlling", isControl === true);
         this.ctx["stream"].setControl(isControl === true);
+        this.drawCursor();
         this.emit();
     };
 
@@ -568,6 +593,12 @@ const RoomScreen = class extends Screen {
         const info = event.detail;
         this.screens = (Array.isArray(info?.["screens"]) ? info["screens"] : []);
         this.screenIndex = (Number.isInteger(info?.["screenIndex"]) ? info["screenIndex"] : undefined);
+        // the host says what it is encoding before a frame of it has arrived,
+        // which is a box to place the pointer in until the decoder says what
+        // it is really drawing (onStreamSize above)
+        if (info?.["width"] > 0 && info?.["height"] > 0) {
+            this.picture = {"width": info["width"], "height": info["height"]};
+        }
         this.buildScreenMenu();
         this.drawScreen();
         this.setAvailable(info?.["isAudio"] === true, info?.["isControl"] === true, info?.["isClipboard"] === true);
@@ -620,6 +651,87 @@ const RoomScreen = class extends Screen {
             : (this.settings["isAudio"] === true ? "room.audio.mute" : "room.audio.unmute"));
         this.controlTooltip.innerText = localization.get(this.isControlAvailable === false ? "room.control.none"
             : (this.settings["isControl"] === true ? "room.control.release" : "room.control.take"));
+    };
+
+    //
+    // the host's pointer
+    //
+    // The picture arrives with no cursor drawn into it: the host reads its own
+    // pointer and sends the shape and the position as messages
+    // (src/room/cursor.js). Which of the two this screen uses depends on whose
+    // hand the pointer is in.
+    //
+    // While this peer is driving, the pointer over the picture *is* the host's
+    // pointer, so the shape is handed to the browser as the canvas's own
+    // cursor and the browser draws it - no image to place, no position to
+    // wait for, and nothing between the hand and what it sees. While this peer
+    // is only watching, the host's pointer is somewhere this machine has no
+    // way of knowing, so the image is drawn over the picture where the host
+    // last said it was.
+    onStreamCursor = (event) => {
+        this.cursorShape = event.detail?.["shape"] ?? null;
+        this.cursorAt = event.detail?.["at"] ?? null;
+        this.drawCursor();
+    };
+
+    // what the decoder is drawing, which is what the letterbox is measured
+    // from - the canvas element cannot be asked, since its surface belongs to
+    // the worker from the moment it is handed over
+    onStreamSize = (event) => {
+        const width = event.detail?.["width"];
+        const height = event.detail?.["height"];
+        if (width > 0 && height > 0) {
+            this.picture = {"width": width, "height": height};
+        }
+        this.drawCursor();
+    };
+
+    // the shape as this browser's own cursor over the picture: the hotspot is
+    // in the shape's own pixels, which is why the host sends that size beside
+    // the fractions. A shape the browser will not take - Chromium ignores a
+    // cursor image over 128 pixels - falls through to the `auto` behind it
+    // rather than leaving the pointer invisible.
+    drawCursorStyle(shape) {
+        const isDriving = (this.settings["isControl"] === true && shape !== null && this.isOpen === true);
+        if (isDriving === false) {
+            this.canvas.style.cursor = "";
+            return;
+        }
+        const x = Math.round(shape["hotspotX"] * (shape["imageWidth"] || 0));
+        const y = Math.round(shape["hotspotY"] * (shape["imageHeight"] || 0));
+        this.canvas.style.cursor = "url(\"" + shape["image"] + "\") " + x + " " + y + ", auto";
+    };
+
+    // and over the picture, for a peer that is watching rather than driving:
+    // the shape's size and its hotspot arrive as fractions - of the shared
+    // display and of the shape - so a pointer covering a button on the host
+    // covers the same button here, whatever this window is doing with the
+    // picture. Nothing is drawn while there is no shape, no position, or no
+    // picture under either.
+    drawCursor() {
+        const shape = this.cursorShape;
+        const at = this.cursorAt;
+        this.drawCursorStyle(shape);
+
+        const isOver = (this.settings["isControl"] === true);
+        const box = (shape === null || at === null || isOver === true
+            ? undefined
+            : pictureBox(this.canvas, this.picture));
+        if (typeof box === "undefined" || this.isOpen === false) {
+            this.cursorEl.classList.add("hide");
+            return;
+        }
+        const width = Math.max(1, shape["width"] * box["width"]);
+        const height = Math.max(1, shape["height"] * box["height"]);
+        const left = box["left"] + at["x"] * box["width"] - shape["hotspotX"] * width;
+        const top = box["top"] + at["y"] * box["height"] - shape["hotspotY"] * height;
+        if (this.cursorEl.getAttribute("src") !== shape["image"]) {
+            this.cursorEl.setAttribute("src", shape["image"]);
+        }
+        this.cursorEl.style.inlineSize = width + "px";
+        this.cursorEl.style.blockSize = height + "px";
+        this.cursorEl.style.translate = Math.round(left) + "px " + Math.round(top) + "px";
+        this.cursorEl.classList.remove("hide");
     };
 
     // the exit shortcut being held: the ring fills over the delay, and goes
@@ -1110,6 +1222,7 @@ const RoomScreen = class extends Screen {
         const joinId = params?.["path"]?.[0];
         const isEntered = (params?.["isConnecting"] === true || (typeof joinId === "string" && joinId !== ""));
         this.drawRelay(this.ctx["room"].isRelay());
+        this.drawCursor();
         this.setConnecting(isEntered === true && this.ctx["room"].isConnected() === false);
     };
     close() {
@@ -1120,6 +1233,7 @@ const RoomScreen = class extends Screen {
             this.setControl(false);
         }
         this.onStreamHold({"detail": {"delay": null}});
+        this.drawCursor();
         this.setConnecting(false);
         // the guard belongs to being in the room, not to the way it was left:
         // the router closes this screen for a navigation, a dropped connection

@@ -18,8 +18,15 @@
         while the exit shortcut is held, so a five second hold under the
         desktop shell reads as a wait and not as a key that does nothing.
     -->
+    <!--
+        It also carries the host's own mouse pointer: the picture arrives with
+        no cursor in it, and the one over the canvas here is an image the host
+        sent once and this machine moves - so it is drawn at this screen's rate
+        and not at the stream's. See ./index.js and src/room/cursor.js.
+    -->
     <div id="room-stage">
         <canvas id="room-canvas" tabindex="0"></canvas>
+        <img class="room-cursor hide" id="room-cursor" alt="" draggable="false">
         <div class="room-exit-ring hide" id="room-exit-ring"></div>
     </div>
 

@@ -19,6 +19,8 @@
 // and host to peer:
 //     {"kind": "share", "width", "height", "isAudio", "isControl", "isClipboard", "screens", "screenIndex"}
 //     {"kind": "share-end"}
+//     {"kind": "cursor", "image", "width", "height", "hotspotX", "hotspotY", "imageWidth", "imageHeight"}
+//     {"kind": "cursor-move", "x": 0..1, "y": 0..1}
 // and either way while that switch is on:
 //     {"kind": "clipboard-text", "text"}          see clipboard.js
 // `screens` is the host's displays as it lists them ({width, height,
@@ -30,6 +32,7 @@
 import { HEADER_SIZE, FLAG_KEY, FLAG_AUDIO, FLAG_CONFIG, packFrame, packConfig, readConfig, createReassembler } from "./frame.js";
 import { buildLines, CODEC } from "./stream-ffmpeg.js";
 import { createInput } from "./stream-input.js";
+import { cursorFingerprint, packCursor } from "./cursor.js";
 import { createClipboard } from "./clipboard.js";
 
 // what the host runs at before the peer says anything: the room bar's own
@@ -81,6 +84,19 @@ const ENCODE_QUEUE_MAX = 2;
 // The peer needs none: what says it has copied something is that it came back
 // to the picture - see attach() below.
 const CLIPBOARD_POLL = 700;
+
+// how often the host looks at its own pointer: thirty times a second, the rate
+// the picture beside it moves at. Both questions are asked on the same tick and
+// both are answered *here* rather than on the wire - the shape is fingerprinted
+// and only one the peer has not been given is packed and sent, the position
+// only when it has moved - so a pointer sitting still costs nothing at all
+// beyond the looking. The looking is not free: reading the shape is ~1.5 ms in
+// the addon against ~1 us for the position, so about a twentieth of one core at
+// this rate, which is what the fingerprint in front of the encoder is worth.
+// How many shapes are kept packed beside them - one screenful of an
+// application is a handful.
+const CURSOR_POLL = 1000 / 30;
+const CURSOR_SHAPES = 32;
 
 //
 // the peer's picture: a worker holding the decoder and the canvas
@@ -243,6 +259,13 @@ const createAudioPlayer = function() {
     };
 };
 
+// whether this host can hand its own pointer over as a picture of its own
+// (src/room/cursor.js), which is what decides whether the capture has to draw
+// it into the video instead
+const isCursorSupported = function(ctx) {
+    return typeof ctx["desktop"]?.["Control"]?.["Mouse"]?.["getIcon"] === "function";
+};
+
 //
 // the desktop host's encoder: ffmpeg, the first line that works
 //
@@ -319,7 +342,8 @@ const createDesktopEncoder = function(ctx) {
         const built = buildLines(desktop["os"].platform(), screen, {
             "bitrate": settings["bandwidth"] * 1000000 * VIDEO_SHARE,
             "height": settings["height"],
-            "framerate": settings["framerate"]
+            "framerate": settings["framerate"],
+            "isCursor": (isCursorSupported(ctx) === false)
         });
 
         let started = null;
@@ -780,6 +804,157 @@ const createControl = function(ctx) {
 };
 
 //
+// the host's own pointer
+//
+// The desktop host keeps the cursor out of the picture it encodes and sends it
+// as a picture of its own instead - see src/room/cursor.js. This is the watch
+// over it, one tick for both halves: the shape whenever it changes and the
+// position whenever it moves, and nothing at all for either while neither does.
+// What decides that is read on this machine - the shape against the
+// fingerprint of the one the peer was last given, the position against the one
+// it was last told - so the pointer is looked at thirty times a second and the
+// line only hears about it when there is something to hear. Neither is sent
+// while the peer is driving, because the peer's own pointer is then where the
+// host's is and sending it from here would only be sending it late. A shape is
+// packed once and kept, since a session crosses the same handful over and over
+// and packing one costs more than reading ten.
+//
+const createCursorWatch = function(ctx, say) {
+    const mouse = ctx["desktop"]?.["Control"]?.["Mouse"];
+    const platform = ctx["desktop"]?.["os"]?.platform?.() ?? "";
+    const packed = new Map();       // fingerprint -> the message body
+    let screen = null;              // the display being shared, or none while stopped
+    let pollTimerId = -1;
+    let startedAt = 0;              // what the tick keeps its rate against
+    let shape = "";                 // the fingerprint the peer was last given
+    let position = "";              // and the position, as it was last said
+    let isControlled = false;
+    let isPacking = false;
+
+    // the shape, if it is one the peer has not been given. The fingerprint is
+    // what answers that, and it costs a thousandth of the reading in front of
+    // it - so the question is asked on every tick and the answer is almost
+    // always no.
+    const readShape = async function() {
+        if (isPacking === true || screen === null) {
+            return;
+        }
+        let icon = null;
+        try {
+            icon = mouse.getIcon();
+        } catch (error) {
+            return;     // the addon is gone with the shell
+        }
+        const fingerprint = cursorFingerprint(icon);
+        if (fingerprint === shape) {
+            return;
+        }
+        let body = packed.get(fingerprint);
+        if (typeof body === "undefined") {
+            isPacking = true;
+            try {
+                body = await packCursor(icon, screen, platform);
+            } catch (error) {
+                console.error("Cannot pack the pointer:", error);
+                return;
+            } finally {
+                isPacking = false;
+            }
+            packed.set(fingerprint, body);
+            if (packed.size > CURSOR_SHAPES) {
+                packed.delete(packed.keys().next().value);
+            }
+        }
+        if (screen === null) {
+            return;     // stopped while the picture was being made
+        }
+        shape = fingerprint;
+        say({"kind": "cursor", ...body});
+    };
+
+    // where the pointer is in the display being shared, the way the peer's own
+    // events arrive - 0..1 both ways - and nothing at all when it has walked
+    // onto one of the host's other displays, which is a pointer the peer is
+    // not being shown rather than one at the edge of the picture
+    const readPosition = function() {
+        if (screen === null || isControlled === true) {
+            return;
+        }
+        let x = 0;
+        let y = 0;
+        try {
+            x = (mouse.getX() - screen["x"]) / screen["width"];
+            y = (mouse.getY() - screen["y"]) / screen["height"];
+        } catch (error) {
+            return;
+        }
+        const isOn = (x >= 0 && x <= 1 && y >= 0 && y <= 1);
+        const message = (isOn === true
+            ? {"kind": "cursor-move", "x": Math.round(x * 10000) / 10000, "y": Math.round(y * 10000) / 10000}
+            : {"kind": "cursor-move", "x": null, "y": null});
+        const said = message["x"] + "," + message["y"];
+        if (said === position) {
+            return;
+        }
+        position = said;
+        say(message);
+    };
+
+    // one tick, both halves. The position goes first: it is the cheap one and
+    // it must not wait behind a shape being packed.
+    //
+    // The next one is scheduled against the clock the run started on rather
+    // than against this one, so the work inside a tick is not added to the gap
+    // after it - an interval of the same length would drift to 25 a second on
+    // a read that takes a millisecond and a half, and the rate is meant to be
+    // the picture's.
+    const tick = function() {
+        readPosition();
+        readShape().catch(function(error) {
+            console.error("Cannot read the pointer:", error);
+        });
+        if (screen === null) {
+            return;     // stopped inside the tick
+        }
+        const elapsed = performance.now() - startedAt;
+        pollTimerId = setTimeout(tick, CURSOR_POLL - (elapsed % CURSOR_POLL));
+    };
+
+    return {
+        "isAvailable": function() {
+            return typeof mouse?.["getIcon"] === "function";
+        },
+        "start": function(sharedScreen) {
+            this.stop();
+            if (this.isAvailable() === false) {
+                return;
+            }
+            // the sizes the peer is told are fractions of this display, so a
+            // share that moved to another one is a shape worth encoding again
+            packed.clear();
+            screen = sharedScreen;
+            startedAt = performance.now();
+            pollTimerId = setTimeout(tick, CURSOR_POLL);
+        },
+        // the peer driving is the peer drawing its own pointer, so there is
+        // nothing to send until it lets go - and then at once, wherever the
+        // pointer was left
+        "setControlled": function(isOn) {
+            isControlled = (isOn === true);
+            position = "";
+        },
+        "stop": function() {
+            clearTimeout(pollTimerId);
+            pollTimerId = -1;
+            screen = null;
+            shape = "";
+            position = "";
+            isControlled = false;
+        }
+    };
+};
+
+//
 // the module
 //
 const createStream = function(ctx) {
@@ -792,6 +967,7 @@ const createStream = function(ctx) {
     let role = "";                  // "" | host | peer | preview
     let encoder = null;             // the host's
     let control = null;             // the host's hands
+    let cursorWatch = null;         // and the watch over its own pointer
     let seq = 0;
     let videoConfig = null;
     let audioConfig = null;
@@ -826,6 +1002,15 @@ const createStream = function(ctx) {
     let input = null;
     let reassembler = null;
     let hostInfo = null;            // the host's "share" message, when it came
+    let picture = null;             // the size the decoder is drawing at
+
+    // the host's pointer as the peer was last told it: the shape it is drawing
+    // (src/room/cursor.js), and where in the picture it is. The room screen is
+    // what draws it over the canvas, so the two travel out together and it
+    // decides - while the peer is driving, the pointer under its own hand is
+    // the newer of the two.
+    let cursorShape = null;
+    let cursorAt = null;
 
     // counted between two stats events
     let sentBytes = 0;
@@ -842,6 +1027,17 @@ const createStream = function(ctx) {
         room().send(message).catch?.(function(error) {
             console.error("Cannot send on the control channel:", error);
         });
+    };
+
+    // the host's pointer, on its way to the screen that draws it
+    const emitCursor = function() {
+        emit("cursor", {"shape": cursorShape, "at": cursorAt});
+    };
+
+    const forgetCursor = function() {
+        cursorShape = null;
+        cursorAt = null;
+        emitCursor();
     };
 
     //
@@ -1002,6 +1198,9 @@ const createStream = function(ctx) {
             };
             if (desktop.isAvailable === true && typeof encoder?.screen !== "undefined") {
                 control?.start(encoder.screen);
+                // the pointer is read in that display's own coordinates too,
+                // and its picture is measured against it
+                cursorWatch?.start(encoder.screen);
             }
             if (room().isConnected() === true) {
                 say(shareMessage());
@@ -1019,6 +1218,7 @@ const createStream = function(ctx) {
         };
 
         control = createControl(ctx);
+        cursorWatch = createCursorWatch(ctx, say);
         try {
             await encoder.start(settings);
             if (role !== "host") {
@@ -1088,7 +1288,9 @@ const createStream = function(ctx) {
                 askKeyframe();
                 break;
             case "size":
-                emit("size", {"width": message["width"], "height": message["height"]});
+                picture = {"width": message["width"], "height": message["height"]};
+                input?.setPicture(picture);
+                emit("size", {...picture});
                 break;
             case "stats":
                 workerStats = message;
@@ -1118,6 +1320,7 @@ const createStream = function(ctx) {
         }
         role = "peer";
         hostInfo = null;
+        forgetCursor();
         reassembler = createReassembler(onFrame, onDrop);
         if (audioPlayer === null) {
             audioPlayer = createAudioPlayer();
@@ -1179,6 +1382,8 @@ const createStream = function(ctx) {
             encoder = null;
             control?.stop();
             control = null;
+            cursorWatch?.stop();
+            cursorWatch = null;
             if (running !== null) {
                 running.onChunk = function() {};
                 running.onAudioChunk = function() {};
@@ -1197,8 +1402,11 @@ const createStream = function(ctx) {
         if (was === "peer") {
             input?.release();
             reassembler = null;
+            picture = null;
+            input?.setPicture(null);
             viewer?.reset();
             audioPlayer?.reset();
+            forgetCursor();
         }
         videoConfig = null;
         audioConfig = null;
@@ -1259,6 +1467,7 @@ const createStream = function(ctx) {
                     if (message["isControl"] !== true) {
                         control?.release();
                     }
+                    cursorWatch?.setControlled(message["isControl"] === true);
                     break;
                 case "input":
                     control?.apply(message["events"]);
@@ -1282,7 +1491,28 @@ const createStream = function(ctx) {
                     hostInfo = null;
                     viewer?.reset();
                     audioPlayer?.reset();
+                    forgetCursor();
                     emit("share", null);
+                    break;
+                case "cursor":
+                    // a host that is showing no pointer at all - a game that
+                    // hid it - says so with an empty picture
+                    cursorShape = (typeof message["image"] === "string" ? {
+                        "image": message["image"],
+                        "width": Number(message["width"]) || 0,
+                        "height": Number(message["height"]) || 0,
+                        "hotspotX": Number(message["hotspotX"]) || 0,
+                        "hotspotY": Number(message["hotspotY"]) || 0,
+                        "imageWidth": Number(message["imageWidth"]) || 0,
+                        "imageHeight": Number(message["imageHeight"]) || 0
+                    } : null);
+                    emitCursor();
+                    break;
+                case "cursor-move":
+                    cursorAt = (Number.isFinite(message["x"]) === true && Number.isFinite(message["y"]) === true
+                        ? {"x": message["x"], "y": message["y"]}
+                        : null);
+                    emitCursor();
                     break;
                 case "clipboard-text":
                     takeClipboard(message["text"]);
@@ -1310,6 +1540,7 @@ const createStream = function(ctx) {
             }, function(delay) {
                 emit("hold", {"delay": delay});
             });
+            input.setPicture(picture);
             // coming back to the picture is what says this machine may have
             // copied something - a browser will not read its clipboard
             // without a gesture either, and this is the one

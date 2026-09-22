@@ -51,6 +51,25 @@ test("every line has no B frames, a keyframe every second and the bitrate asked 
     }
 });
 
+test("the capture draws no pointer, unless the host cannot send one itself", () => {
+    // the host reads its own cursor and sends it as a picture of its own
+    // (src/room/cursor.js), so a pointer inside the video would be a second
+    // one, a frame late. The flag is only on where that is not possible.
+    const has = function(platform, settings) {
+        return buildLines(platform, SCREEN, settings)["lines"].map(function(line) {
+            const params = line["params"];
+            return (valueOf(params, "-capture_cursor") ?? valueOf(params, "-draw_mouse")
+                ?? String(params.join(" ").includes("capture_cursor=true")));
+        });
+    };
+    assert.deepEqual(has("win32", SETTINGS), ["false", "false", "false"]);
+    assert.deepEqual(has("darwin", SETTINGS), ["0", "0"]);
+    assert.deepEqual(has("linux", SETTINGS), ["0"]);
+    assert.deepEqual(has("win32", {...SETTINGS, "isCursor": true}), ["true", "true", "true"]);
+    assert.deepEqual(has("darwin", {...SETTINGS, "isCursor": true}), ["1", "1"]);
+    assert.deepEqual(has("linux", {...SETTINGS, "isCursor": true}), ["1"]);
+});
+
 test("the lines are tried hardware first and end in the one that always exists", () => {
     const names = function(platform) {
         return buildLines(platform, SCREEN, SETTINGS)["lines"].map(function(line) {

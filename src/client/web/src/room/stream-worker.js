@@ -249,6 +249,12 @@ const onReset = function() {
     enhancer?.reset();
     config = null;
     configKey = "";
+    // the picture is gone, so the next one is news whatever its size: what is
+    // drawn is what the peer's clicks and the host's pointer are mapped
+    // against (pictureBox in ../room/stream-input.js), and a stream that comes
+    // back the same size as the last one still has to say so
+    lastWidth = 0;
+    lastHeight = 0;
     isWaitingKey = true;
     isKeyAsked = false;
 };

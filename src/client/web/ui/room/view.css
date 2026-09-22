@@ -58,6 +58,22 @@
     background-color: #000;
 }
 
+/* the host's mouse pointer over the picture. It is placed and sized in
+   ./index.js from the letterboxed picture's own rectangle, in the fractions
+   the host sent: the picture it is drawn on is the picture the host drew it
+   on, so a pointer covering a button there covers the same button here.
+   translate rather than inset, so moving it is the compositor's work and not
+   the layout's. */
+.room-cursor {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    translate: 0 0;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
 /* the ring over the picture while the exit shortcut is held: a conic fill
    from --p (0..100), since beercss's circle progress only ever spins */
 .room-exit-ring {
@@ -101,8 +117,15 @@
     border-color: var(--outline-variant);
 }
 
-/* while the keyboard and the mouse are the host's, the pointer over the
-   picture is the host's too */
+/* While the keyboard and the mouse are the host's, the pointer over the
+   picture is the host's too.
+ *
+ * A host that sends its own pointer (src/room/cursor.js) overrides this from
+ * ./index.js with the shape itself - `cursor: url(...) x y, auto`, so the
+ * browser draws the host's pointer with no image of ours to place and no
+ * position to wait for. This rule is what is left for a host that sends none:
+ * a browser sharing through getDisplayMedia draws its cursor into the picture,
+ * and a second one over it would be two pointers. */
 .room-layout.room-controlling > :nth-child(1) > canvas {
     cursor: none;
 }

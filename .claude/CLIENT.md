@@ -977,6 +977,92 @@ the pointer, so its release is the canvas's wherever it happens - over the
 bar, outside the window - and a blur or a cancelled pointer lifts every button
 the way it lifts every key.
 
+**The pointer is the peer's to draw.** The desktop host tells its capture *not*
+to draw the cursor into the picture (`isCursor` in `stream-ffmpeg.js` -
+`capture_cursor`, `-capture_cursor`, `-draw_mouse`, off wherever the host can
+hand one over instead) and reads its own pointer with easy-control:
+`src/room/cursor.js` fingerprints the shape and packs it as a PNG data URL,
+and the watch in `stream.js` looks at the pointer `CURSOR_POLL` - thirty times
+a second, the rate the picture beside it moves at - sending `{"kind":
+"cursor"}` only when that fingerprint is one the peer has not been given and
+`{"kind": "cursor-move"}` only when the position has actually moved (0..1 in
+the shared display, `null` when the pointer has walked onto another one). **The
+deciding is local**: a pointer sitting still is looked at thirty times a second
+and mentioned none. The looking is the cost - reading the shape is ~1.5 ms
+inside the addon against ~1 us for the position, about a twentieth of a core at
+this rate - which is what the fingerprint in front of the packing is worth, and
+why the two halves share one tick with the cheap one first. That tick schedules
+itself against the clock the run started on rather than against the tick before
+it, so the read inside it is not added to the gap after it - an interval of the
+same length drifts to 25 a second on a read of a millisecond and a half. The
+window it runs in must not be throttled either: Chromium slows a hidden page's
+timers to one a second, and a sharing host is a window somebody switched away
+from, which is why `main.js` opens it with `backgroundThrottling: false`. A cursor inside the video is a cursor at the video's
+rate and a frame behind it - it lags the hand moving it and stutters at
+whatever the line is doing - and the pointer is the one thing a person watches
+continuously while they drag something. The PNG is written by hand over
+`CompressionStream` rather than through a canvas, which is what keeps the
+module pure enough to run under Node (`tests/cursor.test.js`); a cursor is a
+few kilobytes of mostly nothing, so it packs to a fraction of its pixels and
+the shape only crosses the line when it changes at all.
+
+**Sizes are fractions, never pixels.** The shape is measured against the
+display being shared and its hotspot against the shape, because the peer knows
+that display only as the rectangle it drew it in - so a pointer covering a
+button on the host covers the same button on the peer, at any window size.
+Windows is the one platform whose scaling has to be divided out (`cursorScale`):
+it hands the cursor over at the size it is drawn on screen while
+`Screen.list()` reports that display in logical pixels, where a macOS `NSImage`
+is in points already and the X11 figure is read off the monitor's millimetres
+rather than off any scaling the desktop applies.
+
+**Two layouts, because the client is not what builds the addon.**
+`Mouse.getIcon()` hands over `width * height * 4` bytes of RGBA where
+`dev/control/src/mouse.cpp` stands today, and `width * height` packed
+`0xAARRGGBB` pixels from the build vendored under `src/client/native/`, which
+predates that source. `iconStride` is what tells them apart and `readIcon`
+reads either. The vendored one fills no alpha at all, so what it reports is a
+silhouette - the Windows arrow arrives as one white shape where it is really
+white inside a black edge - and a white pointer on a white document is a
+pointer nobody can see: `outlineSilhouette` gives the empty pixels touching the
+shape its contrast, black around a light pointer and white around a dark one.
+Nothing is invented about the shape, only about the edge it lost, and a picture
+that came with an alpha channel never goes through there. Rebuilding the addon
+from `dev/control/` is what replaces the guess with the real thing.
+
+**A shape is encoded once.** The fingerprint - FNV-1a over the pixels with the
+size and the hotspot in front of it - is what says the peer already has this
+one, and `CURSOR_SHAPES` of them are kept packed, since a session crosses the
+same handful over and over. The memo is dropped when the share moves to another
+display, because the fractions in it are of that display.
+
+**The browser draws it while the peer is driving.** The pointer over the
+picture *is* the host's pointer then, so the shape is handed to the canvas as
+its own `cursor: url(<the shape>) <hotspot>, auto` and the browser draws it -
+no image of ours to place, no position to wait for, and nothing between the
+hand and what it sees. The host stops sending positions the moment the peer
+takes the keyboard and the mouse (`setControlled`), since what it would say is
+a round trip behind that hand, and sends again the moment it is let go. The
+hotspot is in the shape's own pixels, which is why those go over beside the
+fractions. Chromium ignores a cursor image over 128 pixels, so the `auto`
+behind it is what a pointer that large falls through to; and the `cursor: none`
+still in the stylesheet is what is left for a host that sends no shape at all -
+a browser sharing through `getDisplayMedia` draws its own into the picture, and
+a second one over it would be two pointers.
+
+**Where it is drawn is where a click lands.** `#room-cursor` sits over
+`#room-stage` and is placed by `pictureBox()` in `stream-input.js` - the same
+letterbox mapping the peer's own clicks travel through, so a pointer drawn in
+the wrong place and a click landing in the wrong place are one defect rather
+than two. That mapping is against the *picture's* size, which the element
+cannot be asked for: its surface belongs to the worker from the moment it is
+transferred and the width it still reports is the one it was born with, so the
+size comes from the stream's `size` event and the stage is measured again
+(a `ResizeObserver`) whenever the window or the fullscreen changes its shape.
+A host that cannot hand its cursor over - a browser sharing through
+`getDisplayMedia` - sends none of these messages, keeps the cursor in the
+capture, and the peer draws nothing over the picture.
+
 **The settings preview is the same pipeline with no line in it**: `preview()`
 runs the host's encoder into a viewer on the settings window's own canvas, so
 the one ffmpeg line in the tree is the one a room runs, and it refuses while a

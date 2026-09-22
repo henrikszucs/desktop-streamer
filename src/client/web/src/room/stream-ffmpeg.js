@@ -61,10 +61,18 @@ const rateFlags = function(bitrate, framerate) {
 
 // the lines for one platform. `screen` is the display being shared as
 // Control.Screen.list() reports it (logical size, its index in that list),
-// `settings` is {bitrate, height, framerate}.
+// `settings` is {bitrate, height, framerate, isCursor}.
 const buildLines = function(platform, screen, settings) {
     const size = outputSize(screen, settings["height"]);
     const framerate = settings["framerate"];
+    // whether the capture draws the pointer into the picture. Off wherever the
+    // host can read its own cursor and send it over instead
+    // (src/room/cursor.js), because a pointer inside the video is a pointer a
+    // frame late and one that stutters at whatever rate the line is carrying:
+    // the peer draws it itself. On only where that is not possible - an addon
+    // too old to hand the cursor over - since a share with no pointer at all
+    // is worse than a late one.
+    const isCursor = (settings["isCursor"] === true);
     const rate = rateFlags(settings["bitrate"], framerate);
     const isScaled = (size["height"] < screen["height"]);
     const lines = [];
@@ -72,7 +80,7 @@ const buildLines = function(platform, screen, settings) {
     if (platform === "win32") {
         // the capture is a D3D11 texture and it stays one into the hardware
         // encoders: no download to system memory and no upload after it
-        const capture = "gfxcapture=monitor_idx=" + screen["index"] + ":capture_cursor=true:max_framerate=" + framerate;
+        const capture = "gfxcapture=monitor_idx=" + screen["index"] + ":capture_cursor=" + (isCursor === true ? "true" : "false") + ":max_framerate=" + framerate;
         lines.push({
             "name": "h264_nvenc",
             "params": [
@@ -124,7 +132,7 @@ const buildLines = function(platform, screen, settings) {
         // is named rather than numbered
         const input = [
             "-f", "avfoundation",
-            "-capture_cursor", "1",
+            "-capture_cursor", (isCursor === true ? "1" : "0"),
             "-framerate", String(framerate),
             "-i", "Capture screen " + screen["index"] + ":none"
         ];
@@ -162,7 +170,7 @@ const buildLines = function(platform, screen, settings) {
     } else {
         const input = [
             "-f", "x11grab",
-            "-draw_mouse", "1",
+            "-draw_mouse", (isCursor === true ? "1" : "0"),
             "-framerate", String(framerate),
             "-video_size", screen["width"] + "x" + screen["height"],
             "-i", ":0.0+" + screen["x"] + "," + screen["y"]

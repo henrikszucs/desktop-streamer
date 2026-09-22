@@ -121,7 +121,7 @@ const main = async function() {
     });
     
     // Main window create "local://local.local/"
-    const createMainWindow = function(url="https://localhost") {
+    const createMainWindow = function(url="local://local.local/") {
         const win = new BrowserWindow({
             "width": 800,
             "height": 600,
@@ -131,7 +131,13 @@ const main = async function() {
                 "contextIsolation": false,
                 "nodeIntegration": true,
                 "nodeIntegrationInWorker": false,
-                "devTools": true
+                "devTools": true,
+                // A sharing host is a window somebody switched away from, and
+                // Chromium throttles a hidden page's timers to one a second.
+                // What runs on those timers here is the share itself - the
+                // pointer the peer is watching move, the shared clipboard -
+                // so the window being in the background must not slow them.
+                "backgroundThrottling": false
             }
         });
         
