@@ -23,6 +23,20 @@ const definitions = {
     "bytes": {
         "type": "integer",
         "minimum": 0
+    },
+    // an address a client is handed rather than one a server listens on
+    "address": {
+        "type": "object",
+        "required": ["domain", "port"],
+        "additionalProperties": false,
+        "properties": {
+            "domain": {
+                "$ref": "#/definitions/text"
+            },
+            "port": {
+                "$ref": "#/definitions/port"
+            }
+        }
     }
 };
 
@@ -57,6 +71,12 @@ const httpSchema = {
         // private cert path
         "cert": {
             "$ref": "#/definitions/text"
+        },
+        // (optional) the address this server is reached at from outside when a
+        // proxy stands in front of it - what a client is told, and what a
+        // redirect points at, instead of the domain and port it listens on
+        "proxy": {
+            "$ref": "#/definitions/address"
         },
         // (optional) HTTP port that redirects to HTTPS
         "redirect": {
@@ -119,6 +139,12 @@ const wsSchema = {
         // private cert path
         "cert": {
             "$ref": "#/definitions/text"
+        },
+        // (optional) the address this server is reached at from outside when a
+        // proxy stands in front of it - what a client opens its socket on,
+        // instead of the domain and port it listens on
+        "proxy": {
+            "$ref": "#/definitions/address"
         },
         // database connection, a MySQL server or a local SQLite file
         "database": {
@@ -330,6 +356,57 @@ const checkConfig = (config) => {
     };
 };
 
+// the address a client reaches a server at: a server behind a proxy does not
+// listen where the person types, so what it is told is the proxy's domain and
+// port and never the ones the socket is bound to
+const getPublicAddress = (config, section) => {
+    const server = config[section];
+    if (typeof server !== "object" || server === null) {
+        return null;
+    }
+    const proxy = server["proxy"];
+    if (typeof proxy === "object") {
+        return {
+            "domain": proxy["domain"],
+            "port": proxy["port"]
+        };
+    }
+    return {
+        "domain": server["domain"],
+        "port": server["port"]
+    };
+};
+
+// the address a client opens its socket on, which is not always the WS
+// section's own: a remote WS server is a client-facing address already, and a
+// WS server that has no proxy of its own is reached where the HTTP one is
+const getPublicWsAddress = (config) => {
+    const http = config["http"];
+    if (typeof http === "object" && typeof http["remote"] === "object") {
+        return {
+            "domain": http["remote"]["host"],
+            "port": http["remote"]["port"]
+        };
+    }
+    const ws = getPublicAddress(config, "ws");
+    if (ws === null || typeof config["ws"]["proxy"] === "object") {
+        return ws;
+    }
+    const httpPublic = getPublicAddress(config, "http");
+    if (httpPublic === null) {
+        return ws;
+    }
+    // sharing the HTTPS port means sharing the listener, so the two are the
+    // same address from outside - otherwise only the host is shared
+    if (http["port"] === config["ws"]["port"]) {
+        return httpPublic;
+    }
+    return {
+        "domain": httpPublic["domain"],
+        "port": ws["port"]
+    };
+};
+
 // check the constraints that the schema cannot express
 const checkConstraints = (config) => {
     const http = config["http"];
@@ -440,5 +517,5 @@ const loadConfig = async (confPath) => {
     return config;
 };
 
-export { schema, checkConfig, loadConfig };
-export default { schema, checkConfig, loadConfig };
+export { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress };
+export default { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress };

@@ -12,6 +12,7 @@ import { WebSocketServer } from "ws";
 // first-party dependencies
 import Communicator from "../communicator.js";
 import { generateId, getVersion } from "../common.js";
+import { getPublicWsAddress } from "../config.js";
 import serverHTTP from "../http.js";
 import { handleAPI } from "./api.js";
 import { buildPublicConf } from "./handlers/conf.js";
@@ -107,11 +108,9 @@ const ServerWS = class {
         }
         process.stdout.write(this.mailer === null ? "skipped" : "done");
 
-        // the WS server is reachable on the HTTP domain when they share a host
-        let domain = conf["ws"]["domain"];
-        if (typeof conf?.["http"]?.["domain"] === "string") {
-            domain = conf["http"]["domain"];
-        }
+        // where a client opens its socket: the proxy in front of this server
+        // when it has one, and the HTTP address when the two share a host
+        const address = getPublicWsAddress(conf);
 
         // Listen WS port
         if (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]) {
@@ -144,7 +143,11 @@ const ServerWS = class {
                 this.clientConnect(ws);
             }
         });
-        process.stdout.write("\n    Available: wss://" + domain + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
+        process.stdout.write("\n    Available: wss://" + address["domain"] + (address["port"] !== 443 ? ":" + address["port"] : "") + "\n");
+        if (typeof conf["ws"]["proxy"] === "object") {
+            // the line above is the proxy's address, name the socket as well
+            process.stdout.write("    Listening: wss://" + conf["ws"]["domain"] + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
+        }
         process.stdout.write("done\n");
     };
 

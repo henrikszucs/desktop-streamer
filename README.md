@@ -75,6 +75,10 @@ servers may share a port only when it is `http.port`.
         "port": 443,                    //port of the server
         "key": "server.key",            //private key path
         "cert": "server.crt",           //private cert path
+        "proxy": {                      //(optional) the address the clients reach this server at, when a proxy
+            "domain": "botto.hu",       //  stands in front of it. The server still listens on "domain"/"port"
+            "port": 443                 //  above; this is what is built into the clients and what a redirect
+        },                              //  points at, so delete it when nothing proxies the server.
         "redirect": 80,                 //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
         "cache": {                      //(optional) cache HTTP server data into memory (delete to load directly from disk)
             "size": 524288000,          //max cache size in bytes
@@ -94,6 +98,10 @@ servers may share a port only when it is `http.port`.
         "port": 444,
         "key": "server.key",            //private key path
         "cert": "server.crt",           //private cert path
+        "proxy": {                      //(optional) the address the clients open their socket on, when a proxy
+            "domain": "botto.hu",       //  stands in front of this server. Without it the clients are pointed
+            "port": 443                 //  at the "http" host and this server's own port.
+        },
         "database": {                   //MySQL server connection
             "type": "mysql",
             "host": "localhost",
@@ -142,6 +150,33 @@ servers may share a port only when it is `http.port`.
     } 
 }
 ```
+
+### Behind a proxy
+
+`http.proxy` and `ws.proxy` are for a server that is not reached where it
+listens — a reverse proxy, a tunnel, a port forward. `domain` and `port` stay
+what the server binds to (`localhost:8443`), and the `proxy` pair is what the
+person's browser types (`botto.hu:443`): it is the address compiled into the
+clients (`index.json`), the one the HTTPS redirect sends a plaintext request
+to, and the one the account mail names the server by. The boot prints both, the
+proxy address as `Available` and the socket as `Listening`.
+
+A `ws` section without a `proxy` of its own is still pointed at the `http`
+host, as before — and at the whole `http` address when the two share a port,
+since that is one listener behind the proxy. Give `ws.proxy` its own value
+whenever the proxy reaches the two servers at different addresses.
+
+```json
+"http": {
+    "domain": "localhost",
+    "port": 8443,
+    "proxy": {"domain": "botto.hu", "port": 443}
+}
+```
+
+> [!NOTE]
+> The clients carry these addresses from the compile, not from the boot, so
+> changing a `proxy` needs `npm run server -- --compile`.
 
 ## Google sign-in and email setup
 
@@ -194,8 +229,9 @@ known to Google as an origin.
    ```
 
    This is `https://` + `http.domain` + `:` + `http.port` from your
-   configuration (leave the port off when it is `443`). Google does not accept
-   a bare IP address here, so use a host name.
+   configuration (leave the port off when it is `443`), or `http.proxy` instead
+   when one is configured — the origin is the address the browser is opened on.
+   Google does not accept a bare IP address here, so use a host name.
 4. **Authorized redirect URIs**: not needed for the sign-in button itself.
    Add `https://developers.google.com/oauthplayground` only if you will follow
    step 5 (Gmail OAuth2 for the sender) with this same client.
@@ -284,8 +320,8 @@ see step 5.
 1. Validate the configuration: `npm run server -- --exit` — the boot fails on a
    malformed `email`/`auth` section or on one present without the other.
 2. Start the server. The client id is answered at runtime, so **no
-   `--compile`** is needed for it; a rebuild is only needed when `http.domain`
-   or a port changed.
+   `--compile`** is needed for it; a rebuild is only needed when `http.domain`,
+   a `proxy` or a port changed.
 3. Open the web client on one of the origins of step 3 → **Login**: the
    "Sign in with Google" button is there. If it is missing, the server did not
    answer a `clientId`; if Google shows *Error 400: origin_mismatch*, the

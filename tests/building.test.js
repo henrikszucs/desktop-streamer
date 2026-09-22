@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
+import { buildConfFile, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
 
 // the minifiers are hand-written scanners and a throw only downgrades the file
 // to a verbatim copy, so a wrong-but-quiet result never reaches the build log
@@ -137,4 +137,54 @@ test("minifyScript throws on a syntax error", () => {
     assert.throws(function() {
         minifyScript("const = ;", true);
     });
+});
+
+//
+// buildConfFile
+//
+// the one generated file of a build: what a client is handed as the address of
+// the two servers, which behind a proxy is not what either one listens on
+const confSections = function() {
+    return {
+        "http": {"domain": "localhost", "port": 8443},
+        "ws": {"domain": "localhost", "port": 8444}
+    };
+};
+
+test("buildConfFile hands out the configured addresses when nothing proxies them", async () => {
+    const built = JSON.parse(await buildConfFile(confSections()));
+    assert.deepEqual(built["http"], {"domain": "localhost", "port": 8443});
+    assert.deepEqual(built["ws"], {"domain": "localhost", "port": 8444});
+});
+
+test("buildConfFile hands out the proxy address of each server", async () => {
+    const conf = confSections();
+    conf["http"]["proxy"] = {"domain": "botto.hu", "port": 443};
+    conf["ws"]["proxy"] = {"domain": "botto.hu", "port": 443};
+    const built = JSON.parse(await buildConfFile(conf));
+    assert.deepEqual(built["http"], {"domain": "botto.hu", "port": 443});
+    assert.deepEqual(built["ws"], {"domain": "botto.hu", "port": 443});
+});
+
+test("buildConfFile gives the ws server the proxied host of the http one", async () => {
+    // the ws section carries no proxy of its own, so only the host is shared
+    const conf = confSections();
+    conf["http"]["proxy"] = {"domain": "botto.hu", "port": 443};
+    const built = JSON.parse(await buildConfFile(conf));
+    assert.deepEqual(built["ws"], {"domain": "botto.hu", "port": 8444});
+});
+
+test("buildConfFile still points at a remote ws server over a proxy", async () => {
+    const conf = confSections();
+    conf["http"]["proxy"] = {"domain": "botto.hu", "port": 443};
+    conf["http"]["remote"] = {"host": "ws.example.com", "port": 444};
+    delete conf["ws"];
+    const built = JSON.parse(await buildConfFile(conf));
+    assert.deepEqual(built["ws"], {"domain": "ws.example.com", "port": 444});
+});
+
+test("buildConfFile names the dists of the compile it belongs to", async () => {
+    const built = JSON.parse(await buildConfFile(confSections(), [{"os": "win32", "arch": "x64"}]));
+    assert.deepEqual(built["clients"], ["win32-x64.zip"]);
+    assert.equal(typeof built["version"], "string");
 });

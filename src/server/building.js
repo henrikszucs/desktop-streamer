@@ -14,6 +14,7 @@ import UglifyJS from "uglify-js";
 
 // first-party dependencies
 import { serverScriptPath, getVersion } from "./common.js";
+import { getPublicAddress, getPublicWsAddress } from "./config.js";
 import { readZip, writeZip } from "./zip.js";
 
 //
@@ -290,20 +291,17 @@ const buildConfFile = async function(conf, dists = []) {
             return dist["os"] + "-" + dist["arch"] + ".zip";
         })
     };
-    if (typeof conf["http"] === "object") {
-        confData["http"]["domain"] = conf["http"]["domain"];
-        confData["http"]["port"] = conf["http"]["port"];
+    // the addresses a client is handed are the public ones: behind a proxy the
+    // domain and port a server listens on are not the ones a person reaches it at
+    const httpAddress = getPublicAddress(conf, "http");
+    if (httpAddress !== null) {
+        confData["http"]["domain"] = httpAddress["domain"];
+        confData["http"]["port"] = httpAddress["port"];
     }
-    if (typeof conf["http"] === "object" && typeof conf["http"]["remote"] === "object") {
-        confData["ws"]["domain"] = conf["http"]["remote"]["host"];
-        confData["ws"]["port"] = conf["http"]["remote"]["port"];
-    } else {
-        if (typeof conf["http"] === "object") {
-            confData["ws"]["domain"] = conf["http"]["domain"];
-        } else {
-            confData["ws"]["domain"] = conf["ws"]["domain"];
-        }
-        confData["ws"]["port"] = conf["ws"]["port"];
+    const wsAddress = getPublicWsAddress(conf);
+    if (wsAddress !== null) {
+        confData["ws"]["domain"] = wsAddress["domain"];
+        confData["ws"]["port"] = wsAddress["port"];
     }
     return JSON.stringify(confData);
 };
@@ -512,5 +510,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { compileClients, minifyScript, minifyStyle, minifyMarkup };
-export default { compileClients, minifyScript, minifyStyle, minifyMarkup };
+export { compileClients, buildConfFile, minifyScript, minifyStyle, minifyMarkup };
+export default { compileClients, buildConfFile, minifyScript, minifyStyle, minifyMarkup };

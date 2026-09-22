@@ -12,6 +12,7 @@ import https from "node:https";
 // first-party dependencies 
 import { getMIMEType } from "./mime.js";
 import { binarySearch } from "./common.js";
+import { getPublicAddress } from "./config.js";
 
 // the folders holding the client assets, everything else is an SPA route
 const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
@@ -39,6 +40,10 @@ const ServerHTTP = class {
     httpCacheReloadId = -1;
     httpRedirect = null;
     httpDomain = "localhost";
+    // where a client reaches this server, which is not where it listens when a
+    // proxy stands in front of it - it is what a redirect has to point at
+    publicDomain = "localhost";
+    publicPort = 443;
 
     constructor() {
 
@@ -423,8 +428,8 @@ const ServerHTTP = class {
         // besides: the configured domain stands in for anything malformed
         const host = typeof req.headers.host === "string" ? req.headers.host : "";
         const name = host.split(":")[0];
-        const myURL = HOST_NAME.test(name) === true ? name : this.httpDomain;
-        const myPort = this.httpPort !== 443 ? ":" + this.httpPort : "";
+        const myURL = HOST_NAME.test(name) === true ? name : this.publicDomain;
+        const myPort = this.publicPort !== 443 ? ":" + this.publicPort : "";
         res.writeHead(302, {
             "Location": "https://" + myURL + myPort + req.url
         });
@@ -474,12 +479,20 @@ const ServerHTTP = class {
         // create HTTP server
         this.httpPort = conf["http"]["port"];
         this.httpDomain = conf["http"]["domain"];
+        // a proxy in front of the server is where a client reaches it
+        const address = getPublicAddress(conf, "http");
+        this.publicDomain = address["domain"];
+        this.publicPort = address["port"];
         this.httpServer = https.createServer({
             "key": conf["http"]["key"],
             "cert": conf["http"]["cert"]
         }, requestHandle);
         await this.listen(this.httpServer, this.httpPort);
-        process.stdout.write("\n    Available: https://" + conf["http"]["domain"] + (conf["http"]["port"] !== 443 ? ":" + conf["http"]["port"] : "") + "\n");
+        process.stdout.write("\n    Available: https://" + this.publicDomain + (this.publicPort !== 443 ? ":" + this.publicPort : "") + "\n");
+        if (typeof conf["http"]["proxy"] === "object") {
+            // the line above is the proxy's address, name the socket as well
+            process.stdout.write("    Listening: https://" + this.httpDomain + (this.httpPort !== 443 ? ":" + this.httpPort : "") + "\n");
+        }
 
         // create redirect server
         if (typeof conf["http"]["redirect"] !== "undefined") {

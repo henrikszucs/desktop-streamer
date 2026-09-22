@@ -20,6 +20,7 @@ import nodemailer from "nodemailer";
 
 // first-party dependencies
 import localization from "../localization.js";
+import { getPublicAddress, getPublicWsAddress } from "../config.js";
 
 const DICTIONARY_PATH = path.join(import.meta.dirname, "..", "localization.json");
 
@@ -89,8 +90,9 @@ const createMailer = async function(conf) {
     await transport.verify();
     await loadDictionary();
 
-    // the server is named to the person by the address they reach it at
-    const domain = conf?.["http"]?.["domain"] ?? conf["ws"]["domain"];
+    // the server is named to the person by the address they reach it at, which
+    // is the proxy's where one stands in front of it and never the socket's
+    const domain = (getPublicAddress(conf, "http") ?? getPublicWsAddress(conf))["domain"];
 
     return {
         // the languages the mail can be written in
