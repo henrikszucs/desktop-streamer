@@ -49,6 +49,9 @@ const initDesktop = async function() {
     desktop["ffmpegPath"] = path.join(appPath, "libs/ffmpeg");
     desktop["FFmpegVideoEncoder"] = FFmpegEncoder["FFmpegVideoEncoder"];
     desktop["FFmpegAudioEncoder"] = FFmpegEncoder["FFmpegAudioEncoder"];
+    // a bare ffmpeg with its stdout handed over: the desktop host's sound
+    // fallback, raw PCM that src/room/stream.js encodes itself
+    desktop["FFmpegProcess"] = FFmpegEncoder["FFmpegProcess"];
 
     // disable require to prevent security issues
     globalThis.require = undefined;

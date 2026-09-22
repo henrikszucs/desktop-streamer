@@ -196,5 +196,124 @@ const buildLines = function(platform, screen, settings) {
     return {"lines": lines, "size": size, "codec": CODEC};
 };
 
-export { buildLines, outputSize, CODEC };
-export default { buildLines, outputSize, CODEC };
+//
+// the sound, when Chromium's loopback capture is not there to take it: ffmpeg
+// from a device that carries what the system plays, as raw PCM that the host
+// encodes itself - the same Opus encoder the other two paths use, so there is
+// no container to cut and the peer is handed one kind of sound
+//
+
+// what the lines below write: interleaved 32 bit float, 48 kHz, two channels
+const AUDIO_PCM = {"format": "f32", "sampleRate": 48000, "numberOfChannels": 2};
+
+// the input devices that carry the system's own output rather than a
+// microphone, by the names they are installed under. Windows localizes
+// "Stereo Mix", so its translations are here too - an accent matched as any
+// one character, which keeps this file ASCII.
+const LOOPBACK_NAMES = {
+    "win32": /stereo ?mix|sztere. ?kever|mixage st.r.o|mezcla est.reo|missaggio stereo|what u hear|wave ?out|loopback|virtual-audio-capturer|cable output|voicemeeter out/i,
+    "darwin": /blackhole|soundflower|loopback|background music|ishowu|soundsiphon/i
+};
+
+// the command that lists a platform's audio input devices on stderr, or null
+// where the line does not need a device named
+const listAudioParams = function(platform) {
+    if (platform === "win32") {
+        return ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"];
+    }
+    if (platform === "darwin") {
+        return ["-hide_banner", "-list_devices", "true", "-f", "avfoundation", "-i", "\"\""];
+    }
+    return null;
+};
+
+// the audio input devices out of that listing, in the order ffmpeg gave them
+const parseAudioDevices = function(platform, text) {
+    const devices = [];
+    let isAudio = false;
+    for (const line of String(text).split(/\r?\n/)) {
+        if (platform === "win32") {
+            // `"name" (audio)` in current builds; a quoted name under the
+            // "DirectShow audio devices" heading in older ones
+            if (/DirectShow (audio|video) devices/.test(line) === true) {
+                isAudio = /DirectShow audio devices/.test(line);
+                continue;
+            }
+            if (/Alternative name/.test(line) === true) {
+                continue;
+            }
+            const tagged = line.match(/"([^"]+)"\s*\(audio\)/);
+            const listed = (isAudio === true ? line.match(/^\s*\[[^\]]*\]\s+"([^"]+)"\s*$/) : null);
+            const name = (tagged ?? listed)?.[1];
+            if (typeof name === "string" && devices.includes(name) === false) {
+                devices.push(name);
+            }
+        } else if (platform === "darwin") {
+            if (/AVFoundation (audio|video) devices/.test(line) === true) {
+                isAudio = /AVFoundation audio devices/.test(line);
+                continue;
+            }
+            const listed = (isAudio === true ? line.match(/\]\s+\[\d+\]\s+(.+?)\s*$/) : null);
+            if (listed !== null) {
+                devices.push(listed[1]);
+            }
+        }
+    }
+    return devices;
+};
+
+// what every sound line ends with: PCM at the one format the host encodes
+const AUDIO_OUTPUT_FLAGS = [
+    "-vn",
+    "-f", "f32le",
+    "-ac", String(AUDIO_PCM["numberOfChannels"]),
+    "-ar", String(AUDIO_PCM["sampleRate"]),
+    "-flush_packets", "1",
+    "pipe:1"
+];
+
+// the sound lines for one platform, in the order they are tried. `devices` is
+// what parseAudioDevices found; only the ones that carry the system's output
+// are used, since a microphone is not what the peer asked to hear.
+const buildAudioLines = function(platform, devices = []) {
+    const input = [
+        "-fflags", "+nobuffer",
+        "-flags", "+low_delay",
+        "-analyzeduration", "0",
+        "-probesize", "32"
+    ];
+    const lines = [];
+    const loopbacks = devices.filter(function(name) {
+        return LOOPBACK_NAMES[platform]?.test(name) === true;
+    });
+    if (platform === "win32") {
+        // the arguments reach ffmpeg verbatim on Windows, so a name with a
+        // space in it is quoted here. A buffer of 20 ms rather than dshow's
+        // half second.
+        for (const name of loopbacks) {
+            lines.push({
+                "name": "dshow " + name,
+                "params": [...input, "-f", "dshow", "-audio_buffer_size", "20", "-i", "\"audio=" + name + "\"", ...AUDIO_OUTPUT_FLAGS]
+            });
+        }
+    } else if (platform === "darwin") {
+        for (const name of loopbacks) {
+            lines.push({
+                "name": "avfoundation " + name,
+                "params": [...input, "-f", "avfoundation", "-i", ":" + name, ...AUDIO_OUTPUT_FLAGS]
+            });
+        }
+    } else {
+        // every PulseAudio sink has a monitor source, and PipeWire's pulse
+        // server answers the same name: the default sink's is what plays.
+        // 20 ms fragments rather than the server's default.
+        lines.push({
+            "name": "pulse monitor",
+            "params": [...input, "-f", "pulse", "-fragment_size", "3840", "-i", "@DEFAULT_MONITOR@", ...AUDIO_OUTPUT_FLAGS]
+        });
+    }
+    return lines;
+};
+
+export { buildLines, outputSize, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines };
+export default { buildLines, outputSize, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines };

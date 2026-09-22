@@ -673,7 +673,8 @@ whole reading.
 
 **A tool the host has not got is greyed, not left to do nothing.** The
 `share` message says whether there is sound (`isAudio`, the encoder's
-`hasAudio()` - the desktop host has none yet) and a keyboard to take
+`hasAudio()` - a desktop host on a platform with a loopback device is believed
+until its capture fails, and the share is said again when it does) and a keyboard to take
 (`isControl`, easy-control being there), and the bar greys the two buttons
 (`room-tool-off`) until a share has said, with the reason in the tooltip; a
 keyboard already taken from a host that then says it has none is let go.
@@ -904,6 +905,48 @@ hardware encoders; `h264_videotoolbox` then `libx264` on macOS - and the first
 to produce a frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every
 second, no B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows,
 at the frame rate the bar asked for.
+ffmpeg's video lines carry no sound: the desktop host's is `createSystemAudio`,
+the first of two sources that gives any. First a `getDisplayMedia` that
+`main.js` answers through `setDisplayMediaRequestHandler` with the first screen
+and the `loopback` audio device - Windows' own, and behind Chromium features
+`main.js` switches on, ScreenCaptureKit's on macOS 13+
+(`MacLoopbackAudioForScreenShare`, `MacSckSystemAudioLoopbackOverride`) and the
+PulseAudio monitor on Linux (`PulseaudioLoopbackForScreenShare`). Its picture
+is asked for at 4x4 and 1 fps and never read: a display capture cannot be had
+without one, and an empty one is a picture Electron on macOS cannot wrap, whose
+capture then hands back silence (electron/electron#49607). Its sound is asked
+for as `CAPTURE_AUDIO` - stereo, echo cancellation, noise suppression and gain
+control off - on both hosts, since Chromium otherwise treats a display
+capture's sound as a call's microphone and hands back one processed channel;
+measured on Windows, a 0.2 tone came back at 0.16 through it and at 0.1965
+without. The track is only adopted once its first frame is out
+(`createAudioReader`'s `start()` answers that), since Electron on macOS has
+handed back a track that was ended from the start (electron/electron#52738) and
+it would otherwise stand in front of the ffmpeg lines saying nothing; a
+loopback delivers frames of silence while nothing plays, so on Windows the first
+is there within a few milliseconds. Under a Wayland session `main.js` refuses the
+capture outright - its screens are listed through the desktop portal, which
+would ask the host on every unmute - and a refusal is a rejected
+`getDisplayMedia`, not a hang. Then ffmpeg on its own, from a
+device that carries what the system plays: `stream-ffmpeg.js` lists the
+platform's audio inputs (`listAudioParams`/`parseAudioDevices`, dshow and
+avfoundation) and `buildAudioLines` keeps only the loopback kind by name -
+"Stereo Mix" and its translations, virtual cables and virtual-audio-capturer
+on Windows, BlackHole and its kind on macOS, never a microphone - and on Linux
+it is the default sink's PulseAudio monitor (`@DEFAULT_MONITOR@`, which
+PipeWire's pulse server answers too), which needs no listing. Those lines write
+raw 48 kHz stereo float PCM rather than Opus: `createPcmReader` cuts it into
+`AudioData` at whole samples and the one `createAudioSink` encodes every source,
+so there is no Ogg to parse and the peer is handed one kind of sound. The
+Windows device name is quoted into the line by hand, since `FFmpegProcess`
+spawns with `windowsVerbatimArguments`. A source that ends on its own is let
+go, and the next unmute looks again; only when every source fails is the share
+said again without sound. It runs beside ffmpeg rather than in it, so a restart of the line
+leaves it alone, and only while the peer's sound button is on: the `isAudio`
+setting starts and stops the capture itself rather than only the sending, and
+the settings preview never starts it. The sound's configuration rides with
+every keyframe like the picture's, since it is sent once when the encoder
+starts and the peer's room may not have been up for it.
 A settings change is a restart behind `RESTART_DEBOUNCE`, since ffmpeg is told
 nothing over a pipe - which is also why the desktop host cannot answer a
 keyframe request, and the one second GOP is the whole answer to a gap. The
@@ -1324,9 +1367,10 @@ share with the menu dialog), and the registry hands each module's
 
 The pairing, join, room, account and stream flows are live: the picture, the
 sound of a web host, and the peer's keyboard and mouse cross the room on both
-legs (see The stream). What `dev/plans/room-media.md` still lists as open:
-the desktop host captures no sound (ffmpeg has no system audio input that is
-the same on both platforms), a desktop host cannot answer a keyframe request
+legs (see The stream), and the desktop host's sound beside ffmpeg (a loopback
+display capture, then ffmpeg from a loopback device or Linux's PulseAudio
+monitor - both paths run on Windows in Electron 42; macOS and Linux are built
+to what Electron and Chromium document and are untested). What `dev/plans/room-media.md` still lists as open: a desktop host cannot answer a keyframe request
 over a pipe, the access unit splitter is one frame behind the encoder (a unit is
 only known whole when the next delimiter arrives), and the enhancer runs mock
 graphs - the pipeline is there, the trained models are not (see The

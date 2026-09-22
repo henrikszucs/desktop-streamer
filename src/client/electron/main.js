@@ -103,6 +103,21 @@ const main = async function() {
         }
     ]);
 	app.commandLine.appendSwitch("ignore-certificate-errors"); //for debug
+
+    // the loopback device a display capture's sound comes from is Windows'
+    // own; on macOS it is ScreenCaptureKit's (13 and later) and on Linux the
+    // PulseAudio monitor, each behind Chromium features that are off by default
+    if (process.platform === "darwin") {
+        app.commandLine.appendSwitch("enable-features", "MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride");
+    } else if (process.platform === "linux") {
+        app.commandLine.appendSwitch("enable-features", "PulseaudioLoopbackForScreenShare");
+    }
+
+    // a Wayland session lists its screens through the desktop portal, which
+    // asks the person every time - a dialog on the host for every unmute of
+    // the peer - so there the capture is refused and the renderer takes the
+    // sound from ffmpeg's PulseAudio monitor instead
+    const isPortalCapture = (process.platform === "linux" && process.env["XDG_SESSION_TYPE"] === "wayland");
     
     // Wait for load
     await app.whenReady();
@@ -119,7 +134,40 @@ const main = async function() {
         const pathFull = url.pathToFileURL(path.join(app.getAppPath(), pathname)).toString();
         return net.fetch(pathFull);
     });
-    
+
+    // The one display capture the renderer asks for: the sharing host's system
+    // sound. ffmpeg has no system audio input that is the same on every
+    // platform, so src/room/stream.js asks for a display capture and keeps its
+    // audio track alone - the picture is a 4x4 one it never reads, there
+    // because a capture cannot be asked for without one. Nothing is picked:
+    // any screen will do for that picture, and the sound is the loopback
+    // device, the whole of what the system plays. A refusal is not an error
+    // there: the renderer goes on to its ffmpeg lines.
+    ses.setDisplayMediaRequestHandler(async function(request, callback) {
+        if (isPortalCapture === true) {
+            callback({});
+            return;
+        }
+        try {
+            const sources = await desktopCapturer.getSources({
+                "types": ["screen"],
+                "thumbnailSize": {"width": 0, "height": 0}
+            });
+            if (sources.length === 0) {
+                callback({});
+                return;
+            }
+            const streams = {"video": sources[0]};
+            if (request.audioRequested === true) {
+                streams["audio"] = "loopback";
+            }
+            callback(streams);
+        } catch (error) {
+            console.log("Cannot answer a display capture:", error);
+            callback({});
+        }
+    });
+
     // Main window create "local://local.local/"
     const createMainWindow = function(url="local://local.local/") {
         const win = new BrowserWindow({
