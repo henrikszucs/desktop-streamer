@@ -6,9 +6,13 @@
 // internal dependencies
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
+import fs from "node:fs/promises";
 
 // first-party dependencies
-import { buildConfFile, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
+import { buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
+
+const repoPath = path.resolve(import.meta.dirname, "..");
 
 // the minifiers are hand-written scanners and a throw only downgrades the file
 // to a verbatim copy, so a wrong-but-quiet result never reaches the build log
@@ -181,6 +185,97 @@ test("buildConfFile still points at a remote ws server over a proxy", async () =
     delete conf["ws"];
     const built = JSON.parse(await buildConfFile(conf));
     assert.deepEqual(built["ws"], {"domain": "ws.example.com", "port": 444});
+});
+
+test("buildConfFile hands the client the configured appearance", async () => {
+    const conf = confSections();
+    conf["http"]["appearance"] = {"name": {"en": "Streamer"}, "color": "#1a2b3c", "theme": "dark"};
+    const built = JSON.parse(await buildConfFile(conf));
+    assert.deepEqual(built["appearance"], {"name": {"en": "Streamer"}, "color": "#1a2b3c", "theme": "dark"});
+});
+
+test("buildConfFile hands the default colour and theme when none is configured", async () => {
+    const defaults = {"color": "#006e1c", "theme": "auto"};
+    assert.deepEqual(JSON.parse(await buildConfFile(confSections()))["appearance"], defaults);
+
+    // a ws only configuration has no http section to hold one
+    const conf = confSections();
+    delete conf["http"];
+    assert.deepEqual(JSON.parse(await buildConfFile(conf))["appearance"], defaults);
+
+    // and a configuration naming only one of them keeps the default of the other
+    const partial = confSections();
+    partial["http"]["appearance"] = {"theme": "dark"};
+    assert.deepEqual(JSON.parse(await buildConfFile(partial))["appearance"], {"color": "#006e1c", "theme": "dark"});
+});
+
+//
+// buildPaint / injectAppearance
+//
+// the palette the page paints with before its first module runs, which has to
+// be the one the client goes on to build - or the colour switches under it
+test("buildPaint builds the configured palette the way beercss writes it", async () => {
+    const conf = confSections();
+    conf["http"]["appearance"] = {"color": "#b3261e", "theme": "dark"};
+    const paint = await buildPaint(conf);
+    assert.equal(paint["color"], "#b3261e");
+    assert.equal(paint["mode"], "dark");
+    // beercss's own names, kebab-cased from the generator's camelCase keys
+    assert.match(paint["light"], /^--primary:#[0-9a-f]{6};/);
+    assert.match(paint["dark"], /--on-primary-container:#[0-9a-f]{6};/);
+    assert.notEqual(paint["light"], paint["dark"]);
+});
+
+test("buildPaint paints the default colour and theme when none is configured", async () => {
+    const paint = await buildPaint(confSections());
+    assert.equal(paint["color"], "#006e1c");
+    assert.equal(paint["mode"], "auto");
+});
+
+test("injectAppearance writes the paint into the built page, escaped", async () => {
+    const source = await fs.readFile(path.join(repoPath, "src", "client", "web", "index.html"), "utf8");
+    const page = {"path": "index.html", "data": Buffer.from(minifyMarkup(source), "utf8")};
+    const paint = {"color": "#b3261e", "mode": "dark", "light": "--primary:#b4271f;", "dark": "--primary:#ffb4aa;"};
+    injectAppearance([page], paint);
+
+    const html = page["data"].toString("utf8");
+    const content = /<meta name="appearance" content="([^"]*)">/.exec(html)?.[1];
+    assert.equal(typeof content, "string");
+    const unescaped = content.replace(/&quot;/g, "\"").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    assert.deepEqual(JSON.parse(unescaped), paint);
+
+    // the script that reads it survives the minifier, ahead of the loading layer
+    assert.ok(html.indexOf("localStorage") !== -1);
+    assert.ok(html.indexOf("localStorage") < html.indexOf("dialog-loading"));
+});
+
+test("buildPaint carries the configured name, and none where there is none", async () => {
+    const conf = confSections();
+    assert.equal("name" in await buildPaint(conf), false);
+    conf["http"]["appearance"] = {"name": {"en": "Streamer", "hu": "Közvetítő"}};
+    assert.deepEqual((await buildPaint(conf))["name"], {"en": "Streamer", "hu": "Közvetítő"});
+});
+
+test("injectAppearance makes the configured name the static title, escaped", async () => {
+    const source = await fs.readFile(path.join(repoPath, "src", "client", "web", "index.html"), "utf8");
+    const built = function(paint) {
+        const page = {"path": "index.html", "data": Buffer.from(minifyMarkup(source), "utf8")};
+        injectAppearance([page], paint);
+        return /<title>([^<]*)<\/title>/.exec(page["data"].toString("utf8"))[1];
+    };
+    const paint = {"color": "#006e1c", "mode": "auto", "light": "", "dark": ""};
+
+    // English where it is given, the first one where it is not
+    assert.equal(built({...paint, "name": {"hu": "Közvetítő", "en": "Tom & <Jerry>"}}), "Tom &amp; &lt;Jerry&gt;");
+    assert.equal(built({...paint, "name": {"hu": "Közvetítő", "de": "Übertragung"}}), "Közvetítő");
+
+    // and the page's own where nothing is configured
+    assert.equal(built(paint), "Desktop Streamer");
+});
+
+test("injectAppearance refuses a page with no appearance meta", () => {
+    const page = {"path": "index.html", "data": Buffer.from("<html><head></head></html>", "utf8")};
+    assert.throws(() => injectAppearance([page], {}), /No appearance meta/);
 });
 
 test("buildConfFile names the dists of the compile it belongs to", async () => {

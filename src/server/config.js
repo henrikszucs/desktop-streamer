@@ -45,15 +45,32 @@ const httpSchema = {
     "required": ["domain", "port", "key", "cert"],
     "additionalProperties": false,
     "properties": {
-        // (optional) customized name of the application, keyed by language code
-        "name": {
+        // (optional) how the client looks - handed to it in index.json, and
+        // the colour and theme are what a client starts with and resets to
+        "appearance": {
             "type": "object",
-            "minProperties": 1,
-            "propertyNames": {
-                "pattern": "^[a-z]{2}(-[A-Za-z0-9]+)*$"
-            },
-            "additionalProperties": {
-                "$ref": "#/definitions/text"
+            "additionalProperties": false,
+            "properties": {
+                // (optional) customized name of the application, keyed by language code
+                "name": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "propertyNames": {
+                        "pattern": "^[a-z]{2}(-[A-Za-z0-9]+)*$"
+                    },
+                    "additionalProperties": {
+                        "$ref": "#/definitions/text"
+                    }
+                },
+                // (optional) the default theme colour, a hex RGB colour
+                "color": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                },
+                // (optional) the default theme, "auto" follows the system
+                "theme": {
+                    "enum": ["dark", "light", "auto"]
+                }
             }
         },
         // access domain

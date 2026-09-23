@@ -174,6 +174,9 @@ const main = async function() {
             "width": 800,
             "height": 600,
             "icon": path.join(app.getAppPath(), "media/icon-32.png"),
+            // shown once the page has painted, in the theme it keeps, rather
+            // than as a blank window a moment before
+            "show": false,
             "webPreferences": {
                 "partition": partition,
                 "contextIsolation": false,
@@ -189,6 +192,16 @@ const main = async function() {
             }
         });
         
+        win.once("ready-to-show", function() {
+            win.show();
+        });
+        // the window takes the page's title on its own - the configured name
+        // in the client's language - and the tray's tooltip follows it
+        win.on("page-title-updated", function(event, title) {
+            if (tray !== null) {
+                tray.setToolTip(title);
+            }
+        });
         win.loadURL(url);
         win.setMenu(null);
         win.on("close", function(event) {
@@ -272,6 +285,9 @@ const main = async function() {
             const isOn = args[0];
             if (isOn && tray === null) {
                 tray = new Tray(path.join(app.getAppPath(), "media/icon-32.png"));
+                if (winMain) {
+                    tray.setToolTip(winMain.getTitle());
+                }
                 tray.on("click", function() {
                     if (winMain) {
                         winMain.show();

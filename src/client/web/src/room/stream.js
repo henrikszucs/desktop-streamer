@@ -1628,7 +1628,7 @@ const createStream = function(ctx) {
             console.error("Cannot start the share:", error);
             await stop("failed");
             emit("failed", {"role": "host", "error": String(error?.message ?? error)});
-            ctx["ui"]?.snackbar?.show(ctx["localization"].get("main.share.failed"), true);
+            ctx["ui"]?.snackbar?.show(ctx["localization"].get("room.share.failed"), true);
             room().leave("failed");
         }
     };

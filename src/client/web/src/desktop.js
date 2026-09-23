@@ -3,8 +3,51 @@
 // the Electron side of the client: an empty object in a browser, the node and
 // electron modules the renderer is allowed to reach under the desktop shell
 
+// first-party dependencies
+import { conf } from "./conf.js";
+import localization from "./localization.js";
+import { pickSystemName } from "./appname.js";
+
 const desktop = {
     "isAvailable": false
+};
+
+// what the auto-launch entry was last registered under, and what it was called
+// before the name could be configured. The entry is found by its name, so one
+// under an earlier name would go on starting the application beside the new
+// one, and the setting would read it as off.
+const AUTO_LAUNCH_NAME_KEY = "autoLaunchName";
+const LEGACY_AUTO_LAUNCH_NAME = "Desktop Streamer";
+
+// the auto-launch entry under the current name, an enabled one under an earlier
+// name moved across first - the new one enabled before the old one goes, so a
+// failure leaves the old entry standing and the move is tried at the next start
+const openAutoLaunch = async function(AutoLaunch, name, exePath) {
+    const current = new AutoLaunch({"name": name, "path": exePath});
+    let previous = LEGACY_AUTO_LAUNCH_NAME;
+    try {
+        previous = localStorage.getItem(AUTO_LAUNCH_NAME_KEY) ?? LEGACY_AUTO_LAUNCH_NAME;
+    } catch (error) {
+        previous = LEGACY_AUTO_LAUNCH_NAME;
+    }
+    if (previous !== name) {
+        try {
+            const old = new AutoLaunch({"name": previous, "path": exePath});
+            if (await old.isEnabled() === true) {
+                await current.enable();
+                await old.disable();
+            }
+        } catch (error) {
+            console.error("Cannot move the auto launch entry to \"" + name + "\":", error);
+            return current;
+        }
+    }
+    try {
+        localStorage.setItem(AUTO_LAUNCH_NAME_KEY, name);
+    } catch (error) {
+        // not recorded, so the move is looked at again next time
+    }
+    return current;
 };
 
 // fill the object above under an Electron renderer - the modules it pulls in
@@ -41,10 +84,9 @@ const initDesktop = async function() {
     // its place
     desktop["clipboard"] = clipboard;
     desktop["appPath"] = appPath;
-    desktop["autoLaunch"] = new AutoLaunch({
-        "name": "Desktop Streamer",
-        "path": exePath
-    });
+    // the system is told the name in English, or the first one configured
+    desktop["autoLaunch"] = await openAutoLaunch(AutoLaunch,
+        pickSystemName(conf["appearance"]?.["name"], localization.get("main.name", "en")), exePath);
     desktop["Control"] = Control;
     desktop["ffmpegPath"] = path.join(appPath, "libs/ffmpeg");
     desktop["FFmpegVideoEncoder"] = FFmpegEncoder["FFmpegVideoEncoder"];

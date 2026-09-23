@@ -145,6 +145,19 @@ test("loadConfig accepts an http section pointed at a remote ws server", async (
     assert.equal(config["http"]["remote"]["port"], 444);
 });
 
+test("loadConfig accepts an appearance with any of its fields", async (t) => {
+    const http = httpSection();
+    http["appearance"] = {"name": {"en": "Streamer"}, "color": "#1A2b3C", "theme": "dark"};
+    const conf = await writeConf(t, {"http": http, "ws": wsSection()});
+    const config = await loadConfig(conf["path"]);
+    assert.deepEqual(config["http"]["appearance"], {"name": {"en": "Streamer"}, "color": "#1A2b3C", "theme": "dark"});
+
+    // each field is optional on its own
+    http["appearance"] = {"theme": "light"};
+    const alone = await writeConf(t, {"http": http, "ws": wsSection()});
+    assert.equal((await loadConfig(alone["path"]))["http"]["appearance"]["theme"], "light");
+});
+
 //
 // Rejected configurations
 //
@@ -173,6 +186,30 @@ test("loadConfig rejects a missing required field", async (t) => {
 test("loadConfig rejects an unknown field", async (t) => {
     const http = httpSection();
     http["unknown"] = true;
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties/);
+});
+
+test("loadConfig rejects an appearance it cannot hand a client", async (t) => {
+    const http = httpSection();
+
+    // the colour is a six digit hex RGB, nothing shorter, longer or named
+    for (const color of ["006e1c", "#06e", "#006e1c80", "green", "#00ge1c"]) {
+        http["appearance"] = {"color": color};
+        assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /must match pattern/, color);
+    }
+
+    // the theme is one of the three a client knows
+    http["appearance"] = {"theme": "night"};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /allowed values/);
+
+    // and nothing else sits beside them
+    http["appearance"] = {"font": "serif"};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties/);
+});
+
+test("loadConfig rejects the name outside the appearance it moved into", async (t) => {
+    const http = httpSection();
+    http["name"] = {"en": "Streamer"};
     assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties/);
 });
 

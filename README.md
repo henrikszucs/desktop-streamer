@@ -50,61 +50,60 @@ Server flags:
 
 | Flag | Meaning |
 | ---- | ------- |
-| `-c <path>`, `--configuration=<path>` | configuration file (default `./conf/config.json`). Note the two forms: `-c` takes the path as the next argument, `--configuration` only as `--configuration=<path>`. `--configuration <path>` is **not** parsed and falls back to the default. |
+| `-c <path>`, `--configuration=<path>` | configuration file (default `./conf/config.json`). Note the two forms: `-c` takes the path as the next argument, `--configuration` only as `--configuration=<path>`. The wrong form (`--configuration <path>`) stops the boot with a message instead of falling back to the default. |
 | `--compile` | force a rebuild of `./tmp/web` and `./tmp/desktop`. Without it, a boot that already finds `tmp/web/index.html` skips the build, so web client edits stay invisible. |
 | `--exit` | validate the configuration, build, start and stop again without serving |
 | `-h`, `--help` | usage |
 | `-v`, `--version` | project version |
 
 ## Server configuration
-server configuration file path: `conf/config.json` (a working SQLite-backed starting point is in `conf/config.example.json`).
+Server configuration file path: `conf/config.json` (a working SQLite-backed starting point is in `conf/config.example.json`). The file is checked against the schema in `src/server/config.js` at boot, and a field it does not know is an error, not something ignored.
 
 The block below is annotated, not literal JSON: it carries `//` comments, and it
 shows the alternatives of `database` and of `email.auth` as repeated keys — pick
-one of each. At least one of `http` and `ws` must be present, and the two
-servers may share a port only when it is `http.port`.
+one of each.
 
 ```
 {
-    "http": {
-        "name": {                       // (optional) cutomized name of the application
-            "en": "My Desktop streamer",
-            "hu": "Saját távoli megosztó"
-        },
-        "domain": "localhost",          //access domain
-        "port": 443,                    //port of the server
-        "key": "server.key",            //private key path
-        "cert": "server.crt",           //private cert path
+    "http": {                           //the web server that serves the clients
+        "domain": "localhost",          //the domain the server listens on
+        "port": 443,                    //the HTTPS port
+        "key": "server.key",            //private key path, relative to this configuration file
+        "cert": "server.crt",           //certificate path, relative to this configuration file
+        "appearance": {                 //(optional) how the clients look, every field is optional
+            "name": {                   //  the application's name by language code: the browser tab and the
+                "en": "My Streamer",    //  desktop window show it in the client's language, the desktop
+                "hu": "Saját megosztó"  //  auto-launch entry in English (or the first one given).
+            },                          //  Without it: "Desktop Streamer"
+            "color": "#006e1c",         //  the default theme colour, a six digit hex RGB (default "#006e1c")
+            "theme": "auto"             //  the default theme: "dark", "light", or "auto" to follow the system
+        },                              //  (default "auto"). Colour and theme are what a client starts with and
+                                        //  what a settings reset goes back to; a user may still change them
         "proxy": {                      //(optional) the address the clients reach this server at, when a proxy
-            "domain": "botto.hu",       //  stands in front of it. The server still listens on "domain"/"port"
+            "domain": "example.com",    //  stands in front of it. The server still listens on "domain"/"port"
             "port": 443,                //  above; this is what is built into the clients and what a redirect
-            "redirect": 80              //  points at, so delete it when nothing proxies the server.
-        },                              //  "redirect" is the plaintext port of the proxy, in front of the
-                                        //  "redirect" below - drop it when the proxy carries no plaintext port.
-        "redirect": 80,                 //(optional) HTTP port that redirect to HTTPS (useful in web), delete if want to open only HTTPS port
-        "cache": {                      //(optional) cache HTTP server data into memory (delete to load directly from disk)
-            "size": 524288000,          //max cache size in bytes
-            "fileSizeLimit": 10485760   //max file size that can cached (ignore too big files)
+            "redirect": 80              //  points at. "redirect" is the plaintext port of the proxy in front of
+        },                              //  "http.redirect" below, refused without one - see "Behind a proxy"
+        "redirect": 80,                 //(optional) plaintext HTTP port that redirects to HTTPS
+        "cache": {                      //(optional) serve the client files from memory instead of from disk
+            "size": 524288000,          //  max cache size in bytes
+            "fileSizeLimit": 10485760   //  max size of a file that is cached, bigger ones are read from disk
         },
         "remote": {                     //(optional) point the clients at a websocket server run elsewhere.
-            "host": "localhost",        //  Mutually exclusive with the "ws" section below: a configuration
-            "port": 444                 //  carrying both is rejected, it is not silently ignored.
+            "host": "localhost",        //  Required when this file has no "ws" section, refused beside one
+            "port": 444
         }
     },
-    "ws": {                             //the realtime/signaling server. It is currently cut back to the
-                                        //  connection itself, so "database", "email" and the secret half of
-                                        //  "auth" are validated but not read yet; only auth.<provider>.clientId
-                                        //  reaches a client. They are still required/accepted so a configuration
-                                        //  written today keeps working when the persistence lands.
-        "domain": "localhost",          //access domain
-        "port": 444,
-        "key": "server.key",            //private key path
-        "cert": "server.crt",           //private cert path
+    "ws": {                             //the realtime server: signaling, pairing, rooms, accounts
+        "domain": "localhost",          //the domain the server listens on
+        "port": 444,                    //its own port, or the same as "http.port" to share the HTTPS listener
+        "key": "server.key",            //private key path, relative to this configuration file - still
+        "cert": "server.crt",           //  required when the port is shared, although it is not used then
         "proxy": {                      //(optional) the address the clients open their socket on, when a proxy
-            "domain": "botto.hu",       //  stands in front of this server. Without it the clients are pointed
-            "port": 443                 //  at the "http" host and this server's own port.
+            "domain": "example.com",    //  stands in front of this server. Without it the clients are pointed
+            "port": 443                 //  at the "http" host and this server's own port
         },
-        "database": {                   //MySQL server connection
+        "database": {                   //a MySQL server...
             "type": "mysql",
             "host": "localhost",
             "port": 3306,
@@ -112,46 +111,68 @@ servers may share a port only when it is `http.port`.
             "pass": "root",
             "db": "desktop_streamer"
         },
-        "database": {                   //or a local SQLite file instead of a server
+        "database": {                   //...or a local SQLite file instead
             "type": "sqlite",
-            "host": "database.sqlite"   //path relative to this configuration file, it is created on the first boot
-        },
+            "host": "database.db"       //  path relative to this configuration file
+        },                              //Either one is connected at boot and a database that cannot be reached
+                                        //  fails it; the tables are created on the first boot
         "webrtc": {
-            "iceServers": [
+            "iceServers": [             //STUN/TURN servers handed to the clients, at least one
                 "stun:stun.l.google.com:19302"
             ]
         },
-        "email": {                      //(optional) email sending connections with smtp, must be set together with "auth"
-            "host": "mail.example.com",
-            "port": 567,
-            "user": "user@example.com",
-            "auth": {
+        "email": {                      //(optional) SMTP sender of the account e-mails, set together with "auth".
+            "host": "smtp.example.com", //  It is signed in to at boot, and one that refuses fails the boot
+            "port": 587,
+            "user": "sender@example.com",
+            "auth": {                   //  a password...
                 "type": "password",
                 "password": "12345678"
             },
-            "auth": {
+            "auth": {                   //  ...or OAuth2
                 "type": "OAuth2",
                 "clientId": "12345678",
                 "clientSecret": "12345678",
                 "refreshToken": "12345678"
             }
         },
-        "auth": {                       //(optional) Google auth keys, must be set together with "email" (sign-in sends emails)
-            "google": {
-                "clientId": "1234567890",
-                "clientSecret": "12345678"
+        "auth": {                       //(optional) sign-in providers, set together with "email" - see
+            "google": {                 //  "Google sign-in and email setup". Only "clientId" reaches a client
+                "clientId": "1234567890-abc.apps.googleusercontent.com",
+                "clientSecret": "GOCSPX-..."
             }
         },
-        "permissions": {                // permission settings
-            "guestAllowShare": true,    // Allow guest user to share screen
-            "guestAllowJoin": true,     // Allow guest user to join to a screen
-            "guestAllowRelay": false,   // Guest user allow to use server for media data transfer
-            "userRegister": true,       // Allow a new user to be registered at sign-in (false: only the already stored accounts may sign in, irrelevant without "auth")
-            "userRegisterRelay": true   // Newly registered users get relay permission as allow or deny (this stores for later usage, for modification need DB table update)
+        "permissions": {                //every flag is optional and defaults to the value shown, so {} is enough
+            "guestAllowShare": true,    //  a guest may share its screen
+            "guestAllowJoin": true,     //  a guest may join a shared screen
+            "guestAllowRelay": false,   //  a guest may use the server to relay the media when the two devices
+                                        //  cannot reach each other directly
+            "userRegister": true,       //  an unknown account may be created at sign-in (false: only accounts
+                                        //  already in the database may sign in; irrelevant without "auth")
+            "userRegisterRelay": true   //  the relay permission a newly created account gets (stored on the
+                                        //  account, change its database row to change it later)
         }
-    } 
+    }
 }
 ```
+
+The rules the block cannot show:
+
+- **At least one section.** `http` needs `domain`, `port`, `key` and `cert`;
+  `ws` needs those and `database`, `webrtc` and `permissions`. A file with only
+  `http` must carry `http.remote`, and `http.remote` beside a `ws` section is
+  refused.
+- **Ports.** No two of `http.port`, `http.redirect` and `ws.port` may be the
+  same, with one exception: `ws.port` may equal `http.port`, and the socket is
+  then served on the HTTPS listener.
+- **Paths** — `key`, `cert` and a SQLite `host` — are relative to the directory
+  of the configuration file, not to where the server is started.
+- **What the clients are built with.** The addresses (`domain`, `port`,
+  `proxy`, `remote`) and `http.appearance` are compiled into the clients, so a
+  change to them needs `npm run server -- --compile`. Everything under `ws`
+  (the ICE servers, the permissions, the sign-in client id) is answered by the
+  server at runtime and needs only a restart.
+- **Checking a file** without serving it: `npm run server -- -c <path> --exit`.
 
 ### Behind a proxy
 
@@ -206,13 +227,6 @@ that carries one without the other. The Google button appears on the login
 screen as soon as the server answers a `clientId`; the browser loads Google's
 own sign-in script for it, so the address the client is opened on has to be
 known to Google as an origin.
-
-> [!NOTE]
-> Today the server validates these sections and hands the client id to the
-> clients, but the account flow behind the button (token verification,
-> sessions, the sign-in email) is still being restored — see `dev/plans/`.
-> The setup below is what that flow reads, so a configuration written now keeps
-> working when it lands.
 
 ### 1. Create a Google Cloud project
 
@@ -339,8 +353,8 @@ see step 5.
 1. Validate the configuration: `npm run server -- --exit` — the boot fails on a
    malformed `email`/`auth` section or on one present without the other.
 2. Start the server. The client id is answered at runtime, so **no
-   `--compile`** is needed for it; a rebuild is only needed when `http.domain`,
-   a `proxy` or a port changed.
+   `--compile`** is needed for it; a rebuild is only needed when an address
+   (`domain`, `port`, `proxy`, `remote`) or `http.appearance` changed.
 3. Open the web client on one of the origins of step 3 → **Login**: the
    "Sign in with Google" button is there. If it is missing, the server did not
    answer a `clientId`; if Google shows *Error 400: origin_mismatch*, the

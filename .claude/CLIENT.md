@@ -275,7 +275,7 @@ bar's sign out does after the call: `navTop.refresh()`, `closeDialogs()`,
 wrong code, another device's, one that ran out — is one notice, since the
 person's move is the same for all three: check the code or send a new one.
 
-The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
+The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` (the `color` and `mode` among them are the server's `appearance` from `index.json` where it names them) — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
 
 `OLD_GUEST_TABLE` is dropped on every open; a client that ran the two-table build
 still carries it. Dropping a table that is not there is free, so it costs a
@@ -1319,19 +1319,74 @@ none. **A registry id is not its path** — `room-create` lives at
 `ui/room/create/` and the id is what the shell, the markup and the router know it
 by.
 
-The localization dictionary grows with the UI: `src/localization.js` holds only
-the shell slice (the loading layer of `index.html`, and the strings the two bars
-share with the menu dialog), and the registry hands each module's
-`localization.json` to `add()` while the module loads.
+The localization dictionary grows with the UI, and none of it is code:
+`src/localization.js` is the lookup alone, starts empty and knows no file. A
+`localization.json` sits at the level that uses it. The shell's own levels
+carry one each that no module brings, and boot `load()`s the three
+(`LEVEL_DICTIONARIES` in `ui/ui.js`) before anything asks for a line:
+`ui/localization.json` is what every level shares — `main.name`, the
+application's own name where the configuration gives it none, which the desktop
+shell names its auto-launch entry from in `initDesktop` — while
+`ui/loading/localization.json` is the loading layer of `index.html` and
+`ui/management/localization.json` the `main.*` chrome the two bars, the menu and
+the management screens share. The registry then hands each module's
+`localization.json` to `add()` while the module loads; the room segment's
+shared lines (`room.share.failed`, which `src/room/stream.js` shows) are in the
+room module's own, since that module is the level. `tests/localization.test.js`
+holds a module to the slices of its own folder and the folders above it, and
+checks every literal key a script hands to `get()` as well as the markup's. `supportedLanguages` is a getter for the same
+reason: the languages arrive with the slices, so they are read off the
+dictionary when asked rather than when the module is imported.
 
 ## Odds and ends worth keeping
 
 - **beercss nav badges** are read as `nav.left > a > .badge`, so the narrow rail
   wants the badge as a direct child of the entry and the wide one wants it inside
   the wrapper beside the icon. `nav-left` re-parents it when the width changes.
-- **The theme is applied in two goes.** beercss derives the mode from the theme
-  it just built, so `ui("theme", …)` and `ui("mode", …)` cannot be set in one
-  tick — hence the `setTimeout(…, 1)` in `applyTheme`.
+- **The theme is painted before any module runs.** A person should meet the
+  colour and the mode on the loading layer rather than watch them switch once
+  the modules arrive, so the first thing in the body of `index.html` is a plain
+  script — a module would run after the first paint — that puts the palette on
+  the body as beercss would: the class of the mode and the palette as the
+  body's `style`. It paints the palette this client last drew with (`appearance`
+  in `localStorage`, `{color, mode, light, dark}` — a cache for the paint, the
+  setting itself stays in IndexedDB, which cannot be read synchronously) and,
+  on a first visit, the server's default, which the build computes for
+  `http.appearance` with the same `material-dynamic-colors` the client uses
+  (`buildPaint` in `building.js`) and writes into `<meta name="appearance">` —
+  an attribute, because the minifier routes inline script through UglifyJS and
+  leaves attributes alone. `applyTheme` in `ui/ui.js` then hands beercss a
+  palette it already has as `{light, dark}`, which is synchronous and draws
+  nothing new, builds one only for a colour never drawn (and sets the mode
+  after it, since beercss sets the mode from the palette it holds), and caches
+  whatever it drew; the appearance window goes through it as
+  `ctx["ui"].applyTheme()` so a change is painted at the next load too. `ui.js`
+  imports the two beercss modules itself so `ui()` is there when it is called.
+  Under the desktop shell the window starts hidden and is shown on
+  `ready-to-show`, so it never appears as a blank frame before that paint.
+  The same script sets the **title** from the configured `name` in the meta —
+  in the language this client last showed (`lang` in the same cache, written by
+  `applyLanguage`), else the browser's — and `applyLanguage` sets it again on
+  every language change; the name itself is never cached, so a renamed server
+  is renamed at the next load. Electron's window takes the page title on its
+  own, and `main.js` hands it to the tray's tooltip on `page-title-updated`.
+  The build also writes the English name (or the first) as the static
+  `<title>` for anything that reads the page without running it. Where no name
+  is configured, the title is the dictionary's `main.name` in the client's
+  language. The rules are `pickName`/`pickSystemName` in `src/appname.js`
+  (pure, `tests/appname.test.js`).
+  **What the system is told is in English.** The auto-launch entry
+  (`openAutoLaunch` in `src/desktop.js`) is named with the configured English
+  name, else the first configured, else the dictionary's English `main.name`,
+  stripped of what a registry value, a file name or an AppleScript string
+  cannot hold - the name *is* the entry on every platform (a `Run` value, a
+  LaunchAgent file or login item, an autostart `.desktop` file). Because the
+  entry is found by its name, a renamed one would leave the old entry starting
+  the application beside it and the setting reading as off, so the name last
+  registered is kept in `localStorage` (`autoLaunchName`, "Desktop Streamer"
+  before it existed) and an enabled entry under another name is moved: the new
+  one enabled first, the old one disabled after, and the name recorded only
+  once that worked, so a failed move is tried again at the next start.
 - **Media device lists** come back unnamed and id-less until the page has been
   granted access once, so `media-devices.js` asks again after a `getUserMedia`
   call.

@@ -25,14 +25,8 @@ const AppearanceWindow = class extends Panel {
             }
             await setLocal("lang", lang);
 
-            if (lang === "auto") {
-                lang = (navigator.language || navigator.userLanguage).substring(0,2);
-            }
-            if (localization.supportedLanguages.indexOf(lang) === -1) {
-                lang = "en";
-            }
-            localization.setLang(lang);
-            localization.translate(lang);
+            // the language resolved and applied, the title with it
+            lang = ctx["ui"].applyLanguage();
             if (desktop.isAvailable) {
                 desktop.ipcRenderer.send("api", "set-lang", lang);
             }
@@ -48,11 +42,7 @@ const AppearanceWindow = class extends Panel {
             } else {
                 conf["local"]["mode"] = "auto";
             }
-            let mode = conf["local"]["mode"];
-            if (mode === "auto") {
-                mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-            }
-            globalThis.ui("mode", mode);
+            ctx["ui"].applyTheme();
             this.setThemeIcon();
             await setLocal("mode", conf["local"]["mode"]);
         });
@@ -126,9 +116,12 @@ const AppearanceWindow = class extends Panel {
             this.themeBtn.children[0].innerText = "dark_mode";
         }
     };
+    // drawn at once and written behind it - applyTheme reads the value that
+    // setLocal puts in memory before it reaches the disk
     async setColor(color) {
-        globalThis.ui("theme", color);
-        await this.ctx["setLocal"]("color", color);
+        const saving = this.ctx["setLocal"]("color", color);
+        await this.ctx["ui"].applyTheme();
+        await saving;
     };
 
     open(params) {

@@ -7,6 +7,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 
 // third-party dependencies
@@ -34,6 +35,15 @@ const PART_SUFFIX = ".part";
 
 // the client configuration the server generates for the built clients
 const CONF_FILE = "index.json";
+
+// how the client looks where the configuration says nothing (http.appearance)
+const DEFAULT_APPEARANCE = {"color": "#006e1c", "theme": "auto"};
+
+// the page the build writes the default palette into, and the palette
+// generator the client itself builds its theme with - the same one, so the
+// palette painted first is the one the client goes on to use
+const INDEX_FILE = "index.html";
+const PALETTE_SCRIPT = ["client", "web", "libs", "beercss", "material-dynamic-colors.min.js"];
 
 // written by the build, never copied from the sources
 const GENERATED_FILES = new Set([CONF_FILE]);
@@ -287,6 +297,8 @@ const buildConfFile = async function(conf, dists = []) {
         "version": await getVersion(),
         "http": {},
         "ws": {},
+        // how the client looks, as configured over the defaults
+        "appearance": {...DEFAULT_APPEARANCE, ...(conf["http"]?.["appearance"] ?? {})},
         "clients": dists.map(function(dist) {
             return dist["os"] + "-" + dist["arch"] + ".zip";
         })
@@ -304,6 +316,60 @@ const buildConfFile = async function(conf, dists = []) {
         confData["ws"]["port"] = wsAddress["port"];
     }
     return JSON.stringify(confData);
+};
+
+// the palette the page is painted with before its first module runs: what
+// beercss would build for the configured colour, as the two style attributes it
+// puts on the body - {color, mode, light, dark}, and the configured name by
+// language where there is one - see the script in index.html
+const buildPaint = async function(conf) {
+    const appearance = {...DEFAULT_APPEARANCE, ...(conf["http"]?.["appearance"] ?? {})};
+    await import(pathToFileURL(path.join(serverScriptPath, ...PALETTE_SCRIPT)).href);
+    const palette = await globalThis.materialDynamicColors(appearance["color"]);
+    // the variable names exactly as beercss writes them (ui("theme") in beer.min.js)
+    const toStyle = function(colors) {
+        let style = "";
+        for (const key of Object.keys(colors)) {
+            style += "--" + key.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, "$1-$2").toLowerCase() + ":" + colors[key] + ";";
+        }
+        return style;
+    };
+    const paint = {
+        "color": appearance["color"],
+        "mode": appearance["theme"],
+        "light": toStyle(palette["light"]),
+        "dark": toStyle(palette["dark"])
+    };
+    if (typeof appearance["name"] === "object") {
+        paint["name"] = {...appearance["name"]};
+    }
+    return paint;
+};
+
+const escapeHTML = function(text) {
+    return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+};
+
+// the paint written into the built index.html, as the content of its
+// appearance meta - an attribute, since the minifier leaves those as they are.
+// A configured name is also the page's static title, in English where it is
+// given one, for whatever reads the page without running it; the script in the
+// page replaces it with the one in the client's language.
+const injectAppearance = function(webFiles, paint) {
+    const page = webFiles.find(function(file) {
+        return file["path"] === INDEX_FILE;
+    });
+    const tag = /<meta name="?appearance"?[^>]*>/;
+    if (typeof page === "undefined" || tag.test(page["data"].toString("utf8")) === false) {
+        throw new Error("No appearance meta in " + INDEX_FILE);
+    }
+    let html = page["data"].toString("utf8").replace(tag, "<meta name=\"appearance\" content=\"" + escapeHTML(JSON.stringify(paint)) + "\">");
+    const names = paint["name"];
+    if (typeof names === "object" && names !== null && Object.keys(names).length > 0) {
+        const title = names["en"] ?? Object.values(names)[0];
+        html = html.replace(/<title>[^<]*<\/title>/, "<title>" + escapeHTML(title) + "</title>");
+    }
+    page["data"] = Buffer.from(html, "utf8");
 };
 
 // write the built web client to <compilePath>/web
@@ -450,6 +516,13 @@ const compileClients = async function(conf) {
     const electronPath = path.join(serverScriptPath, "client", "electron");
     const webFiles = await buildFolder(webPath, true, GENERATED_FILES);
     const electronFiles = await buildFolder(electronPath, false);
+    // a page without its palette still works, it only switches colour once
+    // its first module runs, so a failure here is a warning
+    try {
+        injectAppearance(webFiles, await buildPaint(conf));
+    } catch (error) {
+        process.stdout.write("\n    Cannot paint the default theme (" + error.message + ")    ");
+    }
     await writeWeb(webDestPath, webFiles, confFile);
     process.stdout.write("done");
 
@@ -510,5 +583,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { compileClients, buildConfFile, minifyScript, minifyStyle, minifyMarkup };
-export default { compileClients, buildConfFile, minifyScript, minifyStyle, minifyMarkup };
+export { compileClients, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export default { compileClients, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };

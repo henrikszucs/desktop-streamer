@@ -146,6 +146,10 @@
             "ended": {
                 "en": "The other device stopped sharing its screen.",
                 "hu": "A másik eszköz befejezte a képernyője megosztását."
+            },
+            "failed": {
+                "en": "The screen could not be shared, so the connection was ended.",
+                "hu": "A képernyőt nem sikerült megosztani, ezért a kapcsolat megszakadt."
             }
         },
         "leave": {

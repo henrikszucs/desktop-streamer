@@ -3,11 +3,33 @@
 // the shell layer: everything boot needs a document for, and the build that
 // mounts the module tree - the one file in ./ui that is not a module
 
+// third-party dependencies - the same modules index.html starts fetching, so
+// ui() and the palette generator are there before a theme is applied
+import "../libs/beercss/beer.min.js";
+import "../libs/beercss/material-dynamic-colors.min.js";
+
 // first-party dependencies
 import { width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
 import localization from "../src/localization.js";
+import { pickName } from "../src/appname.js";
 import registry from "../src/registry.js";
 import { createLoading } from "./loading/loading.js";
+
+// the dictionary slices no module brings, each beside what uses it: the
+// application's name (the title and the desktop shell), the loading layer of
+// index.html, and the chrome of the management segment its modules share - the
+// registry adds each module's own. The room's lines are the room module's.
+const LEVEL_DICTIONARIES = [
+    "/ui/localization.json",
+    "/ui/loading/localization.json",
+    "/ui/management/localization.json"
+];
+
+const loadDictionaries = function() {
+    return Promise.all(LEVEL_DICTIONARIES.map(function(url) {
+        return localization.load(url);
+    }));
+};
 
 // the size of the UI, from the display it is read on: every length in the shell
 // is a rem, so the root font size is the size of the whole UI
@@ -18,21 +40,97 @@ const applyScale = function() {
     return {"display": display, "kind": kind};
 };
 
-// the theme, then the mode a tick later - beercss derives the mode from the
-// theme it just built, so the two cannot be set in one go
-const applyTheme = function(local) {
-    globalThis.ui("theme", local["color"]);
-    setTimeout(() => {
-        let mode = local["mode"];
-        if (mode === "auto") {
-            mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+// what the script at the top of index.html paints the page with before any
+// module runs: {color, mode, light, dark, lang}, the last drawn cached under
+// this key, else the server's default the build wrote into the appearance meta
+// - which also holds the configured name, by language
+const PAINT_KEY = "appearance";
+
+const readJSON = function(text) {
+    try {
+        const value = JSON.parse(text);
+        return (typeof value === "object" && value !== null ? value : null);
+    } catch (error) {
+        return null;
+    }
+};
+
+const readCached = function() {
+    try {
+        return readJSON(localStorage.getItem(PAINT_KEY));
+    } catch (error) {
+        return null;
+    }
+};
+
+const readBuilt = function() {
+    return readJSON(document.querySelector("meta[name=appearance]")?.content ?? "");
+};
+
+// fields merged into the cache, so the theme and the language keep each other's
+const writeCached = function(fields) {
+    try {
+        localStorage.setItem(PAINT_KEY, JSON.stringify({...readCached(), ...fields}));
+    } catch (error) {
+        // a browser with no storage paints the server's default next time
+    }
+};
+
+const isPaint = function(paint) {
+    return typeof paint?.["light"] === "string" && typeof paint?.["dark"] === "string";
+};
+
+// the painted palette of this colour, if there is one to reuse
+const findPaint = function(color) {
+    return [readCached(), readBuilt()].find(function(paint) {
+        return isPaint(paint) && String(paint["color"]).toLowerCase() === String(color).toLowerCase();
+    }) ?? null;
+};
+
+
+// the theme, then the mode. A palette the page was already painted with is
+// handed back to beercss as it is, which is synchronous and draws nothing new;
+// only a colour never drawn before is built, and the mode waits for it, since
+// beercss sets the mode from the palette it holds. Whatever is drawn is cached
+// for the next load to paint with.
+const applyTheme = async function(local) {
+    let mode = local["mode"];
+    if (mode === "auto") {
+        mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    try {
+        let paint = findPaint(local["color"]);
+        if (paint !== null) {
+            globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
+        } else {
+            paint = await globalThis.ui("theme", local["color"]);
         }
         globalThis.ui("mode", mode);
-    }, 1);
+        if (isPaint(paint) === true) {
+            writeCached({
+                "color": local["color"],
+                "mode": local["mode"],
+                "light": paint["light"],
+                "dark": paint["dark"]
+            });
+        }
+    } catch (error) {
+        console.error("Cannot apply the theme:", error);
+    }
+};
+
+// the name as the title - the tab's, and the desktop window's and tray's,
+// which follow it: the configured one in this language, else the dictionary's
+const applyName = function(lang) {
+    const name = pickName(readBuilt()?.["name"], lang) ?? localization.get("main.name", lang);
+    if (typeof name === "string" && name !== "") {
+        document.title = name;
+    }
 };
 
 // the language of the shell: "auto" follows the browser, anything unsupported
-// falls back to English, and the resolved one goes back to the desktop shell
+// falls back to English, and the resolved one goes back to the desktop shell -
+// the name follows it, and it is cached for the title of the next load
 const applyLanguage = function(local) {
     let lang = local["lang"];
     if (lang === "auto") {
@@ -43,6 +141,8 @@ const applyLanguage = function(local) {
     }
     localization.setLang(lang);
     localization.translate(lang);
+    applyName(lang);
+    writeCached({"lang": lang});
     return lang;
 };
 
@@ -172,6 +272,10 @@ const createUI = function(ctx) {
         "reload": function() { return ctx["router"].loadPath(); },
         // the local configuration applied again, for a reset of it
         "applyLocal": function() { return applyLocal(ctx["conf"]["local"], ctx["desktop"]); },
+        // the colour and the mode of the local configuration, drawn and cached
+        "applyTheme": function() { return applyTheme(ctx["conf"]["local"]); },
+        // the language of the local configuration, with the name that follows it
+        "applyLanguage": function() { return applyLanguage(ctx["conf"]["local"]); },
 
         // the one question asked before something is undone for good, answered
         // true or false. It opens nested - whatever asked it is still behind it
@@ -215,5 +319,5 @@ const buildUI = async function(router) {
     }
 };
 
-export { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
-export default { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
+export { loadDictionaries, applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
+export default { loadDictionaries, applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };

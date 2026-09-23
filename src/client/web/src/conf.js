@@ -20,10 +20,11 @@ const OLD_GUEST_TABLE = "guest";
 // a client is only ever one guest, so the empty key collides with no account
 const GUEST_ID = "";
 
-// the local keys and the value each falls back to
+// the local keys and the value each falls back to - the colour and the theme are
+// the server's where its configuration names them (http.appearance)
 const LOCAL_DEFAULTS = {
-    "color": "#006e1c",
-    "mode": "auto",
+    "color": conf["appearance"]?.["color"] ?? "#006e1c",
+    "mode": conf["appearance"]?.["theme"] ?? "auto",
     "lang": "auto",
     "autoLaunch": false,
     "minimizing": false,
