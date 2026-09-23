@@ -29,6 +29,14 @@ import { createMailer } from "./mail.js";
 const SOCKET_PACKET_SIZE = 65536;
 const SOCKET_SEND_THREADS = 64;
 
+// what one socket may make this process hold. A frame is one packet or one
+// JSON message - the largest of those is a relayed message of DATA_MAX - so a
+// frame far past that is not from a client; and a message is held here until
+// its last packet is in, so what one socket's unfinished messages hold at once
+// is capped too, well above a relayed frame of a stream (see handlers/rooms.js)
+const SOCKET_FRAME_MAX = 256 * 1024;
+const SOCKET_RECEIVE_MAX = 32 * 1024 * 1024;
+
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
     wsServer = null;
@@ -116,7 +124,8 @@ const ServerWS = class {
         if (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]) {
             // the HTTP server already listens here, only add the upgrade
             this.wsServer = new WebSocketServer({
-                "server": serverHTTP.httpServer
+                "server": serverHTTP.httpServer,
+                "maxPayload": SOCKET_FRAME_MAX
             });
         } else {
             this.wsHttpServer = https.createServer({
@@ -133,7 +142,8 @@ const ServerWS = class {
             });
             await serverHTTP.listen(this.wsHttpServer, conf["ws"]["port"]);
             this.wsServer = new WebSocketServer({
-                "server": this.wsHttpServer
+                "server": this.wsHttpServer,
+                "maxPayload": SOCKET_FRAME_MAX
             });
         }
         this.wsServer.addListener("connection", (ws) => {
@@ -175,7 +185,7 @@ const ServerWS = class {
                 }
                 ws.send(data);
             },
-            "interactTimeout": 3000,
+            "interactTimeout": 1500,
             "timeout": 5000,
             // a packet is acknowledged one by one with sendThreads of them in
             // flight, so packetSize * sendThreads is what one round trip can
@@ -184,7 +194,8 @@ const ServerWS = class {
             "packetSize": SOCKET_PACKET_SIZE,
             "packetTimeout": 1000,
             "packetRetry": Infinity,
-            "sendThreads": SOCKET_SEND_THREADS
+            "sendThreads": SOCKET_SEND_THREADS,
+            "maxReceiveBytes": SOCKET_RECEIVE_MAX
         });
 
         // Create state, the session id is taken before the first await.
@@ -224,7 +235,13 @@ const ServerWS = class {
                 console.log(error);
                 return;
             }
-            com.receive(data);
+            // receive is async, so what it throws on a frame it cannot read is a
+            // rejection - one nobody handled would end the process, from any
+            // socket that sends one. The connection is what goes instead.
+            com.receive(data).catch(function(error) {
+                console.log("Unreadable frame, closing (" + sessionId + "):", error);
+                ws.terminate();
+            });
         });
 
         // listen error
@@ -361,5 +378,5 @@ const ServerWS = class {
 // the server is a singleton, the module hands out the running instance
 const serverWS = new ServerWS();
 
-export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS };
+export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS, SOCKET_FRAME_MAX, SOCKET_RECEIVE_MAX };
 export default serverWS;

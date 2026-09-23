@@ -31,6 +31,12 @@ const DELETE_COOLDOWN = 60 * 1000;
 // the id and key searches give up rather than spinning, as the join codes do
 const ID_ATTEMPTS = 100;
 
+// the session key is the credential a device signs in again with and nobody
+// ever types it, so it is long; the delete key is typed off a mail, and is
+// only good for a day, on the session that asked for it
+const SESSION_KEY_LENGTH = 32;
+const ID_LENGTH = 10;
+
 // a name is a label, and the field that writes one is capped at the same length
 const NAME_MAX = 64;
 
@@ -103,9 +109,9 @@ const createAuth = function(conf) {
 // the rows
 //
 // a value no row of the column holds, or undefined when the search gives up
-const generateUnique = async function(db, table, column) {
+const generateUnique = async function(db, table, column, length=ID_LENGTH) {
     for (let i = 0; i < ID_ATTEMPTS; i++) {
-        const value = generateId(10);
+        const value = generateId(length);
         const taken = await db(table).where(column, value).first();
         if (typeof taken === "undefined") {
             return value;
@@ -459,7 +465,7 @@ const loginGoogle = async function(ctx) {
         session = {...session, ...change};
     } else {
         const newSessionId = await generateUnique(db, "sessions", "session_id");
-        const sessionKey = await generateUnique(db, "sessions", "session_key");
+        const sessionKey = await generateUnique(db, "sessions", "session_key", SESSION_KEY_LENGTH);
         if (newSessionId === undefined || sessionKey === undefined) {
             messageObj.send({"success": false, "error": "failed"});
             return;
@@ -871,5 +877,5 @@ const handlers = {
     "delete": deleteAccount
 };
 
-export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, SESSION_LIFETIME, DELETE_LIFETIME, DELETE_COOLDOWN, NAME_MAX, USER_AGENT_MAX };
+export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, SESSION_LIFETIME, SESSION_KEY_LENGTH, DELETE_LIFETIME, DELETE_COOLDOWN, NAME_MAX, USER_AGENT_MAX };
 export default handlers;

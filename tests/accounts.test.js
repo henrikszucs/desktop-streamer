@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME } from "../src/server/ws/handlers/accounts.js";
+import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME, SESSION_KEY_LENGTH } from "../src/server/ws/handlers/accounts.js";
 import { createJoin } from "../src/server/ws/handlers/joins.js";
 
 // an account is a row, so these run against a real SQLite file, the same way
@@ -173,6 +173,7 @@ test("login-google makes the account, the session and the signed-in connection",
         const answer = await signIn(server, "one", "alice");
         assert.equal(answer["success"], true);
         assert.equal(typeof answer["sessionKey"], "string");
+        assert.equal(answer["sessionKey"].length, SESSION_KEY_LENGTH);
         assert.deepEqual(answer["user"], {
             "userId": answer["user"]["userId"],
             "email": "alice@example.com",

@@ -60,6 +60,12 @@ const reject = function(messageObj, error) {
 const handleAPI = async function(messageObj, sessionId, server) {
     // check basic structure
     await messageObj.wait();
+    // a message that never arrived whole - went silent, was aborted, or was
+    // refused for passing the receive limit - has nothing to answer and no way
+    // to answer it: send() only exists on one that finished
+    if (messageObj.error !== "") {
+        return;
+    }
     const message = messageObj.data;
 
     // A binary message is not a call. It is a frame the relay carries, and it

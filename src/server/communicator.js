@@ -34,6 +34,8 @@ const Communicator = class {
     packetTimeout = 1000;       //timeout for packet acknowledgment
     packetRetry = Infinity;     //retry attemts number for one packets
     sendThreads = 16;           //packets that can be sent in same time
+    maxReceiveBytes = Infinity; //the most the other side's unfinished messages may hold here at once
+    receiveBytes = 0;           //what they hold now
 
     timeOffset = 0;             //time offset between the sender and receiver
     timeSyncIntervalId = -1;    //time sync interval id
@@ -125,6 +127,13 @@ const Communicator = class {
                 throw new Error("'sendThreads' option must be number");
             }
         }
+        if (typeof config["maxReceiveBytes"] !== "undefined") {
+            if (typeof config["maxReceiveBytes"] === "number") {
+                this.maxReceiveBytes = config["maxReceiveBytes"];
+            } else {
+                throw new Error("'maxReceiveBytes' option must be number");
+            }
+        }
         if (typeof config["timeOffset"] !== "undefined") {
             if (typeof config["timeOffset"] === "number") {
                 this.timeOffset = config["timeOffset"];
@@ -142,6 +151,7 @@ const Communicator = class {
         }
         this.sender = async function(data, transfer, message) {};
         this.messages = new Map();
+        this.receiveBytes = 0;
     };
 
     timeSyncStart(resyncTime=60000) {
@@ -479,10 +489,9 @@ const Communicator = class {
                 sendTime = msg[offset++]; //get send time
                 messageId = msg[offset++]; //get message id
                 if (isSplit) {
-                    packetId = msg[offset++]; //get packet id
-                    if (packetId === 0) {
-                        packetCount = msg[offset++]; //get packet count
-                    }
+                    //a JSON message is always sent as one packet
+                    console.warn("Wrong format incoming", msg);
+                    return;
                 }
                 if (isAnswer) {
                     answerFor = msg[offset++]; //get answer for
@@ -491,55 +500,60 @@ const Communicator = class {
             }
 
         } else if (msg instanceof ArrayBuffer && msg.byteLength > 0) {
-            //handle 1st layer
-            let offset = 0;
-            const view = new DataView(msg);
-            offset += 1;
-            let h = view.getUint8(msg.byteLength - offset);
-            isTimeSync = ((h & 1) !== 0 ? true : false); //get time sync request
-            isSideSync = ((h & 2) !== 0 ? true : false); //get side sync request
+            //a frame shorter than its own header is read out of bounds, which throws
+            try {
+                //handle 1st layer
+                let offset = 0;
+                const view = new DataView(msg);
+                offset += 1;
+                let h = view.getUint8(msg.byteLength - offset);
+                isTimeSync = ((h & 1) !== 0 ? true : false); //get time sync request
+                isSideSync = ((h & 2) !== 0 ? true : false); //get side sync request
 
-            //handle 2nd layer
-            if (isTimeSync) {
-                offset += 8;
-                time1 = view.getFloat64(view.byteLength - offset);
-                offset += 8;
-                time2 = view.getFloat64(view.byteLength - offset);
-            } else if (isSideSync) {
-                offset += 4;
-                time = view.getUint32(view.byteLength - offset);
-                offset += 4;
-                UID1 = view.getUint32(view.byteLength - offset);
-                offset += 4;
-                UID2 = view.getUint32(view.byteLength - offset);
-
-            } else {
-                isInvoke = ((h & 4) !== 0 ? true : false); //get invoke flag
-                isSplit = ((h & 8) !== 0 ? true : false); //get split flag
-                isAbort = ((h & 16) !== 0 ? true : false); //get abort flag
-                isAnswer = ((h & 32) !== 0 ? true : false); //get answer flag
-
-                offset += 4;
-                sendTime = view.getUint32(view.byteLength - offset); //get send time
-                offset += 4;
-                messageId = view.getUint32(view.byteLength - offset); //get message id
-                if (isSplit) {
-                    offset += 2;
-                    packetId = view.getUint16(view.byteLength - offset); //get packet id
-                    if (packetId === 0 && messageId % 2 !== this.myReminder) {
-                        offset += 2;
-                        packetCount = view.getUint16(view.byteLength - offset); //get packet count
-                    }
-                }
-                if (isAnswer) {
+                //handle 2nd layer
+                if (isTimeSync) {
+                    offset += 8;
+                    time1 = view.getFloat64(view.byteLength - offset);
+                    offset += 8;
+                    time2 = view.getFloat64(view.byteLength - offset);
+                } else if (isSideSync) {
                     offset += 4;
-                    answerFor = view.getUint32(view.byteLength - offset); //get answer for
+                    time = view.getUint32(view.byteLength - offset);
+                    offset += 4;
+                    UID1 = view.getUint32(view.byteLength - offset);
+                    offset += 4;
+                    UID2 = view.getUint32(view.byteLength - offset);
+
+                } else {
+                    isInvoke = ((h & 4) !== 0 ? true : false); //get invoke flag
+                    isSplit = ((h & 8) !== 0 ? true : false); //get split flag
+                    isAbort = ((h & 16) !== 0 ? true : false); //get abort flag
+                    isAnswer = ((h & 32) !== 0 ? true : false); //get answer flag
+
+                    offset += 4;
+                    sendTime = view.getUint32(view.byteLength - offset); //get send time
+                    offset += 4;
+                    messageId = view.getUint32(view.byteLength - offset); //get message id
+                    if (isSplit) {
+                        offset += 2;
+                        packetId = view.getUint16(view.byteLength - offset); //get packet id
+                        if (packetId === 0 && messageId % 2 !== this.myReminder) {
+                            offset += 2;
+                            packetCount = view.getUint16(view.byteLength - offset); //get packet count
+                        }
+                    }
+                    if (isAnswer) {
+                        offset += 4;
+                        answerFor = view.getUint32(view.byteLength - offset); //get answer for
+                    }
+                    data = msg.transfer(msg.byteLength - offset); //get data
+
+
                 }
-                data = msg.transfer(msg.byteLength - offset); //get data
-
-
+            } catch (error) {
+                console.warn("Wrong format incoming", msg);
+                return;
             }
-
         } else {
             console.warn("Wrong format incoming", msg);
             return;
@@ -585,17 +599,17 @@ const Communicator = class {
             }
 
             //recive my request
-            const now = Date.now() % 4294967295 - 100;
+            const now = Date.now() % 4294967295 - this.interactTimeout;
             if (time < now || now - time > this.interactTimeout || UID1 !== this.UID) {
                 return;
             }
             //console.log("uid", UID1, UID2);
-            this.sideResolve(UID2);
+            this.sideResolve?.(UID2);   //a reply after the sync ended has nobody waiting for it
             return;
         }
 
         // delete outdated packets
-        const now = Date.now() % 4294967295 - 100;
+        const now = Date.now() % 4294967295 - this.interactTimeout;
         if (sendTime < now || now - sendTime > this.interactTimeout) {
             console.warn("outdated packet", sendTime, now);
             return;
@@ -697,6 +711,19 @@ const Communicator = class {
         }
         
 
+        //the other side may only hold so much here at once: a message that
+        //would take more is refused, and the sender is told
+        const size = (data instanceof ArrayBuffer ? data.byteLength : 0);
+        const previous = messageObj.packets.get(packetId);
+        const growth = size - (previous instanceof ArrayBuffer ? previous.byteLength : 0);
+        if (this.receiveBytes + growth > this.maxReceiveBytes) {
+            console.warn("receive limit reached, message refused", messageId);
+            this.receiveRefuse(messageObj);
+            return;
+        }
+        this.receiveBytes += growth;
+        messageObj.receiveBytes += growth;
+
         //refresh interactivity
         clearTimeout(messageObj.interactTimeoutId);
         messageObj.interactTimeoutId = setTimeout(() => {
@@ -775,6 +802,7 @@ const Communicator = class {
             } else {
                 messageObj.data = firstPacket;
             }
+            this.receiveRelease(messageObj);
             //console.log(new Uint8Array(messageObj.data))
             //console.log(messageObj.isAnswer);
 
@@ -1156,14 +1184,45 @@ const Communicator = class {
         //stop timers
         clearTimeout(messageObj.timeoutId);
         clearTimeout(messageObj.interactTimeoutId);
+        this.receiveRelease(messageObj);
 
         //waiting stucked packets
         await new Promise((resolve) => {
             setTimeout(resolve, this.interactTimeout);
         });
 
-        //free from global stack
+        //free from global stack, and whatever straggled in meanwhile - unless
+        //the object went on to a new exchange under a new id
+        if (messageObj.messageId === messageId) {
+            this.receiveRelease(messageObj);
+        }
         this.messages.delete(messageId);
+    };
+    //the bytes a message held against maxReceiveBytes are free again
+    receiveRelease(messageObj) {
+        this.receiveBytes -= messageObj.receiveBytes;
+        messageObj.receiveBytes = 0;
+        messageObj.packets = new Map();
+    };
+    //an incoming message this side will not hold: it ends here, and the other
+    //side is told so it stops sending the rest
+    receiveRefuse(messageObj) {
+        messageObj.error = this.ERROR.ABORT;
+        const sendTime = (Date.now() + this.timeOffset) % 4294967295; //32 bit time
+        const data = new Uint8Array(9);
+        const view = new DataView(data.buffer);
+        view.setUint8(view.byteLength - 1, 16); //abort flag
+        view.setUint32(view.byteLength - 5, sendTime); //send time
+        view.setUint32(view.byteLength - 9, messageObj.messageId);
+        try {
+            this.sender(data.buffer, [data.buffer], messageObj)?.catch?.(function() {});
+        } catch (e) {
+
+        }
+        for (const cb of messageObj.onaborts) {
+            cb();
+        }
+        this.messageFree(messageObj);
     };
 };
 
@@ -1194,6 +1253,7 @@ const Message = class {
     packetCount = Infinity; // The total packet count of the message.
     packetDone = 0;         // The total packet count of the message.
     packets = new Map();    // Incoming packet data in a map.
+    receiveBytes = 0;       // The bytes of those packets held against the receive limit.
     pending;                // The sending or invoke promise.
 
     //public API

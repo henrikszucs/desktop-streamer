@@ -108,7 +108,7 @@ const Server = class extends EventTarget {
         this.address = address;
         this.communicator = new Communicator({
             "sender": function() {},
-            "interactTimeout": 3000,    //the max timeout between two packet arrive
+            "interactTimeout": 1500,    //the max timeout between two packet arrive
             "timeout": 5000,            //the time for transmit message
             // the packet layer, the same numbers as the server's: a packet is
             // acknowledged one by one with sendThreads in flight, so their

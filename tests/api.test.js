@@ -20,6 +20,7 @@ const buildMessage = function(data, isInvoke = true) {
     const messageObj = {
         "data": data,
         "isInvoke": isInvoke,
+        "error": "",
         "sent": [],
         "aborts": 0,
         "waits": 0,
@@ -106,6 +107,18 @@ test("a type this server does not serve is answered, not aborted", async () => {
     await handleAPI(messageObj, "session-1", {});
     assert.deepEqual(messageObj.sent, [{"success": false, "error": "unknown-type"}]);
     assert.equal(messageObj.aborts, 0);
+});
+
+// one that went silent, was aborted or passed the receive limit: a real one has
+// no send() yet, so answering it would throw and take the socket down
+test("a message that never arrived whole is left alone, not answered", async () => {
+    for (const error of ["inactive", "abort", "reject", "timeout"]) {
+        const messageObj = buildMessage(undefined);
+        messageObj.error = error;
+        messageObj.send = undefined;
+        await handleAPI(messageObj, "session-1", {});
+        assert.equal(messageObj.aborts, 0, "for " + error);
+    }
 });
 
 test("a message that is not an object with a string type is answered too", async () => {

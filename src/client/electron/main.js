@@ -20,6 +20,8 @@ const cmd = require("node:child_process");
 const partition = "persist:remote_desktop";
 // how long the main window waits for its first paint before it is shown anyway
 const SHOW_TIMEOUT = 5000;
+// the addresses a self-signed certificate is accepted on: this machine's own
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 
 //
@@ -104,7 +106,6 @@ const main = async function() {
             }
         }
     ]);
-	app.commandLine.appendSwitch("ignore-certificate-errors"); //for debug
 
     // the loopback device a display capture's sound comes from is Windows'
     // own; on macOS it is ScreenCaptureKit's (13 and later) and on Linux the
@@ -126,6 +127,20 @@ const main = async function() {
 
     // Simulate web server at local://local.local
     const ses = session.fromPartition(partition);
+
+    // A certificate that does not verify is refused, the way a browser refuses
+    // it: this window runs with Node, so a script a stranger on the network
+    // could swap for their own - Google's sign-in, loaded into the page - must
+    // come over a connection that is what it says it is. This machine's own
+    // address is the one exception, for the development server on the
+    // self-signed pair in conf/.
+    ses.setCertificateVerifyProc(function(request, callback) {
+        if (request.errorCode !== 0 && LOCAL_HOSTS.has(request.hostname) === true) {
+            callback(0);
+            return;
+        }
+        callback(-3);       // Chromium's own verdict
+    });
     ses.protocol.handle("local", function(req) {
         let { pathname } = new URL(req.url);
         if (pathname === "/" || pathname === "") {
@@ -225,6 +240,33 @@ const main = async function() {
             if (tray !== null) {
                 tray.setToolTip(title);
             }
+        });
+        // The window is the bundled client and nothing else: a page it was
+        // navigated to would run with this window's Node. A window the page
+        // opens - Google's sign-in popup - is allowed, over https only, and
+        // runs as a plain sandboxed browser window with no Node in it.
+        const keepLocal = function(event, targetUrl) {
+            if (targetUrl.startsWith("local://") === false) {
+                event.preventDefault();
+            }
+        };
+        win.webContents.on("will-navigate", keepLocal);
+        win.webContents.on("will-redirect", keepLocal);
+        win.webContents.setWindowOpenHandler(function(details) {
+            if (details.url.startsWith("https://") === false) {
+                return {"action": "deny"};
+            }
+            return {
+                "action": "allow",
+                "overrideBrowserWindowOptions": {
+                    "webPreferences": {
+                        "partition": partition,
+                        "nodeIntegration": false,
+                        "contextIsolation": true,
+                        "sandbox": true
+                    }
+                }
+            };
         });
         win.loadURL(url);
         win.setMenu(null);

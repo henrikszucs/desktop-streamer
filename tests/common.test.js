@@ -132,6 +132,14 @@ test("generateId returns the requested length from the requested alphabet", () =
     assert.match(id, /^[ab]{200}$/);
 });
 
+// session keys, delete keys, join codes and room keys are all made by it, and
+// Math.random can be predicted from outputs anybody can observe
+test("generateId draws from the CSPRNG, not Math.random", (t) => {
+    t.mock.method(Math, "random", () => 0);
+    assert.notEqual(generateId(32), generateId(32));
+    assert.equal(Math.random.mock.callCount(), 0);
+});
+
 //
 // isDirEmpty
 //

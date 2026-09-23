@@ -7,6 +7,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import https from "node:https";
+import crypto from "node:crypto";
 
 //
 // Shared constants
@@ -24,11 +25,13 @@ const getVersion = async function() {
     return clientVersion;
 };
 
-// generate random ID
+// generate random ID. Session keys, delete keys, join codes and room keys are
+// all made here, so it draws from the CSPRNG: Math.random is predictable from
+// the outputs anybody can observe (their own codes and keys)
 const generateId = function(length=10, chars="1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
     let id = "";
     for (let i = 0; i < length; i++) {
-        id += chars[Math.floor(Math.random() * chars.length)];
+        id += chars[crypto.randomInt(chars.length)];
     }
     return id;
 };

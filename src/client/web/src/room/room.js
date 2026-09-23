@@ -167,7 +167,7 @@ const createRoom = function(ctx) {
                 }
                 channel.send(data);
             },
-            "interactTimeout": 3000,
+            "interactTimeout": 1500,
             "timeout": 5000,
             "packetSize": CHANNEL_PACKET_SIZE,
             "packetTimeout": 1000,

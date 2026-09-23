@@ -250,12 +250,15 @@ Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
 
 | option | value | what it limits |
 | --- | --- | --- |
-| `interactTimeout` | 3000 ms | the gap between two packets of one message |
+| `interactTimeout` | 1500 ms | the gap between two packets of one message |
 | `timeout` | 5000 ms | the whole message, end to end |
 | `packetSize` | 65536 B | one binary chunk |
 | `packetTimeout` | 1000 ms | wait for an ack before resending |
 | `packetRetry` | `Infinity` | resend attempts per packet |
 | `sendThreads` | 64 | packets in flight at once |
+| `maxReceiveBytes` | 32 MiB (server only) | what the other side's unfinished messages may hold at once; a message past it is aborted, and the sender's fails `reject` |
+
+The server also caps a single WebSocket frame at 256 KiB (`maxPayload`, `SOCKET_FRAME_MAX` in `ws/ws.js`). No frame the protocol makes comes close: a binary packet is `packetSize`, and the largest JSON message is a relayed one. A frame too short for its own header, a side sync reply nobody is waiting for, and a JSON frame flagged as split are all logged and dropped rather than thrown. `receive` is async, so anything it threw would be an unhandled rejection and would end the process; `ws.js` also closes the socket on any error that does get out.
 
 `packetSize × sendThreads` is what one round trip can carry, since every packet
 is acknowledged: the relayed stream lives on that product (4 MB per RTT here),
@@ -442,8 +445,8 @@ Two things to settle before wiring it up:
 An unknown or malformed call is **answered** with `{"success": false, ...}`.
 This matters: `messageObj.abort()` on an *incoming* message only resolves the
 local promise, it sends nothing to the peer, so aborting would leave the caller
-waiting out its whole `interactTimeout` and failing with `inactive` three
-seconds later. `handleAPI` funnels both cases through `reject()`, which answers
+waiting out its whole `interactTimeout` and failing with `inactive` a second and
+a half later. `handleAPI` funnels both cases through `reject()`, which answers
 an invoke and only falls back to `abort()` for a one-way send.
 
 ## Gotchas
@@ -478,7 +481,7 @@ const com = new Communicator({
     "sender": async function(data) {
         ws.send((data instanceof ArrayBuffer) ? data : JSON.stringify(data));
     },
-    "interactTimeout": 3000, "timeout": 5000, "packetSize": 65536,
+    "interactTimeout": 1500, "timeout": 5000, "packetSize": 65536,
     "packetTimeout": 1000, "packetRetry": Infinity, "sendThreads": 64
 });
 const ws = new WebSocket("wss://localhost:8444", {"rejectUnauthorized": false});
