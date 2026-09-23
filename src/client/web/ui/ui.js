@@ -96,73 +96,62 @@ const findPaint = function(color) {
     }) ?? null;
 };
 
-// how long a palette is waited for before the theme is given up on, so one that
-// never comes cannot hold every theme after it in the queue
-const THEME_TIMEOUT = 10000;
-
-const buildPalette = function(color) {
-    let timeoutId;
-    const timeout = new Promise(function(resolve, reject) {
-        timeoutId = setTimeout(function() {
-            reject(new Error("No palette for " + color + " in " + THEME_TIMEOUT + " ms"));
-        }, THEME_TIMEOUT);
-    });
-    return Promise.race([globalThis.ui("theme", color), timeout]).finally(function() {
-        clearTimeout(timeoutId);
-    });
+// the palette of a colour as beercss writes it (ui("theme") in beer.min.js),
+// built here so one no longer wanted is dropped rather than drawn late
+const toStyle = function(colors) {
+    let style = "";
+    for (const key of Object.keys(colors)) {
+        style += "--" + key.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, "$1-$2").toLowerCase() + ":" + colors[key] + ";";
+    }
+    return style;
 };
 
-// the theme, then the mode: a palette already drawn is handed back as it is,
-// only a new colour is built - and the mode waits for it
-const paintTheme = async function(local) {
-    let mode = local["mode"];
+const buildPaint = async function(color) {
+    const palette = await globalThis.materialDynamicColors(color);
+    return {"light": toStyle(palette["light"]), "dark": toStyle(palette["dark"])};
+};
+
+// the palette and the mode, drawn at once; before the first, beercss holds no
+// palette, and a mode set alone would wipe the one index.html painted
+let isDrawn = false;
+
+const drawTheme = function(paint, mode) {
+    globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
+    globalThis.ui("mode", mode);
+    isDrawn = true;
+};
+
+// only the latest call draws, so a colour still being built never lands over
+// one picked after it
+let themeCount = 0;
+
+const applyTheme = async function(local) {
+    // the values as they are now - the object is the live configuration
+    const color = local["color"];
+    const localMode = local["mode"];
+    let mode = localMode;
     if (mode === "auto") {
         mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
-    let paint = findPaint(local["color"]);
-    if (paint !== null) {
-        globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
-    } else {
-        paint = await buildPalette(local["color"]);
-    }
-    globalThis.ui("mode", mode);
-    if (isPaint(paint) === true) {
-        writeCached({
-            "color": local["color"],
-            "mode": local["mode"],
-            "light": paint["light"],
-            "dark": paint["dark"]
-        });
-    }
-};
-
-// one theme at a time, and only the latest of those that waited, so a colour
-// still being built never lands over one picked after it
-let themeQueue = Promise.resolve();
-let themeCount = 0;
-
-// settled once the queue is empty, so a caller whose theme was skipped goes on
-// only when the one that replaced it is on screen
-const settleTheme = function() {
-    const tail = themeQueue;
-    return tail.then(function() {
-        return (tail === themeQueue ? undefined : settleTheme());
-    });
-};
-
-const applyTheme = function(local) {
-    // the values as they are now - the object is the live configuration
-    const wanted = {"color": local["color"], "mode": local["mode"]};
     const count = ++themeCount;
-    themeQueue = themeQueue.then(function() {
+    let paint = findPaint(color);
+    if (paint === null) {
+        // the mode switched on the palette on screen while the new one builds
+        if (isDrawn === true) {
+            globalThis.ui("mode", mode);
+        }
+        try {
+            paint = await buildPaint(color);
+        } catch (error) {
+            console.error("Cannot apply the theme:", error);
+            return;
+        }
         if (count !== themeCount) {
             return;
         }
-        return paintTheme(wanted).catch(function(error) {
-            console.error("Cannot apply the theme:", error);
-        });
-    });
-    return settleTheme();
+    }
+    drawTheme(paint, mode);
+    writeCached({"color": color, "mode": localMode, "light": paint["light"], "dark": paint["dark"]});
 };
 
 // the name as the title - the tab's, and the desktop window's and tray's,

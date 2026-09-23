@@ -1359,15 +1359,19 @@ dictionary when asked rather than when the module is imported.
   an attribute, because the minifier routes inline script through UglifyJS and
   leaves attributes alone. `applyTheme` in `ui/ui.js` then hands beercss a
   palette it already has as `{light, dark}`, which is synchronous and draws
-  nothing new, builds one only for a colour never drawn (and sets the mode
-  after it, since beercss sets the mode from the palette it holds), and caches
-  whatever it drew; the appearance window goes through it as
-  `ctx["ui"].applyTheme()` so a change is painted at the next load too. Calls
-  are queued and only the latest waiting one runs, since a colour still being
-  built would otherwise land over one picked after it; a palette not built
-  within `THEME_TIMEOUT` is given up on so it cannot hold the queue, and every
-  caller's promise settles only once the queue is empty, so one whose theme was
-  skipped goes on when the one that replaced it is on screen. The meta is read
+  nothing new, builds one only for a colour never drawn, and caches whatever
+  it drew; the appearance window goes through it as `ctx["ui"].applyTheme()`
+  so a change is painted at the next load too. **The palette is built beside
+  beercss, never by it**: `ui("theme", color)` applies its result whenever it
+  resolves, so a slow colour would land over one picked after it and nothing
+  could call it off. `buildPaint` calls `materialDynamicColors` itself and
+  writes the style strings the way beercss does (the same `toStyle` as
+  `buildPaint` in `building.js`), and only the latest call draws what it
+  built — an earlier one that resolves late is dropped. Nothing waits in line
+  behind a build, so a cached colour or a mode switch is drawn at once; while a
+  new colour builds, the mode is switched on the palette already on screen,
+  except before the first draw, when beercss holds no palette and setting a
+  mode alone would wipe the one `index.html` painted. The meta is read
   once — the build's never changes — but the cache is read on every write,
   since another tab or window writes it too and a copy in memory would put its
   stale colour or language back. `ui.js`
@@ -1377,7 +1381,9 @@ dictionary when asked rather than when the module is imported.
   on a `did-fail-load` of the main frame (not an aborted navigation, `-3`, and
   not a frame inside the page such as the Google button) or after
   `SHOW_TIMEOUT`, so a page that never paints does not leave the application
-  running with no window.
+  running with no window. Any show counts, the tray's or a second launch's
+  too (the window's own `show` event), so a window hidden to the tray before
+  its first paint is not brought back by it.
   The same script sets the **title** from the configured `name` in the meta —
   in the language this client last showed (`lang` in the same cache, written by
   `applyLanguage`), else the browser's — and `applyLanguage` sets it again on
@@ -1392,27 +1398,35 @@ dictionary when asked rather than when the module is imported.
   **What the system is told is in English.** The auto-launch entry
   (`openAutoLaunch` in `src/desktop.js`) is named with the configured English
   name (by `pickName`'s rule, so an `en-US` counts, as it does for the static
-  `<title>`), else the first configured, else the dictionary's English
-  `main.name` — and "Desktop Streamer" where that slice did not load, since a
-  failed slice no longer fails the boot and an empty name would be the `Run`
-  key's default value — stripped of what a registry value, a file name or an AppleScript string
-  cannot hold - the name *is* the entry on every platform (a `Run` value, a
-  LaunchAgent file or login item, an autostart `.desktop` file). Because the
-  entry is found by its name, a renamed one would leave the old entry starting
-  the application beside it and the setting reading as off, so the name last
-  registered is kept in `localStorage` (`autoLaunchName`, "Desktop Streamer"
-  before it existed) and an enabled entry under another name is moved: the new
-  one enabled first, the old one disabled after, and the name recorded only
-  once that worked. Only when that move failed does `desktop["autoLaunch"]`
-  hand out answers for both: it reads as on while either is, and its `enable`
-  and `disable` (the settings reset's included — a `disable` that has no entry
-  of its own to remove still removes the old one) finish the move, so a failed
-  one never leaves an entry the setting cannot see; once the old entry is gone
-  it asks about the current one alone. A name that changes only in **case** is
-  moved the other way round — the old entry disabled first, then the new one
-  enabled — since the `Run` key and a macOS file name ignore case, and there
-  enabling the new name rewrites the old entry, which disabling the old name
-  would then remove.
+  `<title>`), else the first configured, else "Desktop Streamer" — the
+  product's own name, a constant rather than the dictionary's `main.name`,
+  since a slice that failed to load on one start and not the next would move
+  the entry back and forth — stripped of what a registry value, a file name or
+  an AppleScript string cannot hold - the name *is* the entry on every platform
+  (a `Run` value, a LaunchAgent file or login item, an autostart `.desktop`
+  file). Because the entry is found by its name, a renamed one would leave the
+  old entry starting the application beside it and the setting reading as off,
+  so every name an entry may still be under is kept in `localStorage`
+  (`autoLaunchNames`, seeded from the single `autoLaunchName` of the build
+  before it, else "Desktop Streamer"). The current name is written into that
+  list *before* anything is registered under it, so a name renamed again before
+  its move finished is still known and still moved; a name leaves the list only
+  once nothing is enabled under it. At start each enabled entry under another
+  name is moved — the new one enabled first, the old one disabled after. Only
+  when a move failed does `desktop["autoLaunch"]` hand out answers for all of
+  them: it reads as on while any is, its `enable` retries the moves, and its
+  `disable` (the settings reset's included — a `disable` that has no entry of
+  its own to remove still removes the others) removes every one it can, so a
+  failed move never leaves an entry the setting cannot see. A failure to move
+  or remove an *old* entry is logged and kept for the next try, never thrown:
+  the appearance window re-reads `isEnabled()` after every switch — a failed
+  one too — and records that, so the checkbox and `autoLaunch` say what the
+  system holds. A name that changes only in **case** is moved the other way
+  round — the old entry disabled first, then the new one enabled — since the
+  `Run` key and a macOS file name ignore case, and there enabling the new name
+  rewrites the old entry, which disabling the old name would then remove; if
+  the new one cannot be made, the old one is enabled again, so a failed move
+  never leaves no entry at all.
 - **Media device lists** come back unnamed and id-less until the page has been
   granted access once, so `media-devices.js` asks again after a `getUserMedia`
   call.

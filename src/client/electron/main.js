@@ -198,13 +198,17 @@ const main = async function() {
         // SHOW_TIMEOUT - a page that never paints must not leave no window
         let isShown = false;
         const showWindow = function() {
-            clearTimeout(showTimeoutId);
             if (isShown === false && win.isDestroyed() === false) {
-                isShown = true;
                 win.show();
             }
         };
         const showTimeoutId = setTimeout(showWindow, SHOW_TIMEOUT);
+        // shown by anything - the tray, a second launch - counts, so a window
+        // hidden to the tray since is not brought back by the first paint
+        win.once("show", function() {
+            isShown = true;
+            clearTimeout(showTimeoutId);
+        });
         win.once("ready-to-show", showWindow);
         // the page's own load only - a frame inside it (the Google button)
         // failing, or a navigation aborted (-3), leaves the page painting

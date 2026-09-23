@@ -5,107 +5,138 @@
 
 // first-party dependencies
 import { conf } from "./conf.js";
-import localization from "./localization.js";
 import { pickSystemName } from "./appname.js";
 
 const desktop = {
     "isAvailable": false
 };
 
-// the name the auto-launch entry was last registered under, and the one it had
-// before the name could be configured (see CLIENT.md, "What the system is told")
-const AUTO_LAUNCH_NAME_KEY = "autoLaunchName";
-const LEGACY_AUTO_LAUNCH_NAME = "Desktop Streamer";
+// every name an auto-launch entry may still be under, the key the build before
+// the list kept one in, and the product's own (CLIENT.md, "What the system is told")
+const AUTO_LAUNCH_NAMES_KEY = "autoLaunchNames";
+const OLD_AUTO_LAUNCH_NAME_KEY = "autoLaunchName";
+const DEFAULT_AUTO_LAUNCH_NAME = "Desktop Streamer";
 
-const readAutoLaunchName = function() {
+const readAutoLaunchNames = function() {
     try {
-        return localStorage.getItem(AUTO_LAUNCH_NAME_KEY) ?? LEGACY_AUTO_LAUNCH_NAME;
-    } catch (error) {
-        return LEGACY_AUTO_LAUNCH_NAME;
-    }
-};
-
-const writeAutoLaunchName = function(name) {
-    try {
-        localStorage.setItem(AUTO_LAUNCH_NAME_KEY, name);
-    } catch (error) {
-        // not recorded, so the move is looked at again next time
-    }
-};
-
-// a name that differs only in case is one entry where the system ignores case
-// (the Run key, a macOS file name) and two where it does not (Linux), so the
-// old one goes before the new one is made - the other order would remove both
-const moveCaseOnly = async function(AutoLaunch, previous, name, exePath) {
-    const current = new AutoLaunch({"name": name, "path": exePath});
-    try {
-        const old = new AutoLaunch({"name": previous, "path": exePath});
-        if (await old.isEnabled() === true) {
-            await old.disable();
-            await current.enable();
+        const names = JSON.parse(localStorage.getItem(AUTO_LAUNCH_NAMES_KEY));
+        if (Array.isArray(names) === true) {
+            return names.filter((name) => typeof name === "string");
         }
-        writeAutoLaunchName(name);
+        return [localStorage.getItem(OLD_AUTO_LAUNCH_NAME_KEY) ?? DEFAULT_AUTO_LAUNCH_NAME];
     } catch (error) {
-        console.error("Cannot move the auto launch entry to \"" + name + "\":", error);
+        return [DEFAULT_AUTO_LAUNCH_NAME];
     }
-    return current;
 };
 
-// the entry under the current name, answering for one left under the previous
-// name until it is gone - moved at start, and again by any enable or disable
-// when that failed; once it is gone, the entry alone
+const writeAutoLaunchNames = function(names) {
+    try {
+        localStorage.setItem(AUTO_LAUNCH_NAMES_KEY, JSON.stringify(names));
+        localStorage.removeItem(OLD_AUTO_LAUNCH_NAME_KEY);
+    } catch (error) {
+        // not recorded, so the names are looked at again next time
+    }
+};
+
+// an entry under another name moved to the current one, true once nothing is
+// left under it - a failed move is logged and kept to try again
+const moveEntry = async function(AutoLaunch, current, name, other, exePath) {
+    const old = new AutoLaunch({"name": other, "path": exePath});
+    try {
+        if (await old.isEnabled() !== true) {
+            return true;
+        }
+        if (other.toLowerCase() !== name.toLowerCase()) {
+            await current.enable();
+            await old.disable();
+            return true;
+        }
+        // a case-only rename is one entry where the system ignores case, so
+        // the old goes first - and comes back if the new cannot be made
+        await old.disable();
+        try {
+            await current.enable();
+        } catch (error) {
+            await old.enable();
+            throw error;
+        }
+        return true;
+    } catch (error) {
+        console.error("Cannot move the auto launch entry \"" + other + "\" to \"" + name + "\":", error);
+        return false;
+    }
+};
+
+// the entry under the current name, answering for any left under another name
+// until each is gone - moved at start, and again by any enable or disable
 const openAutoLaunch = async function(AutoLaunch, name, exePath) {
     const current = new AutoLaunch({"name": name, "path": exePath});
-    const previous = readAutoLaunchName();
-    if (previous === name) {
+    let others = readAutoLaunchNames().filter((other) => other !== name);
+    writeAutoLaunchNames([name, ...others]);
+    if (others.length === 0) {
         return current;
     }
-    if (previous.toLowerCase() === name.toLowerCase()) {
-        return await moveCaseOnly(AutoLaunch, previous, name, exePath);
-    }
-    const old = new AutoLaunch({"name": previous, "path": exePath});
-    let isMoved = false;
-    // the old entry off, and the name recorded once nothing is left under it
-    const dropOld = async function() {
-        if (isMoved === true) {
-            return;
+    const moveOthers = async function() {
+        const left = [];
+        for (const other of others) {
+            if (await moveEntry(AutoLaunch, current, name, other, exePath) === false) {
+                left.push(other);
+            }
         }
-        if (await old.isEnabled() === true) {
-            await old.disable();
-        }
-        writeAutoLaunchName(name);
-        isMoved = true;
+        others = left;
+        writeAutoLaunchNames([name, ...others]);
     };
-    const autoLaunch = {
+    await moveOthers();
+    if (others.length === 0) {
+        return current;
+    }
+    return {
         "enable": async function() {
-            await current.enable();
-            await dropOld();
+            await moveOthers();
+            if (await current.isEnabled() !== true) {
+                await current.enable();
+            }
         },
-        // the old entry goes whether or not there was one to disable here
+        // the others go whether or not there was an entry to disable here
         "disable": async function() {
+            let failure = null;
             try {
                 if (await current.isEnabled() === true) {
                     await current.disable();
                 }
-            } finally {
-                await dropOld();
+            } catch (error) {
+                failure = error;
+            }
+            const left = [];
+            for (const other of others) {
+                try {
+                    const old = new AutoLaunch({"name": other, "path": exePath});
+                    if (await old.isEnabled() === true) {
+                        await old.disable();
+                    }
+                } catch (error) {
+                    console.error("Cannot disable the auto launch entry \"" + other + "\":", error);
+                    left.push(other);
+                }
+            }
+            others = left;
+            writeAutoLaunchNames([name, ...others]);
+            if (failure !== null) {
+                throw failure;
             }
         },
         "isEnabled": async function() {
-            return await current.isEnabled() === true || (isMoved === false && await old.isEnabled() === true);
+            if (await current.isEnabled() === true) {
+                return true;
+            }
+            for (const other of others) {
+                if (await new AutoLaunch({"name": other, "path": exePath}).isEnabled() === true) {
+                    return true;
+                }
+            }
+            return false;
         }
     };
-    try {
-        if (await old.isEnabled() === true) {
-            await autoLaunch.enable();
-        } else {
-            writeAutoLaunchName(name);
-            isMoved = true;
-        }
-    } catch (error) {
-        console.error("Cannot move the auto launch entry to \"" + name + "\":", error);
-    }
-    return (isMoved === true ? current : autoLaunch);
 };
 
 // fill the object above under an Electron renderer - the modules it pulls in
@@ -143,9 +174,9 @@ const initDesktop = async function() {
     desktop["clipboard"] = clipboard;
     desktop["appPath"] = appPath;
     // the system is told the name in English, or the first one configured -
-    // and the legacy name where the dictionary slice holding it did not load
-    desktop["autoLaunch"] = await openAutoLaunch(AutoLaunch, pickSystemName(conf["appearance"]?.["name"],
-        pickSystemName({"en": localization.get("main.name", "en")}, LEGACY_AUTO_LAUNCH_NAME)), exePath);
+    // else the product's own, which no dictionary slice failing can change
+    desktop["autoLaunch"] = await openAutoLaunch(AutoLaunch,
+        pickSystemName(conf["appearance"]?.["name"], DEFAULT_AUTO_LAUNCH_NAME), exePath);
     desktop["Control"] = Control;
     desktop["ffmpegPath"] = path.join(appPath, "libs/ffmpeg");
     desktop["FFmpegVideoEncoder"] = FFmpegEncoder["FFmpegVideoEncoder"];

@@ -17,7 +17,7 @@ import UglifyJS from "uglify-js";
 import { serverScriptPath, getVersion } from "./common.js";
 import { getPublicAddress, getPublicWsAddress } from "./config.js";
 import { readZip, writeZip } from "./zip.js";
-import { pickName } from "../client/web/src/appname.js";
+import { DEFAULT_APPEARANCE, pickName } from "../client/web/src/appname.js";
 
 //
 // Constants
@@ -36,9 +36,6 @@ const PART_SUFFIX = ".part";
 
 // the client configuration the server generates for the built clients
 const CONF_FILE = "index.json";
-
-// how the client looks where the configuration says nothing (http.appearance)
-const DEFAULT_APPEARANCE = {"color": "#006e1c", "theme": "auto"};
 
 // http.appearance as configured, over the defaults
 const getAppearance = function(conf) {

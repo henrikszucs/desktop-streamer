@@ -92,10 +92,15 @@ const AppearanceWindow = class extends Panel {
             });
             this.autoLaunchCheckbox.addEventListener("change", async (event) => {
                 const isChecked = event.target.checked;
-                if (isChecked) {
-                    await desktop.autoLaunch.enable();
-                } else {
-                    await desktop.autoLaunch.disable();
+                // what the system holds is read back either way, a failure too
+                try {
+                    if (isChecked) {
+                        await desktop.autoLaunch.enable();
+                    } else {
+                        await desktop.autoLaunch.disable();
+                    }
+                } catch (error) {
+                    console.error("Cannot switch auto launch:", error);
                 }
                 const isEnabled = await desktop.autoLaunch.isEnabled();
                 event.target.checked = isEnabled;

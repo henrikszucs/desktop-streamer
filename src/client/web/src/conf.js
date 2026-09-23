@@ -6,6 +6,9 @@
 // third-party dependencies
 import IDB from "../libs/idb/idb.js";
 
+// first-party dependencies
+import { DEFAULT_APPEARANCE } from "./appname.js";
+
 // the server generated file, never hand written
 const conf = await (await fetch(new URL("../index.json", import.meta.url))).json();
 
@@ -21,11 +24,11 @@ const OLD_GUEST_TABLE = "guest";
 const GUEST_ID = "";
 
 // the local keys and the value each falls back to - the colour and the theme are
-// the server's, which the build always writes (DEFAULT_APPEARANCE in building.js)
-// - the same defaults here for an index.json from a build before it did
+// the server's, which the build always writes, over the same defaults it
+// writes them from for an index.json from a build before it did
 const LOCAL_DEFAULTS = {
-    "color": conf["appearance"]?.["color"] ?? "#006e1c",
-    "mode": conf["appearance"]?.["theme"] ?? "auto",
+    "color": conf["appearance"]?.["color"] ?? DEFAULT_APPEARANCE["color"],
+    "mode": conf["appearance"]?.["theme"] ?? DEFAULT_APPEARANCE["theme"],
     "lang": "auto",
     "autoLaunch": false,
     "minimizing": false,
