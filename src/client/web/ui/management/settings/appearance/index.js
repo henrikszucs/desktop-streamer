@@ -87,32 +87,33 @@ const AppearanceWindow = class extends Panel {
         this.autoLaunchError = document.getElementById("error-auto-launch");
         if (desktop.isAvailable) {
             this.autoLaunchLabel.classList.remove("hide");
-            desktop.autoLaunch.isEnabled().then((isEnabled) => {
-                this.autoLaunchCheckbox.checked = isEnabled;
-            }).catch((error) => {
-                console.error("Cannot read auto launch:", error);
-            });
             this.autoLaunchCheckbox.addEventListener("change", async (event) => {
                 const isChecked = event.target.checked;
+                const count = this.lockAutoLaunch();
                 // what the system holds is read back either way, a failure too
+                let isSwitched = false;
                 try {
                     if (isChecked) {
                         await desktop.autoLaunch.enable();
                     } else {
                         await desktop.autoLaunch.disable();
                     }
+                    isSwitched = true;
                 } catch (error) {
                     console.error("Cannot switch auto launch:", error);
                 }
-                // and a system that cannot be read is taken as holding nothing
-                let isEnabled = false;
+                // the system is the only record of it - one that cannot be
+                // read is taken as switched only if the switch did not fail
+                let isEnabled = (isSwitched === true ? isChecked : !isChecked);
                 try {
                     isEnabled = await desktop.autoLaunch.isEnabled();
                 } catch (error) {
                     console.error("Cannot read auto launch:", error);
                 }
-                event.target.checked = isEnabled;
-                await setLocal("autoLaunch", isEnabled);
+                if (count === this.autoLaunchCount) {
+                    event.target.checked = isEnabled;
+                }
+                this.unlockAutoLaunch(count);
             });
         } else {
             this.autoLaunchError.classList.remove("hide");
@@ -137,9 +138,39 @@ const AppearanceWindow = class extends Panel {
         await saving;
     };
 
+    // the checkbox is off limits while a read or a switch is out, and only the
+    // latest of them hands it back, so a late answer never lands over a click
+    lockAutoLaunch() {
+        this.autoLaunchCheckbox.disabled = true;
+        this.autoLaunchCount = (this.autoLaunchCount ?? 0) + 1;
+        return this.autoLaunchCount;
+    };
+    unlockAutoLaunch(count) {
+        if (count === this.autoLaunchCount) {
+            this.autoLaunchCheckbox.disabled = false;
+        }
+    };
+
+    // the system holds the setting, so a reset or another window may have moved it
+    readAutoLaunch() {
+        const count = this.lockAutoLaunch();
+        this.ctx["desktop"].autoLaunch.isEnabled().then((isEnabled) => {
+            if (count === this.autoLaunchCount) {
+                this.autoLaunchCheckbox.checked = isEnabled;
+            }
+        }).catch((error) => {
+            console.error("Cannot read auto launch:", error);
+        }).finally(() => {
+            this.unlockAutoLaunch(count);
+        });
+    };
+
     open(params) {
         this.langSelect.value = this.ctx["conf"]["local"]["lang"];
         this.setThemeIcon();
+        if (this.ctx["desktop"].isAvailable === true) {
+            this.readAutoLaunch();
+        }
         super.open(params);
     };
 };

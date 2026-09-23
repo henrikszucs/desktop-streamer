@@ -1,9 +1,9 @@
 "use strict";
 
 // the name of the application, from the configured one (http.appearance.name,
-// keyed by language) - pure, so tests/appname.test.js runs it under Node. The
-// script at the top of index.html holds a copy of pickName, since it runs
-// before any module can.
+// keyed by language) - pure, so tests/appname.test.js runs it under Node and
+// the build imports it. The script at the top of index.html holds a copy of
+// pickName, since it runs before any module can.
 
 // the name in one language: that one, its base, a variant of the base,
 // English, then any - null when there is none to pick

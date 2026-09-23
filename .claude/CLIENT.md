@@ -1406,28 +1406,60 @@ dictionary when asked rather than when the module is imported.
   product's own name, a constant rather than the dictionary's `main.name`,
   since a slice that failed to load on one start and not the next would move
   the entry back and forth — stripped of what a registry value, a file name or
-  an AppleScript string cannot hold - the name *is* the entry on every platform
-  (a `Run` value, a LaunchAgent file or login item, an autostart `.desktop`
-  file). Because the entry is found by its name, a renamed one would leave the
-  old entry starting the application beside it and the setting reading as off,
-  so every name an entry may still be under is kept in `localStorage`
-  (`autoLaunchNames`, seeded from the single `autoLaunchName` of the build
-  before it, else "Desktop Streamer"). The current name is written into that
-  list *before* anything is registered under it, so a name renamed again before
-  its move finished is still known and still moved; a name leaves the list only
-  once nothing is enabled under it. At start each enabled entry under another
-  name is moved — the new one enabled first, the old one disabled after. Only
-  when a move failed does `desktop["autoLaunch"]` hand out answers for all of
-  them: it reads as on while any is, its `enable` retries the moves, and its
-  `disable` (the settings reset's included — a `disable` that has no entry of
-  its own to remove still removes the others) removes every one it can, so a
-  failed move never leaves an entry the setting cannot see. A failure to move
-  or remove an *old* entry is logged and kept for the next try, never thrown:
-  the appearance window re-reads `isEnabled()` after every switch — a failed
-  one too — and records that, so the checkbox and `autoLaunch` say what the
-  system holds. A name that changes only in **case** is moved the other way
-  round — the old entry disabled first, then the new one enabled — since the
-  `Run` key and a macOS file name ignore case, and there enabling the new name
+  an AppleScript string cannot hold — the name *is* the entry on Windows and
+  Linux (a `Run` value, an autostart `.desktop` file). The vendored
+  `auto-launch` does not honour it: its `fixOpts` replaces the name it is given
+  with the executable's basename whenever the path holds a separator, which an
+  absolute path always does, so every entry would be one entry. `createEntry`
+  puts the name back over the library's — except on **macOS**, where the entry
+  is a login item and System Events names a login item after its bundle
+  whatever it is told (a login item's `name` is read only), so there the
+  library's name is the only one that can be found again, nothing is ever
+  moved, and no AppleScript runs until the setting is touched. Elsewhere the
+  name the library picks (`readExeName` — what every build before that fix
+  actually registered under) is added to the names to move the first time an
+  executable is seen (`autoLaunchExeName` records it). For a plain dist that
+  name is `electron`, which any other Electron app may have registered, so an
+  entry under it is taken as ours only if it starts this executable
+  (`startsExe`, which reads the `Run` value through `reg.exe` or the `Exec=`
+  line of the autostart file, around the library that only says whether there
+  is one): anybody else's is never read as on, moved or removed. Because the
+  entry is found by its name, a renamed one would leave the old entry starting
+  the application beside it and the setting reading as off, so every name an
+  entry may still be under is kept in `localStorage` (`autoLaunchNames`,
+  seeded from the single `autoLaunchName` of the build before it, else
+  "Desktop Streamer"). The current name is written into that list *before*
+  anything is registered under it, so a name renamed again before its move
+  finished is still known and still moved; a name leaves the list only once
+  nothing of ours is enabled under it. At start each enabled entry under
+  another name is moved — the new one enabled first, the old one disabled
+  after — in the background, not on the boot path. The calls of
+  `desktop["autoLaunch"]` run one at a time behind that move, since each one
+  rewrites the list of names left and two overlapping would drop a name the
+  other still had an entry under; one that never settles (a `reg.exe` that
+  hangs, an AppleScript prompt nobody answers) holds the ones behind it for
+  `AUTO_LAUNCH_QUEUE_TIMEOUT` at most, so a settings reset is never stuck
+  behind it. It answers for every name still left: it reads as on while any
+  is, its `enable` retries the moves, and its `disable` (the settings reset's
+  included — a `disable` that has no entry of its own to remove still removes
+  the others) removes every one it can, so a failed move never leaves an
+  entry the setting cannot see. A failure to move or remove an *old* entry is
+  logged and kept for the next try, never thrown: the appearance window
+  re-reads `isEnabled()` after every switch — a failed one too — and on every
+  `open()`, since a settings reset disables it from another window, so the
+  checkbox says what the system holds, the only record of the setting there
+  is. The checkbox is disabled while a read or a switch is out and only the
+  latest of them writes it, so a late answer never lands over a click; a read
+  that fails after a failed switch puts it back rather than leaving it as
+  clicked. **Every enable goes through `enableEntry`**: a `Run` value or an
+  autostart file is rewritten in place, so enabling again is how an entry left
+  pointing at an old executable (a build unzipped somewhere else) is pointed
+  at this one; a macOS login item is *added* by every enable, so there one
+  that exists is left as it is — removing it to make it again would lose it
+  whenever the make failed — and switching the setting off and on is what
+  points it at a moved build. A name that changes only in **case** is moved
+  the other way round — the old entry disabled first, then the new one
+  enabled — since the `Run` key ignores case, and there enabling the new name
   rewrites the old entry, which disabling the old name would then remove; if
   the new one cannot be made, the old one is enabled again, so a failed move
   never leaves no entry at all.

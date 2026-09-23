@@ -90,10 +90,15 @@ const isPaint = function(paint) {
     return typeof paint?.["light"] === "string" && typeof paint?.["dark"] === "string";
 };
 
+// the palettes painted so far, the cache's before the build's
+const readPaints = function() {
+    return [readCached(), readBuilt()].filter(isPaint);
+};
+
 // the painted palette of this colour, if there is one to reuse
-const findPaint = function(color) {
-    return [readCached(), readBuilt()].find(function(paint) {
-        return isPaint(paint) && String(paint["color"]).toLowerCase() === String(color).toLowerCase();
+const findPaint = function(paints, color) {
+    return paints.find(function(paint) {
+        return String(paint["color"]).toLowerCase() === String(color).toLowerCase();
     }) ?? null;
 };
 
@@ -101,7 +106,7 @@ const findPaint = function(color) {
 // failed one is dropped, so the next call tries again
 const building = new Map();
 
-const buildPaint = function(color) {
+const getPalette = function(color) {
     const key = String(color).toLowerCase();
     if (building.has(key) === false) {
         building.set(key, buildPalette(color).finally(function() {
@@ -123,10 +128,9 @@ const drawTheme = function(paint, mode) {
 
 // the mode, on the palette already on screen - before the first draw that is
 // the one index.html painted, handed to beercss so it is not wiped
-const drawMode = function(mode) {
-    const painted = (isDrawn === true ? null : [readCached(), readBuilt()].find(isPaint) ?? null);
-    if (painted !== null) {
-        drawTheme(painted, mode);
+const drawMode = function(mode, paints) {
+    if (isDrawn === false && paints.length > 0) {
+        drawTheme(paints[0], mode);
     } else {
         globalThis.ui("mode", mode);
     }
@@ -145,24 +149,29 @@ const applyTheme = async function(local) {
         mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
     const count = ++themeCount;
-    let paint = findPaint(color);
-    if (paint === null) {
-        // the mode is switched at once, a failed build leaves it standing
-        drawMode(mode);
-        try {
-            paint = await buildPaint(color);
-        } catch (error) {
-            if (count === themeCount) {
-                console.error("Cannot apply the theme:", error);
+    // nothing here may reject: applyLocal does not wait on it
+    try {
+        const paints = readPaints();
+        let paint = findPaint(paints, color);
+        if (paint === null) {
+            // the mode is switched at once, a failed build leaves it standing
+            try {
+                drawMode(mode, paints);
+            } catch (error) {
+                console.error("Cannot switch the theme mode:", error);
             }
-            return;
+            paint = await getPalette(color);
+            if (count !== themeCount) {
+                return;
+            }
         }
-        if (count !== themeCount) {
-            return;
+        drawTheme(paint, mode);
+        writeCached({"color": color, "mode": localMode, "light": paint["light"], "dark": paint["dark"]});
+    } catch (error) {
+        if (count === themeCount) {
+            console.error("Cannot apply the theme:", error);
         }
     }
-    drawTheme(paint, mode);
-    writeCached({"color": color, "mode": localMode, "light": paint["light"], "dark": paint["dark"]});
 };
 
 // the name as the title - the tab's, and the desktop window's and tray's,

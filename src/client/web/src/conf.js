@@ -6,6 +6,9 @@
 // third-party dependencies
 import IDB from "../libs/idb/idb.js";
 
+// first-party dependencies
+import { DEFAULT_APPEARANCE } from "./appearance.js";
+
 // the server generated file, never hand written
 const conf = await (await fetch(new URL("../index.json", import.meta.url))).json();
 
@@ -16,17 +19,19 @@ const USER_TABLE = "user";
 // the table the guest used to have to itself, kept only to drop it
 const OLD_GUEST_TABLE = "guest";
 
+// local keys an older build kept, named only to drop them (the system holds auto launch)
+const OLD_LOCAL_KEYS = ["autoLaunch"];
+
 // the id of the guest: every user is a row of USER_TABLE under its own id, and
 // a client is only ever one guest, so the empty key collides with no account
 const GUEST_ID = "";
 
-// the local keys and the value each falls back to - the colour and the theme are
-// the server's, which the build that wrote index.json always fills in
+// the local keys and their fallbacks - the colour and theme are the server's, or
+// the build's own defaults for an index.json written before it wrote them
 const LOCAL_DEFAULTS = {
-    "color": conf["appearance"]["color"],
-    "mode": conf["appearance"]["theme"],
+    "color": conf["appearance"]?.["color"] ?? DEFAULT_APPEARANCE["color"],
+    "mode": conf["appearance"]?.["theme"] ?? DEFAULT_APPEARANCE["theme"],
     "lang": "auto",
-    "autoLaunch": false,
     "minimizing": false,
     "exitShortcuts": "[]",
     // the accounts this client is signed in as - each with the session key
@@ -47,6 +52,7 @@ const confLoad = new Promise(async function(resolve) {
     await IDB.TableDel(DATABASE, OLD_GUEST_TABLE);
 
     DB = await IDB.DatabaseGet(DATABASE);
+    await IDB.RowDel(IDB.TableGet(DB, CONF_TABLE), OLD_LOCAL_KEYS);
     const table = IDB.TableGet(DB, CONF_TABLE);
 
     // load values from database
