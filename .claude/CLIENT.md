@@ -1423,7 +1423,11 @@ dictionary when asked rather than when the module is imported.
   entry under it is taken as ours only if it starts this executable
   (`startsExe`, which reads the `Run` value through `reg.exe` or the `Exec=`
   line of the autostart file, around the library that only says whether there
-  is one): anybody else's is never read as on, moved or removed. Because the
+  is one): anybody else's is never read as on, moved or removed. A read that
+  fails (a `reg.exe` past `REG_QUERY_TIMEOUT`, an unreadable file) throws
+  rather than answering "not ours" — it is only asked once an entry was found
+  under the name, so a "no" would drop that name from the list while its
+  entry went on starting the application. Because the
   entry is found by its name, a renamed one would leave the old entry starting
   the application beside it and the setting reading as off, so every name an
   entry may still be under is kept in `localStorage` (`autoLaunchNames`,
@@ -1436,10 +1440,13 @@ dictionary when asked rather than when the module is imported.
   after — in the background, not on the boot path. The calls of
   `desktop["autoLaunch"]` run one at a time behind that move, since each one
   rewrites the list of names left and two overlapping would drop a name the
-  other still had an entry under; one that never settles (a `reg.exe` that
-  hangs, an AppleScript prompt nobody answers) holds the ones behind it for
-  `AUTO_LAUNCH_QUEUE_TIMEOUT` at most, so a settings reset is never stuck
-  behind it. It answers for every name still left: it reads as on while any
+  other still had an entry under; one that has not settled
+  `AUTO_LAUNCH_QUEUE_TIMEOUT` after it started (a `reg.exe` that hangs, an
+  AppleScript prompt nobody answers) fails its caller — so the checkbox it
+  locked comes back — and frees the ones behind it, so a settings reset is
+  never stuck behind it. The task itself cannot be stopped, so it runs on
+  under a lease that has expired and writes nothing more: no entry enabled
+  or disabled, no list of names saved over the one the next call is using. It answers for every name still left: it reads as on while any
   is, its `enable` retries the moves, and its `disable` (the settings reset's
   included — a `disable` that has no entry of its own to remove still removes
   the others) removes every one it can, so a failed move never leaves an

@@ -18,9 +18,10 @@ const OLD_AUTO_LAUNCH_NAME_KEY = "autoLaunchName";
 const AUTO_LAUNCH_EXE_KEY = "autoLaunchExeName";
 const DEFAULT_AUTO_LAUNCH_NAME = "Desktop Streamer";
 
-// how long a call that never settles holds up the calls behind it, and the
-// key a Windows entry is a value of
+// how long a call may take before it fails and frees the calls behind it, how
+// long one reg.exe read may take inside it, and the key a Windows entry is a value of
 const AUTO_LAUNCH_QUEUE_TIMEOUT = 15000;
+const REG_QUERY_TIMEOUT = 5000;
 const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 // the entry under a name - the library names every entry after the executable,
@@ -34,24 +35,33 @@ const createEntry = function(AutoLaunch, name, exePath) {
 };
 
 // whether the entry under a name starts this executable - read around the
-// library, which only answers whether there is one
+// library, which only answers whether there is one. It is only asked once an
+// entry was found, so a read that fails throws rather than answering no
 const startsExe = async function(modules, name, exePath) {
     const { execFile, fs, path, os } = modules;
     if (process.platform === "win32") {
         const regPath = path.join(process.env["windir"] ?? "C:\\Windows", "system32", "reg.exe");
-        const stdout = await new Promise(function(resolve) {
-            execFile(regPath, ["query", RUN_KEY, "/v", name], {"windowsHide": true, "timeout": AUTO_LAUNCH_QUEUE_TIMEOUT}, function(error, stdout) {
-                resolve(error === null ? String(stdout) : "");
+        const stdout = await new Promise(function(resolve, reject) {
+            execFile(regPath, ["query", RUN_KEY, "/v", name], {"windowsHide": true, "timeout": REG_QUERY_TIMEOUT}, function(error, stdout) {
+                if (error !== null) {
+                    reject(error);
+                } else {
+                    resolve(String(stdout));
+                }
             });
         });
         return stdout.toLowerCase().includes("\"" + exePath.toLowerCase() + "\"");
     }
+    let text = "";
     try {
-        const text = await fs.readFile(path.join(os.homedir(), ".config/autostart", name + ".desktop"), "utf8");
-        return text.split(/\r?\n/).some((line) => line === "Exec=" + exePath || line.startsWith("Exec=" + exePath + " "));
+        text = await fs.readFile(path.join(os.homedir(), ".config/autostart", name + ".desktop"), "utf8");
     } catch (error) {
-        return false;
+        if (error["code"] === "ENOENT") {
+            return false;
+        }
+        throw error;
     }
+    return text.split(/\r?\n/).some((line) => line === "Exec=" + exePath || line.startsWith("Exec=" + exePath + " "));
 };
 
 // the name every build before the one above registered its entry under
@@ -98,12 +108,16 @@ const enableEntry = async function(entry) {
 };
 
 // an entry under another name moved to the current one, true once nothing of
-// ours is left under it - a failed move is logged and kept to try again
-const moveEntry = async function(AutoLaunch, current, name, other, exePath, isOurs) {
+// ours is left under it - a failed move is logged and kept to try again, and
+// one whose call has already failed for taking too long writes nothing
+const moveEntry = async function(AutoLaunch, current, name, other, exePath, isOurs, lease) {
     try {
         const old = createEntry(AutoLaunch, other, exePath);
         if (await old.isEnabled() !== true || await isOurs(other) !== true) {
             return true;
+        }
+        if (lease["isExpired"] === true) {
+            return false;
         }
         if (other.toLowerCase() !== name.toLowerCase()) {
             await enableEntry(current);
@@ -145,39 +159,54 @@ const openAutoLaunch = function(AutoLaunch, name, exePath, startsHere) {
     const isOurs = async function(other) {
         return other !== exeName || await startsHere(other);
     };
-    const moveOthers = async function() {
+    const moveOthers = async function(lease) {
         if (others.length === 0) {
             return;
         }
         const left = [];
         for (const other of others) {
-            if (await moveEntry(AutoLaunch, current, name, other, exePath, isOurs) === false) {
+            if (await moveEntry(AutoLaunch, current, name, other, exePath, isOurs, lease) === false) {
                 left.push(other);
             }
+        }
+        if (lease["isExpired"] === true) {
+            return;
         }
         others = left;
         saveNames();
     };
-    // one call at a time, the move at start first, since each rewrites others -
-    // one that never settles holds the rest only for AUTO_LAUNCH_QUEUE_TIMEOUT
+    // one call at a time, the move at start first, since each rewrites others.
+    // One that has not settled AUTO_LAUNCH_QUEUE_TIMEOUT after it started fails
+    // and frees the rest, and its lease tells it to write nothing when it does
     let queue = Promise.resolve();
     const run = function(task) {
-        const result = queue.then(task);
-        queue = Promise.race([result.catch(function() {}), new Promise(function(resolve) {
-            setTimeout(resolve, AUTO_LAUNCH_QUEUE_TIMEOUT);
-        })]);
+        const lease = {"isExpired": false};
+        const result = queue.then(function() {
+            return new Promise(function(resolve, reject) {
+                const timeoutId = setTimeout(function() {
+                    lease["isExpired"] = true;
+                    reject(new Error("Auto launch did not answer in time"));
+                }, AUTO_LAUNCH_QUEUE_TIMEOUT);
+                task(lease).then(resolve, reject).finally(function() {
+                    clearTimeout(timeoutId);
+                });
+            });
+        });
+        queue = result.catch(function() {});
         return result;
     };
     run(moveOthers).catch(function(error) {
         console.error("Cannot move the auto launch entries:", error);
     });
     return {
-        "enable": () => run(async function() {
-            await moveOthers();
-            await enableEntry(current);
+        "enable": () => run(async function(lease) {
+            await moveOthers(lease);
+            if (lease["isExpired"] === false) {
+                await enableEntry(current);
+            }
         }),
         // the others go whether or not there was an entry to disable here
-        "disable": () => run(async function() {
+        "disable": () => run(async function(lease) {
             let failure = null;
             try {
                 if (await current.isEnabled() === true) {
@@ -188,6 +217,9 @@ const openAutoLaunch = function(AutoLaunch, name, exePath, startsHere) {
             }
             const left = [];
             for (const other of others) {
+                if (lease["isExpired"] === true) {
+                    return;
+                }
                 try {
                     const old = createEntry(AutoLaunch, other, exePath);
                     if (await old.isEnabled() === true && await isOurs(other) === true) {
@@ -198,19 +230,30 @@ const openAutoLaunch = function(AutoLaunch, name, exePath, startsHere) {
                     left.push(other);
                 }
             }
+            if (lease["isExpired"] === true) {
+                return;
+            }
             others = left;
             saveNames();
             if (failure !== null) {
                 throw failure;
             }
         }),
+        // an entry that cannot be told apart from somebody else's is not read as on
         "isEnabled": () => run(async function() {
             if (await current.isEnabled() === true) {
                 return true;
             }
             for (const other of others) {
-                if (await createEntry(AutoLaunch, other, exePath).isEnabled() === true && await isOurs(other) === true) {
-                    return true;
+                if (await createEntry(AutoLaunch, other, exePath).isEnabled() !== true) {
+                    continue;
+                }
+                try {
+                    if (await isOurs(other) === true) {
+                        return true;
+                    }
+                } catch (error) {
+                    console.error("Cannot tell whose the auto launch entry \"" + other + "\" is:", error);
                 }
             }
             return false;

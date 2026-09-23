@@ -169,6 +169,7 @@ const AppearanceWindow = class extends Panel {
         this.langSelect.value = this.ctx["conf"]["local"]["lang"];
         this.setThemeIcon();
         if (this.ctx["desktop"].isAvailable === true) {
+            this.trayCheckbox.checked = this.ctx["conf"]["local"]["minimizing"];
             this.readAutoLaunch();
         }
         super.open(params);
