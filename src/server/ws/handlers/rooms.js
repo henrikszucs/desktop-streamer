@@ -195,6 +195,29 @@ const isRelayAllowed = function(server, sessionId) {
     return server.clients.get(sessionId)?.get("isRelayAllowed") === true;
 };
 
+// What one socket's unfinished messages may hold of the server at once. A
+// binary message is only ever a relay frame, and the communicator reassembles
+// one whole before roomFrame can look at it - so a socket that may not relay
+// has no use for a single byte of it, and anything it held would be held for
+// nothing. Its budget is none; one that may relay gets room for a frame of
+// the stream and more.
+const RELAY_RECEIVE_MAX = 32 * 1024 * 1024;
+const receiveLimitOf = function(isAllowed) {
+    return isAllowed === true ? RELAY_RECEIVE_MAX : 0;
+};
+
+// the permission and the budget that goes with it, written together: by
+// clientConnect in ws.js from the configuration, and by the sign-in from the
+// user's row (handlers/accounts.js)
+const setRelayAllowed = function(server, sessionId, isAllowed) {
+    const client = server.clients.get(sessionId);
+    if (client === undefined) {
+        return;
+    }
+    client.set("isRelayAllowed", isAllowed === true);
+    client.get("com")?.configure?.({"maxReceiveBytes": receiveLimitOf(isAllowed)});
+};
+
 // a room ends for both when it ends for one - there is no room with one side in
 // it - and whoever did not ask for the ending is told why
 const closeRoom = function(server, room, reason, exceptSessionId) {
@@ -418,5 +441,5 @@ const handlers = {
     "room-leave": roomLeave
 };
 
-export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG };
+export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, receiveLimitOf, setRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG, RELAY_RECEIVE_MAX };
 export default handlers;

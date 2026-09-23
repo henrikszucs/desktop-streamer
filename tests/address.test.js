@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { clientAddress, addressOf, addressKeys, expandIPv6 } from "../src/server/ws/address.js";
+import { clientAddress, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, CONNECTION_MAX, CONNECTION_MAX_WIDE } from "../src/server/ws/address.js";
 
 // the upgrade request as ws hands it to the connection listener
 const buildRequest = function(remoteAddress, forwardedFor) {
@@ -73,4 +73,52 @@ test("what cannot be read as an address is keyed as it came", () => {
     assert.deepEqual(addressKeys(undefined), [""]);
     assert.deepEqual(addressKeys("1::2::3"), ["1::2::3"]);
     assert.equal(expandIPv6("1:2:3"), undefined);
+});
+
+//
+// how many sockets one address holds
+//
+test("one address holds only so many sockets, and a closed one is given back", () => {
+    const server = {"connections": new Map()};
+    for (let i = 0; i < CONNECTION_MAX; i++) {
+        assert.equal(holdAddress(server, "198.51.100.7"), true);
+    }
+    assert.equal(holdAddress(server, "198.51.100.7"), false);
+    assert.equal(holdAddress(server, "::ffff:198.51.100.7"), false, "the same address mapped into IPv6");
+    assert.equal(holdAddress(server, "198.51.100.8"), true, "another address has its own");
+
+    releaseAddress(server, "198.51.100.7");
+    assert.equal(holdAddress(server, "198.51.100.7"), true);
+
+    // every socket given back leaves nothing behind
+    for (let i = 0; i < CONNECTION_MAX; i++) {
+        releaseAddress(server, "198.51.100.7");
+    }
+    releaseAddress(server, "198.51.100.8");
+    assert.equal(server.connections.size, 0);
+});
+
+test("an IPv6 subscriber is capped by its /64, and a site by its /48", () => {
+    const server = {"connections": new Map()};
+    for (let i = 0; i < CONNECTION_MAX; i++) {
+        assert.equal(holdAddress(server, "2001:db8:1:2::" + (i + 1).toString(16)), true);
+    }
+    assert.equal(holdAddress(server, "2001:db8:1:2::ffff"), false, "a new address in the same /64");
+
+    // walking the /64s of one /48 runs into the site's budget
+    let held = CONNECTION_MAX;
+    for (let subnet = 3; held < CONNECTION_MAX_WIDE; subnet++) {
+        for (let i = 0; i < CONNECTION_MAX && held < CONNECTION_MAX_WIDE; i++) {
+            assert.equal(holdAddress(server, "2001:db8:1:" + subnet.toString(16) + "::" + (i + 1).toString(16)), true);
+            held++;
+        }
+    }
+    assert.equal(holdAddress(server, "2001:db8:1:ff::1"), false);
+    assert.equal(holdAddress(server, "2001:db8:2::1"), true, "another site has its own");
+});
+
+test("giving back a socket that was never counted changes nothing", () => {
+    const server = {"connections": new Map()};
+    releaseAddress(server, "198.51.100.7");
+    assert.equal(server.connections.size, 0);
 });

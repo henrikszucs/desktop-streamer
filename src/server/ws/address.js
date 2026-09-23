@@ -2,7 +2,7 @@
 
 // who a socket is on the network: the address a person is shown when somebody
 // asks to connect, the one the sessions window lists, and the one failed tries
-// are counted against. Behind a proxy the socket is the proxy's, so the address
+// and open sockets are counted against. Behind a proxy the socket is the proxy's, so the address
 // is the one the proxy says it forwarded - read once, when the socket is taken.
 
 // The client's address from the upgrade request. A proxy appends the address it
@@ -81,5 +81,49 @@ const addressKeys = function(address) {
     return [prefixOf(groups, 4), prefixOf(groups, 3)];
 };
 
-export { clientAddress, addressOf, addressKeys, expandIPv6 };
-export default { clientAddress, addressOf, addressKeys, expandIPv6 };
+// How many sockets one address may hold open at once. Every socket is a
+// communicator and a slice of memory, so without a cap one address could
+// open as many as it likes and hold what each may hold. A person has a
+// window or a few; a house or an office behind one address has a few dozen.
+// The /48 of an IPv6 address is a site, and gets the budget of one.
+const CONNECTION_MAX = 32;
+const CONNECTION_MAX_WIDE = 256;
+
+const connectionMaxOf = function(key) {
+    return key.endsWith("/48") === true ? CONNECTION_MAX_WIDE : CONNECTION_MAX;
+};
+
+// a socket from this address is taken, counted against every key of it - or
+// refused, with nothing counted, when any of them is full
+const holdAddress = function(server, address) {
+    const keys = addressKeys(address);
+    const isFull = keys.some(function(key) {
+        return (server.connections.get(key) ?? 0) >= connectionMaxOf(key);
+    });
+    if (isFull === true) {
+        return false;
+    }
+    for (const key of keys) {
+        server.connections.set(key, (server.connections.get(key) ?? 0) + 1);
+    }
+    return true;
+};
+
+// and given back when that socket closes; a socket that was never counted
+// (handed to clientConnect directly) gives back nothing
+const releaseAddress = function(server, address) {
+    for (const key of addressKeys(address)) {
+        const count = server.connections.get(key);
+        if (count === undefined) {
+            continue;
+        }
+        if (count <= 1) {
+            server.connections.delete(key);
+        } else {
+            server.connections.set(key, count - 1);
+        }
+    }
+};
+
+export { clientAddress, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, CONNECTION_MAX, CONNECTION_MAX_WIDE };
+export default { clientAddress, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, CONNECTION_MAX, CONNECTION_MAX_WIDE };

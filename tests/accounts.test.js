@@ -411,6 +411,81 @@ test("an address that is already somebody's account is refused, whatever the reg
     }
 });
 
+test("an account is found by its Google id when the address changed, and the row follows the new one", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const first = await signIn(server, "one", "alice");
+
+        server.auth["verifyGoogle"] = async function() {
+            return {...GOOGLE_USERS["alice"], "email": "alice@elsewhere.example"};
+        };
+        const second = await signIn(server, "two", "alice");
+        assert.equal(second["success"], true);
+        assert.equal(second["user"]["userId"], first["user"]["userId"]);
+        assert.equal(second["user"]["email"], "alice@elsewhere.example");
+        assert.equal((await db("users")).length, 1);
+        assert.equal((await db("users").first())["email"], "alice@elsewhere.example");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an address that moved to another Google account signs its old holder out and leaves it with none", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice = await signIn(server, "one", "alice");
+        const bob = await signIn(server, "two", "bob");
+
+        // Google now says bob's old address is alice's: the id is who she is,
+        // the address is only the latest one verified for her
+        server.auth["verifyGoogle"] = async function(credential) {
+            if (credential === "alice") {
+                return {...GOOGLE_USERS["alice"], "email": "bob@example.com"};
+            }
+            return {...GOOGLE_USERS["bob"], "email": "robert@example.com"};
+        };
+        const moved = await signIn(server, "three", "alice");
+        assert.equal(moved["success"], true);
+        assert.equal(moved["user"]["userId"], alice["user"]["userId"]);
+        assert.equal(moved["user"]["email"], "bob@example.com");
+
+        // bob is out everywhere, and holds no address at all
+        const bobRow = await db("users").where("user_id", bob["user"]["userId"]).first();
+        assert.equal(bobRow["email"], null);
+        assert.equal((await db("sessions").where("user_id", bob["user"]["userId"])).length, 0);
+        assert.equal(heldUser(server, "two"), undefined);
+        assert.equal(pushesOf(server, "two", "logout")[0]["sessionId"], bob["sessionId"]);
+        assert.equal(pushesOf(server, "one", "logout").length, 0, "alice's other socket is untouched");
+
+        // and his own next sign-in is his account again, under his address now
+        const back = await signIn(server, "two", "bob");
+        assert.equal(back["success"], true);
+        assert.equal(back["user"]["userId"], bob["user"]["userId"]);
+        assert.equal(back["user"]["email"], "robert@example.com");
+        assert.equal((await db("users")).length, 2);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an account left with no address cannot be mailed a delete key", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+        await db("users").where("user_id", alice["user"]["userId"]).update({"email": null});
+        const answer = await requestDelete(server, "one");
+        assert.equal(answer["success"], false);
+        assert.equal(answer["error"], "no-email");
+        assert.equal(server.mailer.sent.length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
 test("the relay permission of a new account is the register rule, and it reaches the connection", async () => {
     const {db, file} = await buildDatabase();
     try {

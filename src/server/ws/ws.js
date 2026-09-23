@@ -18,11 +18,11 @@ import { handleAPI } from "./api.js";
 import { buildPublicConf } from "./handlers/conf.js";
 import { removePairCode, releasePairCodes } from "./handlers/pairing.js";
 import { detachJoins, releaseJoins } from "./handlers/joins.js";
-import { detachRooms, releaseRooms } from "./handlers/rooms.js";
+import { detachRooms, releaseRooms, receiveLimitOf, RELAY_RECEIVE_MAX } from "./handlers/rooms.js";
 import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.js";
 import { startDatabase, stopDatabase } from "./database.js";
 import { createMailer } from "./mail.js";
-import { clientAddress } from "./address.js";
+import { clientAddress, holdAddress, releaseAddress } from "./address.js";
 
 // the packet layer of every socket, the same on the client (src/client/web/src/server.js):
 // one video chunk of the stream is one packet, and a whole frame is a handful
@@ -34,9 +34,11 @@ const SOCKET_SEND_THREADS = 64;
 // JSON message - the largest of those is a relayed message of DATA_MAX - so a
 // frame far past that is not from a client; and a message is held here until
 // its last packet is in, so what one socket's unfinished messages hold at once
-// is capped too, well above a relayed frame of a stream (see handlers/rooms.js)
+// is capped too - by its relay permission, see receiveLimitOf in
+// handlers/rooms.js - and how many sockets one address may open is capped in
+// ./address.js
 const SOCKET_FRAME_MAX = 256 * 1024;
-const SOCKET_RECEIVE_MAX = 32 * 1024 * 1024;
+const SOCKET_RECEIVE_MAX = RELAY_RECEIVE_MAX;
 
 // how often every socket is pinged, and so how long one that stopped reading is
 // kept: a socket that does not read is one the relay's frames and every push
@@ -61,6 +63,7 @@ const ServerWS = class {
     accounts = new Map();           // key-userId, value-the sockets signed in as that user, while there is one (see ./handlers/accounts.js)
     pairFailures = new Map();       // key-an address (see ./address.js), value-the pair codes it tried that opened nothing (see ./handlers/pairing.js)
     pairFailuresSweep = 0;
+    connections = new Map();        // key-an address (see ./address.js), value-how many sockets it holds open
 
     // whether a proxy stands in front of the socket, which is then the proxy's
     // and the client's address is the one it forwarded - see ./address.js
@@ -169,11 +172,18 @@ const ServerWS = class {
                 ws.terminate();
                 return;
             }
+            // one address holds only so many sockets; the close handler of
+            // clientConnect gives this one back
+            const address = clientAddress(req, this.isProxied);
+            if (holdAddress(this, address) === false) {
+                ws.close(1008, "too-many-connections");
+                return;
+            }
             ws.isAlive = true;
             ws.on("pong", function() {
                 ws.isAlive = true;
             });
-            this.clientConnect(ws, clientAddress(req, this.isProxied));
+            this.clientConnect(ws, address);
         });
 
         // a browser answers a ping on its own, so a socket that has not
@@ -220,6 +230,9 @@ const ServerWS = class {
         // generate the session id of the connection
         const sessionId = this.generateSessionId();
 
+        // a guest until it signs in, so the configuration is its permission
+        const isRelayAllowed = (this.confPublic["permissions"]?.["guestAllowRelay"] === true);
+
         // create communicator
         const com = new Communicator({
             "sender": async function(data, transfer, message) {
@@ -238,7 +251,7 @@ const ServerWS = class {
             "packetTimeout": 1000,
             "packetRetry": Infinity,
             "sendThreads": SOCKET_SEND_THREADS,
-            "maxReceiveBytes": SOCKET_RECEIVE_MAX
+            "maxReceiveBytes": receiveLimitOf(isRelayAllowed)
         });
 
         // Create state, the session id is taken before the first await.
@@ -249,7 +262,8 @@ const ServerWS = class {
         // guest until it signs in, so the configuration is the answer here, and
         // attachAccount in handlers/accounts.js is what fills the slot from the
         // user's row - read once per sign-in, because a permission is not
-        // expected to change under a live connection.
+        // expected to change under a live connection. The communicator's
+        // receive budget goes with it (setRelayAllowed in handlers/rooms.js).
         /*{
             "com": Communicator,
             "ws": WebSocket,
@@ -261,7 +275,7 @@ const ServerWS = class {
         const client = new Map([
             ["com", com],
             ["ws", ws],
-            ["isRelayAllowed", this.confPublic["permissions"]?.["guestAllowRelay"] === true],
+            ["isRelayAllowed", isRelayAllowed],
             ["ipAddress", ipAddress]
         ]);
         this.clients.set(sessionId, client);
@@ -306,6 +320,7 @@ const ServerWS = class {
             detachJoins(this, sessionId);
             detachAccount(this, sessionId);
             client.get("com").release();
+            releaseAddress(this, client.get("ipAddress"));
             this.clients.delete(sessionId);
 
             console.log("Client disconnected (" + sessionId + ")");
@@ -412,6 +427,7 @@ const ServerWS = class {
         releaseJoins(this);
         releaseAccounts(this);
         this.clients.clear();
+        this.connections.clear();
 
         // the rows stay, the pool does not: an open one keeps the process alive
         // long after the last socket is gone - and neither does the transport

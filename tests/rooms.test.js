@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG } from "../src/server/ws/handlers/rooms.js";
+import { createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, roomSignal, roomData, roomFrame, roomLeave, setRelayAllowed, receiveLimitOf, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG, RELAY_RECEIVE_MAX } from "../src/server/ws/handlers/rooms.js";
 
 // a client whose communicator keeps what the server said to it on its own
 const buildClient = function(isRelayAllowed = true) {
@@ -425,4 +425,29 @@ test("a relayed frame is only carried for a sender the relay allows", () => {
     assert.equal(framesOf(server, "peer").length, 0);
 
     releaseRooms(server);
+});
+
+// A binary message is only ever a relay frame, and it is held whole before
+// roomFrame looks at it - so a socket that may not relay is given no room to
+// hold one, and the budget follows the permission wherever it changes
+test("the receive budget of a socket follows its relay permission", () => {
+    const server = buildServer(["host"], false);
+    const configured = [];
+    server.clients.get("host").get("com")["configure"] = function(config) {
+        configured.push(config);
+    };
+
+    setRelayAllowed(server, "host", true);
+    assert.equal(server.clients.get("host").get("isRelayAllowed"), true);
+    assert.deepEqual(configured.at(-1), {"maxReceiveBytes": RELAY_RECEIVE_MAX});
+
+    setRelayAllowed(server, "host", false);
+    assert.equal(server.clients.get("host").get("isRelayAllowed"), false);
+    assert.deepEqual(configured.at(-1), {"maxReceiveBytes": 0});
+
+    assert.equal(receiveLimitOf(true), RELAY_RECEIVE_MAX);
+    assert.equal(receiveLimitOf(false), 0);
+
+    // a socket that is gone is nothing to configure
+    setRelayAllowed(server, "nobody", true);
 });

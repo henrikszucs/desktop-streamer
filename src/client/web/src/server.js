@@ -146,7 +146,6 @@ const Server = class extends EventTarget {
 
         // configure receiver fn
         this.ws.addEventListener("message", (event) => {
-            console.log("Received data:", event.data);
             let data = event.data;
             if (typeof data === "string") {
                 data = JSON.parse(data);

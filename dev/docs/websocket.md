@@ -80,6 +80,15 @@ client                                                    server
   | dispatch "offline", retry after 2000 ms                  |  communicator, drop the client
 ```
 
+Before any of that, the server counts the socket against its address
+(`holdAddress` in `ws/address.js`, under the same keys the pairing budget uses):
+one IPv4 address or IPv6 /64 may hold `CONNECTION_MAX` (32) sockets and one /48
+`CONNECTION_MAX_WIDE` (256). A socket past that is closed at once with `1008`
+`too-many-connections`, and the client's retry loop below simply tries again
+later. The close handler gives the count back. Behind a proxy the address is
+the one it forwarded, so a proxy the configuration does not name puts every
+client behind one address and one cap.
+
 Both sides run `sideSync()` and `timeSync()` themselves as soon as the socket is
 open - the server in `clientConnect`, the client in its `open` listener. Each
 side answers the other's request, so the two runs interleave harmlessly.
@@ -256,7 +265,7 @@ Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
 | `packetTimeout` | 1000 ms | wait for an ack before resending |
 | `packetRetry` | `Infinity` | resend attempts per packet |
 | `sendThreads` | 64 | packets in flight at once |
-| `maxReceiveBytes` | 32 MiB (server only) | what the other side's unfinished messages may hold at once; a message past it is aborted, and the sender's fails `reject` |
+| `maxReceiveBytes` | 32 MiB, or 0 (server only) | what the other side's unfinished messages may hold at once; a message past it is aborted, and the sender's fails `reject`. It follows the socket's relay permission (`receiveLimitOf`/`setRelayAllowed` in `handlers/rooms.js`): a binary message is only ever a relay frame and is held whole before anything looks at it, so a socket the relay does not allow may hold none |
 
 The server also caps a single WebSocket frame at 256 KiB (`maxPayload`, `SOCKET_FRAME_MAX` in `ws/ws.js`). No frame the protocol makes comes close: a binary packet is `packetSize`, and the largest JSON message is a relayed one. A frame too short for its own header, a side sync reply nobody is waiting for, and a JSON frame flagged as split are all logged and dropped rather than thrown. `receive` is async, so anything it threw would be an unhandled rejection and would end the process; `ws.js` also closes the socket on any error that does get out.
 

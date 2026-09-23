@@ -82,19 +82,15 @@ const ServerHTTP = class {
 
             const data = await fs.open(src);
             const date = new Date(stats.mtimeMs);
-            const stream = data.createReadStream();
 
-            //close when finished, destroyed or inactive
-            let timeOut = -1;
-            const closeHandle = function() {
-                clearTimeout(timeOut);
-                data?.close?.()?.catch?.(function() {});
-            };
-            stream.on("data", function() {
-                clearTimeout(timeOut);
-                timeOut = setTimeout(closeHandle, 10000);
+            // the stream closes the handle itself when it ends or is destroyed.
+            // Nothing may close it on a clock: a client that stops reading for a
+            // while pauses the pipe, and a handle closed under a paused stream
+            // cuts the download off at the next read
+            const stream = data.createReadStream();
+            stream.once("close", function() {
+                data.close().catch(function() {});
             });
-            stream.once("close", closeHandle);
 
             return {
                 "lastModified": date.toUTCString(),
