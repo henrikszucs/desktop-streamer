@@ -43,6 +43,10 @@ test("pickSystemName takes the English name whatever the language", () => {
     assert.equal(pickSystemName({"hu": "Közvetítő", "en": "Streamer"}, "Fallback"), "Streamer");
 });
 
+test("pickSystemName takes an English variant, as the built title does", () => {
+    assert.equal(pickSystemName({"hu": "Közvetítő", "en-US": "Streamer"}, "Fallback"), "Streamer");
+});
+
 test("pickSystemName takes the first name where there is no English one", () => {
     assert.equal(pickSystemName({"hu": "Közvetítő", "de": "Übertragung"}, "Fallback"), "Közvetítő");
 });

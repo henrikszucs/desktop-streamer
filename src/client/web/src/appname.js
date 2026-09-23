@@ -24,14 +24,11 @@ const pickName = function(names, lang) {
 const UNSAFE_SYSTEM = /[\u0000-\u001f\u007f/\\:*?"<>|]/g;
 
 // the name the application registers with the system under, in no language
-// the system could follow: the English one, else the first configured, else
-// the fallback - the dictionary's - where nothing usable is left
+// the system could follow: the English one by pickName's rule (the title the
+// build writes), else the first configured, else the fallback - the
+// dictionary's - where nothing usable is left
 const pickSystemName = function(names, fallback) {
-    let name = "";
-    if (typeof names === "object" && names !== null) {
-        name = names["en"] ?? Object.values(names)[0] ?? "";
-    }
-    name = String(name).replace(/\s+/g, " ").replace(UNSAFE_SYSTEM, "").trim();
+    const name = String(pickName(names, "en") ?? "").replace(/\s+/g, " ").replace(UNSAFE_SYSTEM, "").trim();
     return (name !== "" ? name : fallback);
 };
 

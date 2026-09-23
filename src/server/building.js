@@ -17,6 +17,7 @@ import UglifyJS from "uglify-js";
 import { serverScriptPath, getVersion } from "./common.js";
 import { getPublicAddress, getPublicWsAddress } from "./config.js";
 import { readZip, writeZip } from "./zip.js";
+import { pickName } from "../client/web/src/appname.js";
 
 //
 // Constants
@@ -38,6 +39,11 @@ const CONF_FILE = "index.json";
 
 // how the client looks where the configuration says nothing (http.appearance)
 const DEFAULT_APPEARANCE = {"color": "#006e1c", "theme": "auto"};
+
+// http.appearance as configured, over the defaults
+const getAppearance = function(conf) {
+    return {...DEFAULT_APPEARANCE, ...(conf["http"]?.["appearance"] ?? {})};
+};
 
 // the page the build writes the default palette into, and the palette
 // generator the client itself builds its theme with - the same one, so the
@@ -297,8 +303,7 @@ const buildConfFile = async function(conf, dists = []) {
         "version": await getVersion(),
         "http": {},
         "ws": {},
-        // how the client looks, as configured over the defaults
-        "appearance": {...DEFAULT_APPEARANCE, ...(conf["http"]?.["appearance"] ?? {})},
+        "appearance": getAppearance(conf),
         "clients": dists.map(function(dist) {
             return dist["os"] + "-" + dist["arch"] + ".zip";
         })
@@ -323,7 +328,7 @@ const buildConfFile = async function(conf, dists = []) {
 // puts on the body - {color, mode, light, dark}, and the configured name by
 // language where there is one - see the script in index.html
 const buildPaint = async function(conf) {
-    const appearance = {...DEFAULT_APPEARANCE, ...(conf["http"]?.["appearance"] ?? {})};
+    const appearance = getAppearance(conf);
     await import(pathToFileURL(path.join(serverScriptPath, ...PALETTE_SCRIPT)).href);
     const palette = await globalThis.materialDynamicColors(appearance["color"]);
     // the variable names exactly as beercss writes them (ui("theme") in beer.min.js)
@@ -363,11 +368,17 @@ const injectAppearance = function(webFiles, paint) {
     if (typeof page === "undefined" || tag.test(page["data"].toString("utf8")) === false) {
         throw new Error("No appearance meta in " + INDEX_FILE);
     }
-    let html = page["data"].toString("utf8").replace(tag, "<meta name=\"appearance\" content=\"" + escapeHTML(JSON.stringify(paint)) + "\">");
-    const names = paint["name"];
-    if (typeof names === "object" && names !== null && Object.keys(names).length > 0) {
-        const title = names["en"] ?? Object.values(names)[0];
-        html = html.replace(/<title>[^<]*<\/title>/, "<title>" + escapeHTML(title) + "</title>");
+    // a replacer function, so a "$&" in a configured name is not read as a pattern
+    const meta = "<meta name=\"appearance\" content=\"" + escapeHTML(JSON.stringify(paint)) + "\">";
+    let html = page["data"].toString("utf8").replace(tag, function() {
+        return meta;
+    });
+    // the English name by the client's own rule
+    const title = pickName(paint["name"], "en");
+    if (title !== null) {
+        html = html.replace(/<title>[^<]*<\/title>/, function() {
+            return "<title>" + escapeHTML(title) + "</title>";
+        });
     }
     page["data"] = Buffer.from(html, "utf8");
 };

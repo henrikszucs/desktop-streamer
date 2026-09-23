@@ -18,6 +18,8 @@ const url = require("node:url");
 const os = require("node:os");
 const cmd = require("node:child_process");
 const partition = "persist:remote_desktop";
+// how long the main window waits for its first paint before it is shown anyway
+const SHOW_TIMEOUT = 5000;
 
 
 //
@@ -192,8 +194,24 @@ const main = async function() {
             }
         });
         
-        win.once("ready-to-show", function() {
-            win.show();
+        // shown on the first paint, or anyway on a failed load or after
+        // SHOW_TIMEOUT - a page that never paints must not leave no window
+        let isShown = false;
+        const showWindow = function() {
+            clearTimeout(showTimeoutId);
+            if (isShown === false && win.isDestroyed() === false) {
+                isShown = true;
+                win.show();
+            }
+        };
+        const showTimeoutId = setTimeout(showWindow, SHOW_TIMEOUT);
+        win.once("ready-to-show", showWindow);
+        // the page's own load only - a frame inside it (the Google button)
+        // failing, or a navigation aborted (-3), leaves the page painting
+        win.webContents.on("did-fail-load", function(event, errorCode, errorDescription, validatedURL, isMainFrame) {
+            if (isMainFrame === true && errorCode !== -3) {
+                showWindow();
+            }
         });
         // the window takes the page's title on its own - the configured name
         // in the client's language - and the tray's tooltip follows it

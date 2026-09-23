@@ -186,7 +186,7 @@ test("loadConfig rejects a missing required field", async (t) => {
 test("loadConfig rejects an unknown field", async (t) => {
     const http = httpSection();
     http["unknown"] = true;
-    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties/);
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties: "unknown"$/m);
 });
 
 test("loadConfig rejects an appearance it cannot hand a client", async (t) => {
@@ -210,7 +210,7 @@ test("loadConfig rejects an appearance it cannot hand a client", async (t) => {
 test("loadConfig rejects the name outside the appearance it moved into", async (t) => {
     const http = httpSection();
     http["name"] = {"en": "Streamer"};
-    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties/);
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties: "name" \(moved to \/http\/appearance\/name\)/);
 });
 
 test("loadConfig rejects a port outside the valid range", async (t) => {

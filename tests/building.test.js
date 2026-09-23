@@ -271,6 +271,9 @@ test("injectAppearance makes the configured name the static title, escaped", asy
 
     // and the page's own where nothing is configured
     assert.equal(built(paint), "Desktop Streamer");
+
+    // a "$" in a name is text, not a replacement pattern
+    assert.equal(built({...paint, "name": {"en": "Pay$` Me $& $$"}}), "Pay$` Me $&amp; $$");
 });
 
 test("injectAppearance refuses a page with no appearance meta", () => {

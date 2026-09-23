@@ -534,6 +534,11 @@ const loadCertificates = async (config, confDir) => {
     }
 };
 
+// fields an earlier build accepted somewhere else, named in the error
+const MOVED_FIELDS = {
+    "/http/name": "/http/appearance/name"
+};
+
 // load the conf file and check its contents, it returns the config or throws an error
 const loadConfig = async (confPath) => {
     // load conf file (required)
@@ -561,7 +566,13 @@ const loadConfig = async (confPath) => {
     const result = checkConfig(config);
     if (result["valid"] === false) {
         const details = result["errors"].map((error) => {
-            return "  " + (error["instancePath"] || "/") + " " + error["message"];
+            let line = "  " + (error["instancePath"] || "/") + " " + error["message"];
+            const extra = error["params"]?.["additionalProperty"];
+            if (typeof extra === "string") {
+                const extraPath = error["instancePath"] + "/" + extra;
+                line += ": \"" + extra + "\"" + (extraPath in MOVED_FIELDS ? " (moved to " + MOVED_FIELDS[extraPath] + ")" : "");
+            }
+            return line;
         }).join("\n");
         throw new Error("Invalid configuration file: " + confPath + "\n" + details);
     }

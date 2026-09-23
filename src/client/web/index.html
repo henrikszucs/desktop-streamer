@@ -7,11 +7,7 @@
         <meta name="keywords" content="desktop, streamer, remote, access"/>
         <title>Desktop Streamer</title>
         <link href="/media/icon.svg" rel="icon"  type="image/svg+xml"/>
-        <!--
-            The server's default theme, filled in by the build - the palette
-            src/server/building.js computes for http.appearance, read by the
-            script at the top of the body.
-        -->
+        <!-- The server's default paint and name, written by the build (buildPaint) -->
         <meta name="appearance" content=""/>
 
         <link href="/libs/beercss/beer.min.css" rel="stylesheet"/>
@@ -23,17 +19,8 @@
 
     </head>
     <body>
-        <!--
-            The theme and the name, before anything is painted: the palette
-            this client last drew with, or the server's default from the meta
-            above, and the server's name in the language this client last
-            showed. It runs before the first paint because it is a plain script
-            in the body, so the loading layer already shows the colour and mode
-            the application keeps and the tab its name - applyTheme and
-            applyLanguage in ui/ui.js keep the cache current, and pickName in
-            src/appname.js is this one's twin. Where no name is configured the
-            title below stands until applyLanguage puts the dictionary's there.
-        -->
+        <!-- The theme and the title before the first paint - pickName is src/appname.js's
+             twin, see CLIENT.md, "The theme is painted before any module runs" -->
         <script>
             (function() {
                 const read = function(text) {
@@ -49,7 +36,7 @@
                     const base = String(lang).slice(0, 2).toLowerCase();
                     const key = keys.find((name) => name === lang) ?? keys.find((name) => name === base)
                         ?? keys.find((name) => name.slice(0, 2) === base) ?? (typeof names["en"] === "string" ? "en" : keys[0]);
-                    return (typeof names[key] === "string" ? names[key] : null);
+                    return (typeof names[key] === "string" && names[key] !== "" ? names[key] : null);
                 };
                 const built = read(document.querySelector("meta[name=appearance]")?.content ?? "");
                 let cached = null;

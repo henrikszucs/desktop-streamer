@@ -25,9 +25,13 @@ const LEVEL_DICTIONARIES = [
     "/ui/management/localization.json"
 ];
 
+// a slice that fails is logged and skipped, as a module is, so boot goes on
+// with the markup's own text where its lines would have been
 const loadDictionaries = function() {
     return Promise.all(LEVEL_DICTIONARIES.map(function(url) {
-        return localization.load(url);
+        return localization.load(url).catch(function(error) {
+            console.error(error);
+        });
     }));
 };
 
@@ -40,10 +44,8 @@ const applyScale = function() {
     return {"display": display, "kind": kind};
 };
 
-// what the script at the top of index.html paints the page with before any
-// module runs: {color, mode, light, dark, lang}, the last drawn cached under
-// this key, else the server's default the build wrote into the appearance meta
-// - which also holds the configured name, by language
+// the paint cache the script in index.html reads first: {color, mode, light,
+// dark, lang} - see CLIENT.md, "The theme is painted before any module runs"
 const PAINT_KEY = "appearance";
 
 const readJSON = function(text) {
@@ -55,16 +57,23 @@ const readJSON = function(text) {
     }
 };
 
+// the meta is read once, being the build's and never changing; the cache is read
+// every time, since another tab or window writes it too
+let built;
+
+const readBuilt = function() {
+    if (typeof built === "undefined") {
+        built = readJSON(document.querySelector("meta[name=appearance]")?.content ?? "");
+    }
+    return built;
+};
+
 const readCached = function() {
     try {
         return readJSON(localStorage.getItem(PAINT_KEY));
     } catch (error) {
         return null;
     }
-};
-
-const readBuilt = function() {
-    return readJSON(document.querySelector("meta[name=appearance]")?.content ?? "");
 };
 
 // fields merged into the cache, so the theme and the language keep each other's
@@ -87,36 +96,73 @@ const findPaint = function(color) {
     }) ?? null;
 };
 
+// how long a palette is waited for before the theme is given up on, so one that
+// never comes cannot hold every theme after it in the queue
+const THEME_TIMEOUT = 10000;
 
-// the theme, then the mode. A palette the page was already painted with is
-// handed back to beercss as it is, which is synchronous and draws nothing new;
-// only a colour never drawn before is built, and the mode waits for it, since
-// beercss sets the mode from the palette it holds. Whatever is drawn is cached
-// for the next load to paint with.
-const applyTheme = async function(local) {
+const buildPalette = function(color) {
+    let timeoutId;
+    const timeout = new Promise(function(resolve, reject) {
+        timeoutId = setTimeout(function() {
+            reject(new Error("No palette for " + color + " in " + THEME_TIMEOUT + " ms"));
+        }, THEME_TIMEOUT);
+    });
+    return Promise.race([globalThis.ui("theme", color), timeout]).finally(function() {
+        clearTimeout(timeoutId);
+    });
+};
+
+// the theme, then the mode: a palette already drawn is handed back as it is,
+// only a new colour is built - and the mode waits for it
+const paintTheme = async function(local) {
     let mode = local["mode"];
     if (mode === "auto") {
         mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
-    try {
-        let paint = findPaint(local["color"]);
-        if (paint !== null) {
-            globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
-        } else {
-            paint = await globalThis.ui("theme", local["color"]);
-        }
-        globalThis.ui("mode", mode);
-        if (isPaint(paint) === true) {
-            writeCached({
-                "color": local["color"],
-                "mode": local["mode"],
-                "light": paint["light"],
-                "dark": paint["dark"]
-            });
-        }
-    } catch (error) {
-        console.error("Cannot apply the theme:", error);
+    let paint = findPaint(local["color"]);
+    if (paint !== null) {
+        globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
+    } else {
+        paint = await buildPalette(local["color"]);
     }
+    globalThis.ui("mode", mode);
+    if (isPaint(paint) === true) {
+        writeCached({
+            "color": local["color"],
+            "mode": local["mode"],
+            "light": paint["light"],
+            "dark": paint["dark"]
+        });
+    }
+};
+
+// one theme at a time, and only the latest of those that waited, so a colour
+// still being built never lands over one picked after it
+let themeQueue = Promise.resolve();
+let themeCount = 0;
+
+// settled once the queue is empty, so a caller whose theme was skipped goes on
+// only when the one that replaced it is on screen
+const settleTheme = function() {
+    const tail = themeQueue;
+    return tail.then(function() {
+        return (tail === themeQueue ? undefined : settleTheme());
+    });
+};
+
+const applyTheme = function(local) {
+    // the values as they are now - the object is the live configuration
+    const wanted = {"color": local["color"], "mode": local["mode"]};
+    const count = ++themeCount;
+    themeQueue = themeQueue.then(function() {
+        if (count !== themeCount) {
+            return;
+        }
+        return paintTheme(wanted).catch(function(error) {
+            console.error("Cannot apply the theme:", error);
+        });
+    });
+    return settleTheme();
 };
 
 // the name as the title - the tab's, and the desktop window's and tray's,

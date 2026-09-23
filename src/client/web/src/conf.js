@@ -21,7 +21,8 @@ const OLD_GUEST_TABLE = "guest";
 const GUEST_ID = "";
 
 // the local keys and the value each falls back to - the colour and the theme are
-// the server's where its configuration names them (http.appearance)
+// the server's, which the build always writes (DEFAULT_APPEARANCE in building.js)
+// - the same defaults here for an index.json from a build before it did
 const LOCAL_DEFAULTS = {
     "color": conf["appearance"]?.["color"] ?? "#006e1c",
     "mode": conf["appearance"]?.["theme"] ?? "auto",

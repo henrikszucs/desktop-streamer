@@ -1323,7 +1323,9 @@ The localization dictionary grows with the UI, and none of it is code:
 `src/localization.js` is the lookup alone, starts empty and knows no file. A
 `localization.json` sits at the level that uses it. The shell's own levels
 carry one each that no module brings, and boot `load()`s the three
-(`LEVEL_DICTIONARIES` in `ui/ui.js`) before anything asks for a line:
+(`LEVEL_DICTIONARIES` in `ui/ui.js`) before anything asks for a line — a
+slice that fails is logged and skipped like a module, and the markup keeps its
+own English text where its lines would have gone:
 `ui/localization.json` is what every level shares — `main.name`, the
 application's own name where the configuration gives it none, which the desktop
 shell names its auto-launch entry from in `initDesktop` — while
@@ -1360,25 +1362,40 @@ dictionary when asked rather than when the module is imported.
   nothing new, builds one only for a colour never drawn (and sets the mode
   after it, since beercss sets the mode from the palette it holds), and caches
   whatever it drew; the appearance window goes through it as
-  `ctx["ui"].applyTheme()` so a change is painted at the next load too. `ui.js`
+  `ctx["ui"].applyTheme()` so a change is painted at the next load too. Calls
+  are queued and only the latest waiting one runs, since a colour still being
+  built would otherwise land over one picked after it; a palette not built
+  within `THEME_TIMEOUT` is given up on so it cannot hold the queue, and every
+  caller's promise settles only once the queue is empty, so one whose theme was
+  skipped goes on when the one that replaced it is on screen. The meta is read
+  once — the build's never changes — but the cache is read on every write,
+  since another tab or window writes it too and a copy in memory would put its
+  stale colour or language back. `ui.js`
   imports the two beercss modules itself so `ui()` is there when it is called.
   Under the desktop shell the window starts hidden and is shown on
-  `ready-to-show`, so it never appears as a blank frame before that paint.
+  `ready-to-show`, so it never appears as a blank frame before that paint — or
+  on a `did-fail-load` of the main frame (not an aborted navigation, `-3`, and
+  not a frame inside the page such as the Google button) or after
+  `SHOW_TIMEOUT`, so a page that never paints does not leave the application
+  running with no window.
   The same script sets the **title** from the configured `name` in the meta —
   in the language this client last showed (`lang` in the same cache, written by
   `applyLanguage`), else the browser's — and `applyLanguage` sets it again on
   every language change; the name itself is never cached, so a renamed server
   is renamed at the next load. Electron's window takes the page title on its
   own, and `main.js` hands it to the tray's tooltip on `page-title-updated`.
-  The build also writes the English name (or the first) as the static
-  `<title>` for anything that reads the page without running it. Where no name
+  The build also writes the English name (`pickName(names, "en")`, the same
+  rule) as the static `<title>` for anything that reads the page without running it. Where no name
   is configured, the title is the dictionary's `main.name` in the client's
   language. The rules are `pickName`/`pickSystemName` in `src/appname.js`
   (pure, `tests/appname.test.js`).
   **What the system is told is in English.** The auto-launch entry
   (`openAutoLaunch` in `src/desktop.js`) is named with the configured English
-  name, else the first configured, else the dictionary's English `main.name`,
-  stripped of what a registry value, a file name or an AppleScript string
+  name (by `pickName`'s rule, so an `en-US` counts, as it does for the static
+  `<title>`), else the first configured, else the dictionary's English
+  `main.name` — and "Desktop Streamer" where that slice did not load, since a
+  failed slice no longer fails the boot and an empty name would be the `Run`
+  key's default value — stripped of what a registry value, a file name or an AppleScript string
   cannot hold - the name *is* the entry on every platform (a `Run` value, a
   LaunchAgent file or login item, an autostart `.desktop` file). Because the
   entry is found by its name, a renamed one would leave the old entry starting
@@ -1386,7 +1403,16 @@ dictionary when asked rather than when the module is imported.
   registered is kept in `localStorage` (`autoLaunchName`, "Desktop Streamer"
   before it existed) and an enabled entry under another name is moved: the new
   one enabled first, the old one disabled after, and the name recorded only
-  once that worked, so a failed move is tried again at the next start.
+  once that worked. Only when that move failed does `desktop["autoLaunch"]`
+  hand out answers for both: it reads as on while either is, and its `enable`
+  and `disable` (the settings reset's included — a `disable` that has no entry
+  of its own to remove still removes the old one) finish the move, so a failed
+  one never leaves an entry the setting cannot see; once the old entry is gone
+  it asks about the current one alone. A name that changes only in **case** is
+  moved the other way round — the old entry disabled first, then the new one
+  enabled — since the `Run` key and a macOS file name ignore case, and there
+  enabling the new name rewrites the old entry, which disabling the old name
+  would then remove.
 - **Media device lists** come back unnamed and id-less until the page has been
   granted access once, so `media-devices.js` asks again after a `getUserMedia`
   call.
