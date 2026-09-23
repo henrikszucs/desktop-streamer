@@ -41,9 +41,17 @@
                 "en": "Screen share: only manual share",
                 "hu": "Képernyő megosztás: csak manuális megosztás"
             },
+            "screen-share-unsupported": {
+                "en": "Screen share: not supported",
+                "hu": "Képernyő megosztás: nem támogatott"
+            },
             "play": {
                 "en": "Low latency play: not supported",
                 "hu": "Alacsony késleltetésű lejátszás: nem támogatott"
+            },
+            "play-audio": {
+                "en": "Sound playback: not supported",
+                "hu": "Hang lejátszás: nem támogatott"
             },
             "control-share": {
                 "en": "Control share: not supported",

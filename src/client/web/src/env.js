@@ -1,47 +1,8 @@
 "use strict";
 
-// what the browser this client runs in is, and how wide it is - everything the
-// UI has to know before it draws anything
-
-// Opera 8.0+, Firefox 1.0+, Safari 3.0+, IE 6-11, Edge 20+, Chrome 1-79
-const checkBrowser = function() {
-    // Opera 8.0+
-    const isOpera = (!!window.opr && !!opr.addons) || !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
-
-    // Firefox 1.0+
-    const isFirefox = typeof InstallTrigger !== 'undefined';
-
-    // Safari 3.0+ "[object HTMLElementConstructor]" 
-    const isSafari = /constructor/i.test(window.HTMLElement) || (function (p) { return p.toString() === "[object SafariRemoteNotification]"; })(!window['safari'] || (typeof safari !== 'undefined' && window['safari'].pushNotification));
-
-    // Internet Explorer 6-11
-    const isIE = /*@cc_on!@*/false || !!document.documentMode;
-
-    // Edge 20+
-    const isEdge = !isIE && !!window.StyleMedia;
-
-    // Chrome 1 - 79
-    const isChrome = !!window.chrome;
-
-    // Edge (based on chromium) detection
-    const isEdgeChromium = isChrome && (navigator.userAgent.indexOf("Edg") != -1);
-
-    // Blink engine detection
-    const isBlink = (isChrome || isOpera) && !!window.CSS;
-
-    return {
-        "isFirefox": isFirefox,
-        "isChrome": isChrome,
-        "isSafari": isSafari,
-        "isOpera": isOpera,
-        "isIE": isIE,
-        "isEdge": isEdge,
-        "isEdgeChromium": isEdgeChromium,
-        "isBlink": isBlink
-    };
-};
-
-const browser = checkBrowser();
+// what platform this client runs on, and how wide it is - everything the UI
+// has to know before it draws anything. What the browser can *do* is asked of
+// the feature itself where it is used, never guessed from its name.
 
 // the operating system, in the names node uses for it, since the desktop shell
 // reports the same word from os.platform() - "unknown" where the user agent
@@ -154,5 +115,5 @@ const domReady = new Promise(function (resolve) {
     }, { "once": true });
 });
 
-export { checkBrowser, browser, getPlatform, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
-export default { checkBrowser, browser, getPlatform, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
+export { getPlatform, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };
+export default { getPlatform, width, sizeS, sizeM, domReady, getDisplay, getDisplayKind, getRootFontSize };

@@ -14,7 +14,6 @@ const AudioWindow = class extends Panel {
 
     async mount(ctx) {
         const desktop = ctx["desktop"];
-        const browser = ctx["ui"].env.browser;
 
         // decoder support
         this.decoderAudioSupport = document.getElementById("decoder-audio-support");
@@ -31,7 +30,7 @@ const AudioWindow = class extends Panel {
         this.systemAudioUnsupport = document.getElementById("system-audio-unsupport");
         if (desktop.isAvailable) {
             this.systemAudioSupport.classList.remove("hide");
-        } else if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
+        } else if (ctx["stream"].isAudioShareSupported() === true) {
             this.systemAudioPartial.classList.remove("hide");
         } else {
             this.systemAudioUnsupport.classList.remove("hide");

@@ -4,7 +4,7 @@
 // mounts the module tree - the one file in ./ui that is not a module
 
 // first-party dependencies
-import { browser, width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
+import { width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
 import localization from "../src/localization.js";
 import registry from "../src/registry.js";
 import { createLoading } from "./loading/loading.js";
@@ -163,7 +163,7 @@ const createUI = function(ctx) {
         "loading": loading,
         "snackbar": snackbar,
         "permissions": permissions,
-        "env": {"browser": browser, "width": width, "sizeS": sizeS, "sizeM": sizeM},
+        "env": {"width": width, "sizeS": sizeS, "sizeM": sizeM},
         "navigate": function(path, params) { return ctx["router"].navigate(path, params); },
         "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
         "closeDialog": function(id) { return ctx["router"].closeDialog(id); },

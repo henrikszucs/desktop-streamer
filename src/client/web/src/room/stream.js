@@ -2055,6 +2055,11 @@ const createStream = function(ctx) {
         },
         "isShareSupported": function() {
             return ctx["desktop"].isAvailable === true || isWebEncoderSupported();
+        },
+        // a browser shares sound only where the picker offers it and it can
+        // be encoded, which is a question of features rather than of names
+        "isAudioShareSupported": function() {
+            return ctx["desktop"].isAvailable === true || (isWebEncoderSupported() && typeof AudioEncoder !== "undefined");
         }
     };
 };
