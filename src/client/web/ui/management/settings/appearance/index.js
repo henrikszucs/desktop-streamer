@@ -89,6 +89,8 @@ const AppearanceWindow = class extends Panel {
             this.autoLaunchLabel.classList.remove("hide");
             desktop.autoLaunch.isEnabled().then((isEnabled) => {
                 this.autoLaunchCheckbox.checked = isEnabled;
+            }).catch((error) => {
+                console.error("Cannot read auto launch:", error);
             });
             this.autoLaunchCheckbox.addEventListener("change", async (event) => {
                 const isChecked = event.target.checked;
@@ -102,7 +104,13 @@ const AppearanceWindow = class extends Panel {
                 } catch (error) {
                     console.error("Cannot switch auto launch:", error);
                 }
-                const isEnabled = await desktop.autoLaunch.isEnabled();
+                // and a system that cannot be read is taken as holding nothing
+                let isEnabled = false;
+                try {
+                    isEnabled = await desktop.autoLaunch.isEnabled();
+                } catch (error) {
+                    console.error("Cannot read auto launch:", error);
+                }
                 event.target.checked = isEnabled;
                 await setLocal("autoLaunch", isEnabled);
             });

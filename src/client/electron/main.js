@@ -199,6 +199,8 @@ const main = async function() {
         let isShown = false;
         const showWindow = function() {
             if (isShown === false && win.isDestroyed() === false) {
+                isShown = true;
+                clearTimeout(showTimeoutId);
                 win.show();
             }
         };

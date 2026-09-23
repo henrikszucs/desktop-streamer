@@ -12,6 +12,7 @@ import "../libs/beercss/material-dynamic-colors.min.js";
 import { width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
 import localization from "../src/localization.js";
 import { pickName } from "../src/appname.js";
+import { buildPalette } from "../src/appearance.js";
 import registry from "../src/registry.js";
 import { createLoading } from "./loading/loading.js";
 
@@ -96,19 +97,18 @@ const findPaint = function(color) {
     }) ?? null;
 };
 
-// the palette of a colour as beercss writes it (ui("theme") in beer.min.js),
-// built here so one no longer wanted is dropped rather than drawn late
-const toStyle = function(colors) {
-    let style = "";
-    for (const key of Object.keys(colors)) {
-        style += "--" + key.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, "$1-$2").toLowerCase() + ":" + colors[key] + ";";
-    }
-    return style;
-};
+// one build per colour in flight, however many calls are waiting on it - a
+// failed one is dropped, so the next call tries again
+const building = new Map();
 
-const buildPaint = async function(color) {
-    const palette = await globalThis.materialDynamicColors(color);
-    return {"light": toStyle(palette["light"]), "dark": toStyle(palette["dark"])};
+const buildPaint = function(color) {
+    const key = String(color).toLowerCase();
+    if (building.has(key) === false) {
+        building.set(key, buildPalette(color).finally(function() {
+            building.delete(key);
+        }));
+    }
+    return building.get(key);
 };
 
 // the palette and the mode, drawn at once; before the first, beercss holds no
@@ -119,6 +119,17 @@ const drawTheme = function(paint, mode) {
     globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
     globalThis.ui("mode", mode);
     isDrawn = true;
+};
+
+// the mode, on the palette already on screen - before the first draw that is
+// the one index.html painted, handed to beercss so it is not wiped
+const drawMode = function(mode) {
+    const painted = (isDrawn === true ? null : [readCached(), readBuilt()].find(isPaint) ?? null);
+    if (painted !== null) {
+        drawTheme(painted, mode);
+    } else {
+        globalThis.ui("mode", mode);
+    }
 };
 
 // only the latest call draws, so a colour still being built never lands over
@@ -136,14 +147,14 @@ const applyTheme = async function(local) {
     const count = ++themeCount;
     let paint = findPaint(color);
     if (paint === null) {
-        // the mode switched on the palette on screen while the new one builds
-        if (isDrawn === true) {
-            globalThis.ui("mode", mode);
-        }
+        // the mode is switched at once, a failed build leaves it standing
+        drawMode(mode);
         try {
             paint = await buildPaint(color);
         } catch (error) {
-            console.error("Cannot apply the theme:", error);
+            if (count === themeCount) {
+                console.error("Cannot apply the theme:", error);
+            }
             return;
         }
         if (count !== themeCount) {

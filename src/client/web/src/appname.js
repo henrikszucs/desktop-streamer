@@ -1,14 +1,9 @@
 "use strict";
 
 // the name of the application, from the configured one (http.appearance.name,
-// keyed by language), and the look it has where nothing is configured - pure,
-// so tests/appname.test.js runs it under Node and the build imports it. The
+// keyed by language) - pure, so tests/appname.test.js runs it under Node. The
 // script at the top of index.html holds a copy of pickName, since it runs
 // before any module can.
-
-// how the client looks where http.appearance says nothing: what the build
-// writes into index.json, and what a client falls back to without it
-const DEFAULT_APPEARANCE = Object.freeze({"color": "#006e1c", "theme": "auto"});
 
 // the name in one language: that one, its base, a variant of the base,
 // English, then any - null when there is none to pick
@@ -37,5 +32,5 @@ const pickSystemName = function(names, fallback) {
     return (name !== "" ? name : fallback);
 };
 
-export { DEFAULT_APPEARANCE, pickName, pickSystemName };
-export default { DEFAULT_APPEARANCE, pickName, pickSystemName };
+export { pickName, pickSystemName };
+export default { pickName, pickSystemName };

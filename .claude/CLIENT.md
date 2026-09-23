@@ -1364,14 +1364,18 @@ dictionary when asked rather than when the module is imported.
   so a change is painted at the next load too. **The palette is built beside
   beercss, never by it**: `ui("theme", color)` applies its result whenever it
   resolves, so a slow colour would land over one picked after it and nothing
-  could call it off. `buildPaint` calls `materialDynamicColors` itself and
-  writes the style strings the way beercss does (the same `toStyle` as
-  `buildPaint` in `building.js`), and only the latest call draws what it
-  built — an earlier one that resolves late is dropped. Nothing waits in line
-  behind a build, so a cached colour or a mode switch is drawn at once; while a
-  new colour builds, the mode is switched on the palette already on screen,
-  except before the first draw, when beercss holds no palette and setting a
-  mode alone would wipe the one `index.html` painted. The meta is read
+  could call it off. `buildPalette` in `src/appearance.js` calls
+  `materialDynamicColors` itself and writes the style strings the way beercss
+  does — the build's `buildPaint` imports the same module, so the palette
+  painted first and the one drawn after cannot drift apart — and only the
+  latest call draws what it built; an earlier one that resolves late is
+  dropped. One build per colour is in flight at a time, however many calls wait
+  on it. Nothing waits in line behind a build, so a cached colour or a mode
+  switch is drawn at once; while a new colour builds — and if the build fails
+  — the mode is switched on the palette already on screen. Before the first
+  draw beercss holds no palette and setting a mode alone would wipe the one
+  `index.html` painted, so that palette (the cache's, else the meta's) is
+  handed to beercss with the mode instead. The meta is read
   once — the build's never changes — but the cache is read on every write,
   since another tab or window writes it too and a copy in memory would put its
   stale colour or language back. `ui.js`

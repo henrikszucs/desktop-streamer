@@ -17,7 +17,8 @@ import UglifyJS from "uglify-js";
 import { serverScriptPath, getVersion } from "./common.js";
 import { getPublicAddress, getPublicWsAddress } from "./config.js";
 import { readZip, writeZip } from "./zip.js";
-import { DEFAULT_APPEARANCE, pickName } from "../client/web/src/appname.js";
+import { pickName } from "../client/web/src/appname.js";
+import { DEFAULT_APPEARANCE, buildPalette } from "../client/web/src/appearance.js";
 
 //
 // Constants
@@ -327,20 +328,12 @@ const buildConfFile = async function(conf, dists = []) {
 const buildPaint = async function(conf) {
     const appearance = getAppearance(conf);
     await import(pathToFileURL(path.join(serverScriptPath, ...PALETTE_SCRIPT)).href);
-    const palette = await globalThis.materialDynamicColors(appearance["color"]);
-    // the variable names exactly as beercss writes them (ui("theme") in beer.min.js)
-    const toStyle = function(colors) {
-        let style = "";
-        for (const key of Object.keys(colors)) {
-            style += "--" + key.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, "$1-$2").toLowerCase() + ":" + colors[key] + ";";
-        }
-        return style;
-    };
+    const palette = await buildPalette(appearance["color"]);
     const paint = {
         "color": appearance["color"],
         "mode": appearance["theme"],
-        "light": toStyle(palette["light"]),
-        "dark": toStyle(palette["dark"])
+        "light": palette["light"],
+        "dark": palette["dark"]
     };
     if (typeof appearance["name"] === "object") {
         paint["name"] = {...appearance["name"]};

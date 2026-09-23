@@ -47,7 +47,10 @@ const moveEntry = async function(AutoLaunch, current, name, other, exePath) {
             return true;
         }
         if (other.toLowerCase() !== name.toLowerCase()) {
-            await current.enable();
+            // a login item on macOS is added again by every enable
+            if (await current.isEnabled() !== true) {
+                await current.enable();
+            }
             await old.disable();
             return true;
         }
@@ -55,7 +58,9 @@ const moveEntry = async function(AutoLaunch, current, name, other, exePath) {
         // the old goes first - and comes back if the new cannot be made
         await old.disable();
         try {
-            await current.enable();
+            if (await current.isEnabled() !== true) {
+                await current.enable();
+            }
         } catch (error) {
             await old.enable();
             throw error;
