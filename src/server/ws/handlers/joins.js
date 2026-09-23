@@ -19,6 +19,7 @@
 // first-party dependencies
 import { generateId } from "../../common.js";
 import { push, notify, notifyAll, ANSWER_TIMEOUT } from "../notify.js";
+import { addressOf } from "../address.js";
 import { createRoom } from "./rooms.js";
 
 // a join code is a capability, not something anybody reads out: it is ten
@@ -462,7 +463,7 @@ const joinRequest = async function(ctx) {
         "type": "join-request",
         "joinId": join.get("joinId"),
         "details": {
-            "ipAddress": client?.get("ws")?._socket?.remoteAddress ?? "",
+            "ipAddress": addressOf(server, sessionId),
             "isUser": typeof client?.get("userId") === "string"
         },
         "timeout": ANSWER_TIMEOUT

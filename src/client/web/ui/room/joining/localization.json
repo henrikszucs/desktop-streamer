@@ -49,6 +49,10 @@
                 "en": "The host device is answering another join request.",
                 "hu": "A kiszolgáló eszköz éppen egy másik kérelmet bírál el."
             },
+            "too-many-attempts": {
+                "en": "Too many codes were tried from this network. Please wait a few minutes before trying again.",
+                "hu": "Túl sok kódot próbáltak ki erről a hálózatról. Kérlek várj néhány percet, mielőtt újra próbálod."
+            },
             "denied": {
                 "en": "Joining is not available for guests.",
                 "hu": "A csatlakozás vendégként nem érhető el."

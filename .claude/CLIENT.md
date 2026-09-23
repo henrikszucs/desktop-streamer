@@ -571,7 +571,12 @@ then what would have crossed between the two devices crosses the server instead
 - **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
   answered to every client in `permissions` (it is off unless the configuration
   says otherwise, since it spends the server's own bandwidth), and where it is
-  off a failed direct attempt ends the room rather than hanging on one. It is
+  off a failed direct attempt ends the room rather than hanging on one - with
+  `leave()`, not a local teardown, and on the other end's `relay` signal as
+  much as on its own clock: the two ends' flags can differ (an account that
+  has the relay, a guest that has not), and a room only one side left would
+  keep the other on the relay "connected", a host sending its screen to
+  nobody. It is
   the *guest's* flag: an account's is its own users row, told in the profile
   as `isRelayAllowed` and kept on the account record - taken from every
   profile the server answers or pushes, not the sign-in alone, so a record
@@ -643,7 +648,10 @@ side in the same offer, `ordered: false, maxRetransmits: 0`, wrapped in nothing:
 `sendFrame()` hands a chunk to it as it is and reports `false` rather than
 queueing when `bufferedAmount` is past `VIDEO_BACKLOG`, and whatever arrives on
 it is the `frame` event. On the relay the same chunk is the socket's binary frame
-(`roomDataSend`) and the relayed bytes come back as `frame` too, so the stream
+(`roomDataSend`), refused the same way once the socket's `bufferedAmount` is past
+`RELAY_BACKLOG` - the server acknowledges as fast as it reads, so without that
+line a relay slower than the encoder is a queue that only grows - and the
+relayed bytes come back as `frame` too, so the stream
 never asks which leg it is on - bytes are the stream and an object is a message,
 on both. Why the picture is not on the control channel is the section below.
 

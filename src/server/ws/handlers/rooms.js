@@ -70,6 +70,16 @@ const FRAME_JSON = 2;
 const FRAME_KINDS = new Set([FRAME_DATA, FRAME_JSON]);
 const FRAME_HEADER = 1 + ROOM_KEY_LENGTH;
 
+// How much may wait in front of the receiving socket before a frame is dropped
+// rather than queued behind the rest. A frame that cannot go out now is late
+// for the picture, and nothing else would stop the queue: the sender hears the
+// server's acknowledgment, not the far end's, so a receiver on a slower line -
+// or one that stopped reading on purpose - would have the server hold whatever
+// the sender can push, for as long as the room stands. A dropped frame is a gap
+// the peer's reassembler asks a keyframe for, the same as one lost on the
+// direct leg.
+const RELAY_BACKLOG = 2 * 1024 * 1024;
+
 // one key, unique among every key of every room that stands - both sides of a
 // room live in the same table, so a key names a room and a side in one lookup
 const generateRoomKey = function(server, taken = "") {
@@ -387,12 +397,18 @@ const roomFrame = function(ctx) {
 
     // and the far end's key over the sender's, in place: it knows the room by
     // that one and by no other, and it must not be handed this one
+    const targetSessionId = otherSessionId(held["room"], held["isHost"]);
+    const backlog = server.clients.get(targetSessionId)?.get("ws")?.bufferedAmount ?? 0;
+    if (backlog > RELAY_BACKLOG) {
+        return;         // the far end is not keeping up, see RELAY_BACKLOG
+    }
+
     const targetKey = otherRoomKey(held["room"], held["isHost"]);
     for (let i = 0; i < ROOM_KEY_LENGTH; i++) {
         header[1 + i] = targetKey.charCodeAt(i);
     }
 
-    pushData(server, otherSessionId(held["room"], held["isHost"]), buffer);
+    pushData(server, targetSessionId, buffer);
 };
 
 // the types this group answers
@@ -402,5 +418,5 @@ const handlers = {
     "room-leave": roomLeave
 };
 
-export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH };
+export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG };
 export default handlers;

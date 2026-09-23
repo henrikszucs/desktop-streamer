@@ -22,6 +22,7 @@ import { detachRooms, releaseRooms } from "./handlers/rooms.js";
 import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.js";
 import { startDatabase, stopDatabase } from "./database.js";
 import { createMailer } from "./mail.js";
+import { clientAddress } from "./address.js";
 
 // the packet layer of every socket, the same on the client (src/client/web/src/server.js):
 // one video chunk of the stream is one packet, and a whole frame is a handful
@@ -36,6 +37,11 @@ const SOCKET_SEND_THREADS = 64;
 // is capped too, well above a relayed frame of a stream (see handlers/rooms.js)
 const SOCKET_FRAME_MAX = 256 * 1024;
 const SOCKET_RECEIVE_MAX = 32 * 1024 * 1024;
+
+// how often every socket is pinged, and so how long one that stopped reading is
+// kept: a socket that does not read is one the relay's frames and every push
+// pile up in front of, and a half-open one holds its codes and rooms forever
+const HEARTBEAT_INTERVAL = 30000;
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
@@ -53,6 +59,13 @@ const ServerWS = class {
     joins = new Map();              // key-joinId, value-state of a join a socket holds open (see ./handlers/joins.js)
     rooms = new Map();              // key-one side's room key, value-the two sockets an accept put together - one room is in here twice, once per side (see ./handlers/rooms.js)
     accounts = new Map();           // key-userId, value-the sockets signed in as that user, while there is one (see ./handlers/accounts.js)
+    pairFailures = new Map();       // key-an address (see ./address.js), value-the pair codes it tried that opened nothing (see ./handlers/pairing.js)
+    pairFailuresSweep = 0;
+
+    // whether a proxy stands in front of the socket, which is then the proxy's
+    // and the client's address is the one it forwarded - see ./address.js
+    isProxied = false;
+    heartbeatId = -1;
 
     // the sign-in providers and the rules on who may sign in, built from the
     // configuration in start() - a server that never started signs nobody in
@@ -120,8 +133,13 @@ const ServerWS = class {
         // when it has one, and the HTTP address when the two share a host
         const address = getPublicWsAddress(conf);
 
+        // a shared port is the HTTP server's listener, and its proxy with it
+        const isSharedPort = (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]);
+        this.isProxied = (typeof conf["ws"]["proxy"] === "object"
+            || (isSharedPort === true && typeof conf["http"]["proxy"] === "object"));
+
         // Listen WS port
-        if (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]) {
+        if (isSharedPort === true) {
             // the HTTP server already listens here, only add the upgrade
             this.wsServer = new WebSocketServer({
                 "server": serverHTTP.httpServer,
@@ -146,13 +164,35 @@ const ServerWS = class {
                 "maxPayload": SOCKET_FRAME_MAX
             });
         }
-        this.wsServer.addListener("connection", (ws) => {
+        this.wsServer.addListener("connection", (ws, req) => {
             if (this.isClosing === true) {
                 ws.terminate();
-            } else {
-                this.clientConnect(ws);
+                return;
             }
+            ws.isAlive = true;
+            ws.on("pong", function() {
+                ws.isAlive = true;
+            });
+            this.clientConnect(ws, clientAddress(req, this.isProxied));
         });
+
+        // a browser answers a ping on its own, so a socket that has not
+        // answered the last one by the next is not reading at all
+        clearInterval(this.heartbeatId);
+        this.heartbeatId = setInterval(() => {
+            for (const socket of this.wsServer?.clients ?? []) {
+                if (socket.isAlive === false) {
+                    socket.terminate();
+                    continue;
+                }
+                socket.isAlive = false;
+                try {
+                    socket.ping();
+                } catch (error) {
+                    socket.terminate();
+                }
+            }
+        }, HEARTBEAT_INTERVAL);
         process.stdout.write("\n    Available: wss://" + address["domain"] + (address["port"] !== 443 ? ":" + address["port"] : "") + "\n");
         if (typeof conf["ws"]["proxy"] === "object") {
             // the line above is the proxy's address, name the socket as well
@@ -173,7 +213,10 @@ const ServerWS = class {
         return sessionId;
     };
 
-    async clientConnect(ws) {
+    // `ipAddress` is where the connection came from, the proxy's forwarded
+    // address when there is one - a socket handed in without it is known by
+    // the address it holds itself
+    async clientConnect(ws, ipAddress = ws?._socket?.remoteAddress ?? "") {
         // generate the session id of the connection
         const sessionId = this.generateSessionId();
 
@@ -211,13 +254,15 @@ const ServerWS = class {
             "com": Communicator,
             "ws": WebSocket,
             "isRelayAllowed": boolean,
+            "ipAddress": string,
             "userId": string,               (signed in only)
             "accountSessionId": string      (signed in only - the sessions row, not this connection)
         }*/
         const client = new Map([
             ["com", com],
             ["ws", ws],
-            ["isRelayAllowed", this.confPublic["permissions"]?.["guestAllowRelay"] === true]
+            ["isRelayAllowed", this.confPublic["permissions"]?.["guestAllowRelay"] === true],
+            ["ipAddress", ipAddress]
         ]);
         this.clients.set(sessionId, client);
 
@@ -286,6 +331,8 @@ const ServerWS = class {
 
     async stop() {
         this.isClosing = true;
+        clearInterval(this.heartbeatId);
+        this.heartbeatId = -1;
 
         process.stdout.write("\n    Closing WS server....    ");
         const wasRunning = this.wsServer !== null || this.wsHttpServer !== null;
@@ -378,5 +425,5 @@ const ServerWS = class {
 // the server is a singleton, the module hands out the running instance
 const serverWS = new ServerWS();
 
-export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS, SOCKET_FRAME_MAX, SOCKET_RECEIVE_MAX };
+export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS, SOCKET_FRAME_MAX, SOCKET_RECEIVE_MAX, HEARTBEAT_INTERVAL };
 export default serverWS;

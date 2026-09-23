@@ -315,7 +315,30 @@ itself:
 It is forwarded to the other socket of that room exactly as it arrived, one way
 and unanswered. This is the path with **no size limit**: the communicator splits
 an ArrayBuffer into `packetSize` packets and reassembles it, so what a JSON call
-could not carry (one message, one frame) a binary frame can.
+could not carry (one message, one frame) a binary frame can. It is **dropped**
+while the receiving socket has more than `RELAY_BACKLOG` (2 MiB, in
+`handlers/rooms.js`) waiting to go out: the sender hears the server's
+acknowledgments and never the far end's, so nothing else would stop a slow or
+silent receiver from having the server hold whatever the sender pushes. The
+client draws the same line at its own socket (`RELAY_BACKLOG` in
+`src/room/room.js`, 1 MiB) and refuses the frame there, as the direct leg does.
+
+**Every socket is pinged every `HEARTBEAT_INTERVAL`** (30 s, `ws/ws.js`) and one
+that has not answered the previous ping by the next is terminated. A browser
+answers on its own, so what this ends is a socket that stopped reading - which
+everything queued for it would otherwise pile up in front of - and a half-open
+one that would hold its code and its rooms for ever.
+
+**`pair-request` has a budget per address.** A code that opens nothing
+(`unknown-code`) or is taken (`busy`, which says just as much: it is live) costs
+the address one try; past `PAIR_FAIL_MAX` (10) in `PAIR_FAIL_WINDOW` (10 min)
+every request from it is answered `too-many-attempts` before any code is looked
+up, so a live code and a dead one read the same. An IPv4 address is one key; an
+IPv6 address counts against its /64 and, with ten times the budget, its /48, so a
+site cannot walk its /64s for fresh budgets. Behind a configured `proxy` the
+address is the last `X-Forwarded-For` entry - the one the proxy appended - and
+without one the header is ignored (`ws/address.js`); the same address is what a
+host is shown in `pair-request`/`join-request` and what `sessions` records.
 
 | type | request | answer |
 | --- | --- | --- |
@@ -340,8 +363,8 @@ client never carries a default of its own.
 
 | flag | default | means |
 | --- | --- | --- |
-| `guestAllowShare` | `true` | a guest may share this device |
-| `guestAllowJoin` | `true` | a guest may join someone else's room |
+| `guestAllowShare` | `true` | a guest may share this device (`pair-create`); a signed-in socket may whatever it says |
+| `guestAllowJoin` | `true` | a guest may join someone else's room (`pair-request`); a signed-in socket may whatever it says |
 | `guestAllowRelay` | `false` | this server will carry the data of two devices that cannot reach each other, which is its own bandwidth - so it is the one guest flag that is off until it is asked for. It gates the **two relayed payload paths**: the `room-data` call and the binary relay frame, which is the one the client actually streams over. The negotiation itself (`room-signal`) is never gated. The client is told because a fallback that is not there must not be waited for. It is answered **once per connection**, into the client state at `clientConnect`, and read from there by every relayed message - never re-read from the configuration or a row while the socket is live |
 | `isAuth` | - | this server has some way to sign in, so an account is worth offering |
 | `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |

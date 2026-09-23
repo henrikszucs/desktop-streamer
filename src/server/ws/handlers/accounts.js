@@ -16,6 +16,7 @@
 // first-party dependencies
 import { generateId, httpsGetText, httpsGetImage } from "../../common.js";
 import { notify } from "../notify.js";
+import { addressOf } from "../address.js";
 import { removeUserJoins } from "./joins.js";
 
 // how long a session stands without being presented; every login-session pushes
@@ -359,10 +360,6 @@ const userAgentOf = function(message) {
     }
     const text = JSON.stringify(userAgent);
     return text.length > USER_AGENT_MAX ? "" : text;
-};
-
-const addressOf = function(server, sessionId) {
-    return server.clients.get(sessionId)?.get("ws")?._socket?.remoteAddress ?? "";
 };
 
 // a sessions row in the words the client reads - the key never among them,

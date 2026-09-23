@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, roomSignal, roomData, roomLeave, SIGNAL_MAX, DATA_MAX } from "../src/server/ws/handlers/rooms.js";
+import { createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG } from "../src/server/ws/handlers/rooms.js";
 
 // a client whose communicator keeps what the server said to it on its own
 const buildClient = function(isRelayAllowed = true) {
@@ -355,6 +355,74 @@ test("the relay permission is the connection's own, not the server's at that mom
     roomData(allowed);
     assert.equal(allowed.answers[0]["success"], true);
     assert.equal(pushesOf(server, "peer", "room-data").length, 1);
+
+    releaseRooms(server);
+});
+
+//
+// the binary relay frame
+//
+// a frame as a client builds it: kind, the sender's key, the payload
+const buildFrame = function(roomKey, payload) {
+    const bytes = new Uint8Array(FRAME_HEADER + payload.length);
+    bytes[0] = FRAME_DATA;
+    for (let i = 0; i < ROOM_KEY_LENGTH; i++) {
+        bytes[1 + i] = roomKey.charCodeAt(i);
+    }
+    bytes.set(payload, FRAME_HEADER);
+    return bytes.buffer;
+};
+
+// what one socket was handed as bytes rather than as a message
+const framesOf = function(server, sessionId) {
+    return server.clients.get(sessionId).get("pushed").filter(function(message) {
+        return message instanceof ArrayBuffer;
+    });
+};
+
+const keyOf = function(buffer) {
+    return String.fromCharCode(...new Uint8Array(buffer, 1, ROOM_KEY_LENGTH));
+};
+
+test("a relayed frame reaches the other end under its own key", () => {
+    const server = buildServer();
+    const room = createRoom(server, "host", "peer", "");
+
+    roomFrame(buildCtx(server, "host", buildFrame(room.get("hostKey"), [1, 2, 3])));
+    const frames = framesOf(server, "peer");
+    assert.equal(frames.length, 1);
+    assert.equal(keyOf(frames[0]), room.get("peerKey"));
+    assert.deepEqual([...new Uint8Array(frames[0], FRAME_HEADER)], [1, 2, 3]);
+    assert.equal(framesOf(server, "other").length, 0);
+
+    releaseRooms(server);
+});
+
+// a receiver that is not keeping up - a slower line, or one that stopped
+// reading on purpose - is not queued for: the frame is late and it is dropped
+test("a relayed frame is dropped while the far end is backed up", () => {
+    const server = buildServer();
+    const room = createRoom(server, "host", "peer", "");
+    const peerSocket = server.clients.get("peer").get("ws");
+
+    peerSocket.bufferedAmount = RELAY_BACKLOG + 1;
+    roomFrame(buildCtx(server, "host", buildFrame(room.get("hostKey"), [1])));
+    assert.equal(framesOf(server, "peer").length, 0);
+
+    // and carried again the moment the line has drained
+    peerSocket.bufferedAmount = RELAY_BACKLOG;
+    roomFrame(buildCtx(server, "host", buildFrame(room.get("hostKey"), [2])));
+    assert.equal(framesOf(server, "peer").length, 1);
+
+    releaseRooms(server);
+});
+
+test("a relayed frame is only carried for a sender the relay allows", () => {
+    const server = buildServer(["host", "peer", "other"], false);
+    const room = createRoom(server, "host", "peer", "");
+
+    roomFrame(buildCtx(server, "host", buildFrame(room.get("hostKey"), [1])));
+    assert.equal(framesOf(server, "peer").length, 0);
 
     releaseRooms(server);
 });

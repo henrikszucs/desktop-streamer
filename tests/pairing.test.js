@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { generatePairCode, addPairCode, removePairCode, releasePairCodes, pairCreate, pairDelete, pairRequest, pairAccept, pairReject, PAIR_CODE_LENGTH } from "../src/server/ws/handlers/pairing.js";
+import { generatePairCode, addPairCode, removePairCode, releasePairCodes, isPairLocked, pairCreate, pairDelete, pairRequest, pairAccept, pairReject, PAIR_CODE_LENGTH, PAIR_FAIL_MAX, PAIR_FAIL_MAX_WIDE, PAIR_FAIL_WINDOW } from "../src/server/ws/handlers/pairing.js";
 
 // the pairing state a handler touches is two Maps on the server instance and the
 // state Map of one client, so a stand-in for it is exactly that
@@ -22,6 +22,8 @@ const buildServer = function(sessionIds = ["session-1"], guestAllowShare = true,
         "pairs": new Map(),
         "joins": new Map(),
         "rooms": new Map(),
+        "pairFailures": new Map(),
+        "pairFailuresSweep": 0,
         "confPublic": {
             "permissions": {
                 "guestAllowShare": guestAllowShare,
@@ -385,6 +387,140 @@ test("a peer that goes away withdraws its request", async () => {
 
     assert.equal(pushesOf(server, "host", "pair-cancel").length, 1);
     assert.equal(server.pairs.get(pairCode).has("peerSessionId"), false);
+
+    releasePairCodes(server);
+});
+
+//
+// the guest flags are for guests
+//
+test("an account shares and joins whatever the guest flags say", async () => {
+    const server = buildServer(["host", "peer"], false, false);
+    server.clients.get("host").set("userId", "user-host");
+    server.clients.get("peer").set("userId", "user-peer");
+
+    const hostCtx = buildCtx(server, "host");
+    pairCreate(hostCtx);
+    assert.equal(hostCtx.answers[0]["success"], true);
+
+    const peerCtx = buildCtx(server, "peer");
+    peerCtx.message["pairCode"] = hostCtx.answers[0]["pairCode"];
+    await pairRequest(peerCtx);
+    assert.equal(peerCtx.answers[0]["success"], true);
+
+    releasePairCodes(server);
+});
+
+//
+// the budget of tries
+//
+// a code nobody holds, which is never the one a test host was handed
+const deadCode = function(server) {
+    for (let i = 0; i < 1000000; i++) {
+        const code = String(i).padStart(PAIR_CODE_LENGTH, "0");
+        if (server.pairs.has(code) === false) {
+            return code;
+        }
+    }
+    return undefined;
+};
+
+const tryCode = async function(server, sessionId, pairCode) {
+    const ctx = buildCtx(server, sessionId);
+    ctx.message["pairCode"] = pairCode;
+    await pairRequest(ctx);
+    return ctx.answers[0];
+};
+
+test("an address that tried too many dead codes is refused before any is looked up", async () => {
+    const server = buildServer(["host", "peer"]);
+    const hostCtx = buildCtx(server, "host");
+    pairCreate(hostCtx);
+    const pairCode = hostCtx.answers[0]["pairCode"];
+    const miss = deadCode(server);
+
+    for (let i = 0; i < PAIR_FAIL_MAX; i++) {
+        assert.equal((await tryCode(server, "peer", miss))["error"], "unknown-code");
+    }
+
+    // past the budget a live code is answered exactly as a dead one, and the
+    // host is never asked
+    assert.equal((await tryCode(server, "peer", pairCode))["error"], "too-many-attempts");
+    assert.equal((await tryCode(server, "peer", miss))["error"], "too-many-attempts");
+    assert.equal(pushesOf(server, "host", "pair-request").length, 0);
+
+    // the window running out is the budget coming back
+    assert.equal(isPairLocked(server, "peer", Date.now() + PAIR_FAIL_WINDOW), false);
+
+    releasePairCodes(server);
+});
+
+test("a busy code costs a try too, since it says the code is live", async () => {
+    const {server, pairCode} = await buildRequest();
+    server.clients.get("other").set("ipAddress", "203.0.113.9");
+
+    for (let i = 0; i < PAIR_FAIL_MAX; i++) {
+        assert.equal((await tryCode(server, "other", pairCode))["error"], "busy");
+    }
+    assert.equal((await tryCode(server, "other", pairCode))["error"], "too-many-attempts");
+
+    releasePairCodes(server);
+});
+
+test("the budget belongs to the address, not to the socket or to everybody", async () => {
+    const server = buildServer(["host", "peer", "other", "far"]);
+    server.clients.get("peer").set("ipAddress", "198.51.100.1");
+    server.clients.get("other").set("ipAddress", "198.51.100.1");
+    server.clients.get("far").set("ipAddress", "198.51.100.2");
+    const miss = deadCode(server);
+
+    for (let i = 0; i < PAIR_FAIL_MAX; i++) {
+        await tryCode(server, "peer", miss);
+    }
+    // a second socket from the same address is the same budget
+    assert.equal((await tryCode(server, "other", miss))["error"], "too-many-attempts");
+    // and a neighbour is not held to it
+    assert.equal((await tryCode(server, "far", miss))["error"], "unknown-code");
+
+    releasePairCodes(server);
+});
+
+test("an IPv6 subscriber is its /64, and a site walking its /64s is its /48", async () => {
+    const server = buildServer(["host", "a", "b"]);
+    const miss = deadCode(server);
+
+    // one /64, two addresses in it
+    server.clients.get("a").set("ipAddress", "2001:db8:1:2::10");
+    server.clients.get("b").set("ipAddress", "2001:db8:1:2:ffff::1");
+    for (let i = 0; i < PAIR_FAIL_MAX; i++) {
+        await tryCode(server, "a", miss);
+    }
+    assert.equal((await tryCode(server, "b", miss))["error"], "too-many-attempts");
+
+    // a fresh /64 of the same /48 has its own budget until the site's runs out
+    const client = server.clients.get("b");
+    let prefix = 3;
+    let spent = PAIR_FAIL_MAX;
+    while (spent < PAIR_FAIL_MAX_WIDE) {
+        client.set("ipAddress", "2001:db8:1:" + (prefix++).toString(16) + "::1");
+        for (let i = 0; i < PAIR_FAIL_MAX && spent < PAIR_FAIL_MAX_WIDE; i++, spent++) {
+            assert.equal((await tryCode(server, "b", miss))["error"], "unknown-code");
+        }
+    }
+    client.set("ipAddress", "2001:db8:1:" + (prefix++).toString(16) + "::1");
+    assert.equal((await tryCode(server, "b", miss))["error"], "too-many-attempts");
+
+    releasePairCodes(server);
+});
+
+test("the host is shown the address the connection came from", async () => {
+    const server = buildServer(["host", "peer"]);
+    server.clients.get("peer").set("ipAddress", "192.0.2.44");
+    const hostCtx = buildCtx(server, "host");
+    pairCreate(hostCtx);
+    await tryCode(server, "peer", hostCtx.answers[0]["pairCode"]);
+
+    assert.equal(pushesOf(server, "host", "pair-request")[0]["details"]["ipAddress"], "192.0.2.44");
 
     releasePairCodes(server);
 });

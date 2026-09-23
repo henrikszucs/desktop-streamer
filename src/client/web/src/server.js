@@ -528,6 +528,13 @@ const Server = class extends EventTarget {
     // It is *sent* rather than invoked: the answer would be one more round trip
     // per frame and a stream cannot wait for one. What it reports is that the
     // frame left, which is what backpressure needs.
+    // what this socket has been handed and not yet put on the wire: the relay
+    // asks it before a frame, since the server's acknowledgments come back as
+    // fast as it reads and say nothing about a line that is falling behind
+    getBufferedAmount() {
+        return this.ws?.bufferedAmount ?? 0;
+    };
+
     async roomDataSend(roomKey, data) {
         const frame = buildRoomFrame(roomKey, data);
         const messageObj = this.communicator.send(frame, [frame], DATA_TIMEOUT);

@@ -31,6 +31,11 @@ const VIDEO_CHANNEL_NAME = "video";
 // throughput - the line is not taking it and the picture is falling behind.
 const VIDEO_BACKLOG = 512 * 1024;
 
+// the same line on the relay, drawn at the socket: a relayed frame goes whole
+// rather than in SCTP-sized pieces, so it is given room for a keyframe and one
+// more, and past it a frame is refused exactly as on the direct leg
+const RELAY_BACKLOG = 1024 * 1024;
+
 // how long the direct connection is given before the fallback is taken. ICE has
 // tried everything it has by then on any path that works, and what is left is a
 // wait nobody can end - so it is the relay or nothing, and the relay is worth
@@ -277,11 +282,13 @@ const createRoom = function(ctx) {
         if (mode === MODE_RELAY || roomKey === "") {
             return;
         }
+        // A side with no relay leaves the room rather than only letting go of
+        // its own half: the other end may well have one, and it would sit on
+        // the relay "connected" - a host capturing and sending its screen -
+        // to a side that is no longer listening. Told or not, the room is over.
         if (isRelayAllowed() === false) {
-            if (isTold !== true) {
-                console.log("Room " + roomKey + " has no relay to fall back on");
-                teardown("failed");
-            }
+            console.log("Room " + roomKey + " has no relay to fall back on");
+            leave("failed");
             return;
         }
 
@@ -633,7 +640,7 @@ const createRoom = function(ctx) {
                 return false;
             }
             if (mode === MODE_RELAY) {
-                if (roomKey === "") {
+                if (roomKey === "" || ctx["server"].getBufferedAmount() > RELAY_BACKLOG) {
                     return false;
                 }
                 ctx["server"].roomDataSend(roomKey, buffer).catch(function(error) {
@@ -751,5 +758,5 @@ const createRoom = function(ctx) {
     };
 };
 
-export { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
-export default { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
+export { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, RELAY_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
+export default { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, RELAY_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };

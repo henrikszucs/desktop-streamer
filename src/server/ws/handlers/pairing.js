@@ -9,6 +9,7 @@
 // first-party dependencies
 import { generateId } from "../../common.js";
 import { push, notify, ANSWER_TIMEOUT } from "../notify.js";
+import { addressOf, addressKeys } from "../address.js";
 import { createJoin, attachJoin } from "./joins.js";
 import { createRoom } from "./rooms.js";
 
@@ -23,6 +24,75 @@ const PAIR_CODE_PATTERN = /^[0-9]{6}$/;
 // live - a million codes - and failing the call says so, where a loop would just
 // stop answering
 const PAIR_CODE_ATTEMPTS = 1000;
+
+// A million codes is a space a script walks in seconds, and every live one it
+// finds is a dialog in front of a sharing host - one careless click from the
+// mouse and the keyboard of that machine. So a code that opens nothing (or one
+// that is busy, which says just as much: it is live) costs the address that
+// tried it, and an address past its budget is refused before any code is
+// looked up. A person who mistypes a few times never gets near it. The wider
+// IPv6 prefix gets the budget of a site rather than of one subscriber.
+const PAIR_FAIL_MAX = 10;
+const PAIR_FAIL_MAX_WIDE = 100;
+const PAIR_FAIL_WINDOW = 10 * 60 * 1000;
+
+// the budget of one key: the /48 of an IPv6 address is a site, anything else
+// is one subscriber (see addressKeys in ../address.js)
+const failMaxOf = function(key) {
+    return key.endsWith("/48") === true ? PAIR_FAIL_MAX_WIDE : PAIR_FAIL_MAX;
+};
+
+// the windows that ran out go, once per window rather than on every try: the
+// table holds one entry per address that failed lately and nothing else
+const sweepFailures = function(server, now) {
+    if (now - (server.pairFailuresSweep ?? 0) < PAIR_FAIL_WINDOW) {
+        return;
+    }
+    server.pairFailuresSweep = now;
+    for (const [key, entry] of server.pairFailures) {
+        if (entry["start"] + PAIR_FAIL_WINDOW <= now) {
+            server.pairFailures.delete(key);
+        }
+    }
+};
+
+// the failures one key has run up in its current window
+const failuresOf = function(server, key, now) {
+    const entry = server.pairFailures.get(key);
+    if (entry === undefined || entry["start"] + PAIR_FAIL_WINDOW <= now) {
+        return 0;
+    }
+    return entry["count"];
+};
+
+// whether the address behind this socket has used up its tries
+const isPairLocked = function(server, sessionId, now = Date.now()) {
+    sweepFailures(server, now);
+    return addressKeys(addressOf(server, sessionId)).some(function(key) {
+        return failuresOf(server, key, now) >= failMaxOf(key);
+    });
+};
+
+// one more code that opened nothing, against every key of the address
+const countPairFailure = function(server, sessionId, now = Date.now()) {
+    for (const key of addressKeys(addressOf(server, sessionId))) {
+        const entry = server.pairFailures.get(key);
+        if (entry === undefined || entry["start"] + PAIR_FAIL_WINDOW <= now) {
+            server.pairFailures.set(key, {"count": 1, "start": now});
+        } else {
+            entry["count"]++;
+        }
+    }
+};
+
+// The guest flags are for guests: an account signed in on this socket shares
+// and joins whatever they say, as the client already draws it (ui/ui.js).
+const isAllowed = function(server, sessionId, permission) {
+    if (typeof server.clients.get(sessionId)?.get("userId") === "string") {
+        return true;
+    }
+    return server.confPublic["permissions"][permission] === true;
+};
 
 // a code no live pair holds
 const generatePairCode = function(pairs) {
@@ -131,6 +201,7 @@ const releasePairCodes = function(server) {
         clearTimeout(pair.get("answerTimeoutId"));
     }
     server.pairs.clear();
+    server.pairFailures?.clear();
 };
 
 // a refused code is not handed out again: the host is given a new one and told
@@ -189,9 +260,7 @@ const pairCreate = function(ctx) {
     }*/
     const server = ctx["server"];
 
-    // every client is a guest until dev/plans/ws-accounts.md lands, so the guest
-    // permission is the whole check here
-    if (server.confPublic["permissions"]["guestAllowShare"] !== true) {
+    if (isAllowed(server, ctx["sessionId"], "guestAllowShare") === false) {
         ctx["messageObj"].send({
             "success": false,
             "error": "not-allowed"
@@ -245,8 +314,15 @@ const pairRequest = function(ctx) {
     const sessionId = ctx["sessionId"];
     const messageObj = ctx["messageObj"];
 
-    if (server.confPublic["permissions"]["guestAllowJoin"] !== true) {
+    if (isAllowed(server, sessionId, "guestAllowJoin") === false) {
         messageObj.send({"success": false, "error": "not-allowed"});
+        return;
+    }
+
+    // asked before the code is looked at: past the budget, a live code and a
+    // dead one get the same answer
+    if (isPairLocked(server, sessionId) === true) {
+        messageObj.send({"success": false, "error": "too-many-attempts"});
         return;
     }
 
@@ -258,6 +334,7 @@ const pairRequest = function(ctx) {
 
     const pair = server.pairs.get(pairCode);
     if (pair === undefined) {
+        countPairFailure(server, sessionId);
         messageObj.send({"success": false, "error": "unknown-code"});
         return;
     }
@@ -267,6 +344,7 @@ const pairRequest = function(ctx) {
         return;
     }
     if (pair.get("peerSessionId") !== undefined) {
+        countPairFailure(server, sessionId);
         messageObj.send({"success": false, "error": "busy"});
         return;
     }
@@ -295,7 +373,7 @@ const pairRequest = function(ctx) {
     push(server, hostSessionId, {
         "type": "pair-request",
         "details": {
-            "ipAddress": client.get("ws")?._socket?.remoteAddress ?? "",
+            "ipAddress": addressOf(server, sessionId),
             "isUser": false
         },
         "timeout": ANSWER_TIMEOUT
@@ -428,5 +506,5 @@ const handlers = {
     "pair-reject": pairReject
 };
 
-export { handlers, generatePairCode, addPairCode, removePairCode, releasePairCodes, releasePeer, renewHostCode, rejectRequest, pairCreate, pairDelete, pairRequest, pairAccept, pairReject, PAIR_CODE_LENGTH, PAIR_CODE_CHARS, PAIR_CODE_PATTERN };
+export { handlers, generatePairCode, addPairCode, removePairCode, releasePairCodes, releasePeer, renewHostCode, rejectRequest, isPairLocked, countPairFailure, pairCreate, pairDelete, pairRequest, pairAccept, pairReject, PAIR_CODE_LENGTH, PAIR_CODE_CHARS, PAIR_CODE_PATTERN, PAIR_FAIL_MAX, PAIR_FAIL_MAX_WIDE, PAIR_FAIL_WINDOW };
 export default handlers;

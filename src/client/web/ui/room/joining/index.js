@@ -32,6 +32,7 @@ const ERROR_TEXTS = new Map([
     ["invalid-code", "new.join.code-invalid"],
     ["own-code", "new.join.own-code"],
     ["busy", "new.join.busy"],
+    ["too-many-attempts", "new.join.too-many-attempts"],
     ["not-allowed", "new.join.denied"],
     ["unknown-join", "new.join.unknown-join"],
     ["offline", "new.join.host-gone"]
