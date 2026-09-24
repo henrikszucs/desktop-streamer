@@ -118,6 +118,19 @@ const SharesScreen = class extends Screen {
             : {"joinId": joinId}));
     };
 
+    // the connection standing on a share, ended with the share kept: the
+    // device stays remembered and may ask again, which is what sets this apart
+    // from the delete beside it. It ends the room the click was about and no
+    // other - one that replaced it while the question stood is left alone.
+    onDisconnect = async () => {
+        const room = this.ctx["room"];
+        const roomKey = room.getRoomKey();
+        const isConfirmed = await this.ctx["ui"].confirm({"message": "confirm.endRoom", "confirm": "confirm.end"});
+        if (isConfirmed === true && roomKey !== "" && room.getRoomKey() === roomKey) {
+            room.leave();
+        }
+    };
+
     // the record a room is about, waited for rather than asked once: it may
     // still be being written when the room arrives, and joins says so with a
     // change of its own
@@ -193,7 +206,9 @@ const SharesScreen = class extends Screen {
             // handed over on its own - the labels in it are markup like any other
             localization.translate(localization.getLang(), box.el);
             box.setName((record["name"] ?? "") !== "" ? record["name"] : localization.get("shares.unnamed"));
-            box.setTag("live", liveJoinId !== "" && record["joinId"] === liveJoinId);
+            const isLive = (liveJoinId !== "" && record["joinId"] === liveJoinId);
+            box.setTag("live", isLive);
+            box.setLive(isLive);
             box.setTag("online", record["isOnline"] === true);
             box.setTag("offline", record["isOnline"] !== true);
 
@@ -222,6 +237,7 @@ const SharesScreen = class extends Screen {
             box.addEventListener("settings", function(event) {
                 ctx["ui"].openDialog("connection", {"joinId": event.detail["joinId"]});
             });
+            box.addEventListener("disconnect", this.onDisconnect);
             this.area.appendChild(box.el);
         }
 
@@ -249,10 +265,12 @@ const SharesScreen = class extends Screen {
         // and only the one chip: "online" beside it would be the connection
         // saying twice over that it is there
         box.setTag("live", true);
+        box.setLive(true);
 
         box.addEventListener("settings", function() {
             ctx["ui"].openDialog("connection", {"joinId": "", "isLive": true});
         });
+        box.addEventListener("disconnect", this.onDisconnect);
         box.addEventListener("delete", async function() {
             const isConfirmed = await ctx["ui"].confirm({"message": "confirm.endRoom", "confirm": "confirm.end"});
             if (isConfirmed === true) {

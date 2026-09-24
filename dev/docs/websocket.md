@@ -187,7 +187,13 @@ them.
 
 The packet count is only written on the first packet of a message
 (`packetId === 0`), and the reader only looks for it on a packet the peer
-originated.
+originated. A message is its packets `0` to `count - 1` and nothing else: a
+packet whose id is at or past the count - or a first packet naming a count of
+none, or one that arrives after a packet past the count it names - gets the whole
+message refused (`receiveRefuse`, the sender told with an abort) rather than
+assembled around a gap. `receive()` returns what handling the packet did, so a
+failure in it reaches the caller - `ws.js` closes the socket over it - instead
+of being an unhandled rejection, which ends a Node process.
 
 ### Side sync - who owns which message ids
 
@@ -349,6 +355,18 @@ address is the last `X-Forwarded-For` entry - the one the proxy appended - and
 without one the header is ignored (`ws/address.js`); the same address is what a
 host is shown in `pair-request`/`join-request` and what `sessions` records.
 
+**A remembered device is its account's, and no room outlives the join it stands
+on.** A join made while the peer was signed in carries that account
+(`peer_user_id`), and `join-connect` opens its peer side only on a socket signed
+in as it - any other is answered `not-allowed` - so a code that got out, or one
+kept past a sign-out, opens nothing; a guest's device is its code alone, and the
+host side is the machine's whoever is signed in. A socket that stops being the
+account (`logout`, `login-guest`, `sessions-revoke`, a sign-in as somebody else)
+is taken off that account's devices, and the rooms it made through them close.
+`join-delete` - and so an account deletion - ends every room standing on the
+join, both sides pushed `room-close` with the reason `removed`, and
+`join-disconnect` ends the caller's rooms on the joins it leaves (`gone`).
+
 | type | request | answer |
 | --- | --- | --- |
 | `conf-get` | - | `{"version": string, "webrtc": {"iceServers": [...]}, "permissions": {"guestAllowShare": bool, "guestAllowJoin": bool, "guestAllowRelay": bool, "isAuth": bool, "isGoogleAuth": bool}, "pairing": {"answerTimeout": number}, "auth": {"google": {"clientId": string}}}` |
@@ -495,9 +513,10 @@ an invoke and only falls back to `abort()` for a one-way send.
 - **Nothing serves `src/client/web` directly.** A change to the client is
   invisible until `npm run server -- --compile` rebuilds `tmp/web`.
 - `ArrayBuffer.prototype.transfer` is used on every incoming binary frame,
-  acks included, so it is on the hot path of every message. It is newer than the
-  `"node": ">=20.11.0"` floor in `package.json` - worth verifying that floor
-  before trusting it.
+  acks included, so it is on the hot path of every message. It arrived in Node
+  21 (Chromium 114), which is why `package.json` asks for Node 22 or later: under
+  Node 20 every binary frame fails to parse and is dropped as a malformed one,
+  acks with it, so no message the server sends is ever confirmed.
 
 ## Testing it by hand
 

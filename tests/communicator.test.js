@@ -111,3 +111,16 @@ test("a message past maxReceiveBytes is refused, the sender told, and the bytes 
         }
     });
 });
+
+test("what handling a message throws reaches the caller of receive(), not an unhandled rejection", async function(t) {
+    await quietly(t, async function() {
+        const com = new Communicator({"sender": async function() {}});
+        com.onIncoming(function() {
+            throw new Error("the handler failed");
+        });
+        // a whole, well-formed call: what fails is the handling of it, and the
+        // caller - ws.js closes the socket over it - can only act on what it hears
+        await assert.rejects(com.receive([4, Date.now() % 4294967295, 1, {"type": "ping"}]), /the handler failed/);
+        com.release();
+    });
+});

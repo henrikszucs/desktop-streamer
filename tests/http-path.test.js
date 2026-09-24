@@ -7,6 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import http from "node:http";
 
 // first-party dependencies
 import serverHTTP from "../src/server/http.js";
@@ -150,4 +151,39 @@ test("an ordinary request still resolves", () => {
         assert.notEqual(resolved, undefined, "should have resolved: " + url);
         assert.equal(resolved.startsWith(base), true);
     }
+});
+
+//
+// httpRedirectHandler
+//
+// the plaintext port answers anybody, and a header Node refuses throws out of a
+// listener nothing catches - so what the redirect writes is checked the way
+// Node checks it
+const redirect = function(url, host = "example.com") {
+    const answer = {"status": 0, "headers": {}};
+    const res = {
+        "writeHead": function(status, headers = {}) {
+            for (const [name, value] of Object.entries(headers)) {
+                http.validateHeaderValue(name, value);
+            }
+            answer["status"] = status;
+            answer["headers"] = headers;
+        },
+        "end": function() {}
+    };
+    serverHTTP.httpRedirectHandler({"url": url, "headers": {"host": host}}, res);
+    return answer;
+};
+
+test("the redirect keeps the path it was asked for", () => {
+    const answer = redirect("/room/abc?x=1");
+    assert.equal(answer["status"], 302);
+    assert.equal(answer["headers"]["Location"], "https://example.com/room/abc?x=1");
+});
+
+test("the redirect encodes what a header cannot carry, and sends anything but a path to the root", () => {
+    assert.equal(redirect("/a\fb")["headers"]["Location"], "https://example.com/a%0Cb");
+    assert.equal(redirect("/café")["headers"]["Location"], "https://example.com/caf%E9");
+    assert.equal(redirect("http://elsewhere.example/")["headers"]["Location"], "https://example.com/");
+    assert.equal(redirect("*")["headers"]["Location"], "https://example.com/");
 });

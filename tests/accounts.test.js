@@ -13,7 +13,8 @@ import fs from "node:fs/promises";
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
 import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME, SESSION_KEY_LENGTH } from "../src/server/ws/handlers/accounts.js";
-import { createJoin } from "../src/server/ws/handlers/joins.js";
+import { createJoin, attachJoin, heldJoin, joinConnect } from "../src/server/ws/handlers/joins.js";
+import { createRoom } from "../src/server/ws/handlers/rooms.js";
 
 // an account is a row, so these run against a real SQLite file, the same way
 // the joins tests do
@@ -814,6 +815,56 @@ test("sessions-revoke refuses a bad credential and an account it has never seen,
         await sessionsRevoke(unknown);
         assert.equal(unknown["answers"][0]["error"], "unknown-user");
         assert.equal((await db("users")).length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+//
+// the devices of an account, and a socket that stops being it
+//
+test("signing out takes the socket off the account's devices and out of their rooms", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server["rooms"] = new Map();
+        const made = await signIn(server, "one", "alice");
+        const device = await createJoin(server, true, made["user"]["userId"]);
+        attachJoin(server, "two", device, true);        // the host, a machine nobody is signed in on
+        attachJoin(server, "one", device, false);
+        createRoom(server, "two", "one", device["joinId"]);
+
+        // the same person signing in again keeps what the socket holds
+        await signIn(server, "one", "alice", made["sessionKey"]);
+        assert.notEqual(heldJoin(server, "one", device["joinId"]), undefined);
+        assert.equal(server.rooms.size, 2);             // one room, under both of its keys
+
+        await logout(buildCtx(server, "one"));
+        assert.equal(heldJoin(server, "one", device["joinId"]), undefined);
+        assert.equal(server.rooms.size, 0);
+        assert.equal(pushesOf(server, "two", "room-close").length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a recovered account's devices are not left with the socket it was taken back from", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server["rooms"] = new Map();
+        const made = await signIn(server, "one", "alice");
+        const device = await createJoin(server, true, made["user"]["userId"]);
+        attachJoin(server, "two", device, true);
+        attachJoin(server, "one", device, false);
+
+        await sessionsRevoke(buildCtx(server, "three", {"credential": "alice"}));
+        assert.equal(heldJoin(server, "one", device["joinId"]), undefined);
+
+        // and the code it kept opens nothing on a socket that is not alice
+        const back = buildCtx(server, "one", {"joinCode": device["peerCode"]});
+        await joinConnect(back);
+        assert.equal(back["answers"][0]["error"], "not-allowed");
     } finally {
         await dropDatabase(db, file);
     }

@@ -112,6 +112,12 @@ const CLIPBOARD_POLL = 700;
 const CURSOR_POLL = 1000 / 30;
 const CURSOR_SHAPES = 32;
 
+// what a pointer picture from the host may be: the PNG data URL cursor.js packs
+// and nothing else. The peer puts it in a CSS url() and an img src, so a string
+// that is anything else - a quote to close the url() with, an address to fetch
+// from - is taken for no picture at all
+const CURSOR_IMAGE = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+
 //
 // the peer's picture: a worker holding the decoder and the canvas
 //
@@ -1893,7 +1899,7 @@ const createStream = function(ctx) {
                 case "cursor":
                     // a host that is showing no pointer at all - a game that
                     // hid it - says so with an empty picture
-                    cursorShape = (typeof message["image"] === "string" ? {
+                    cursorShape = (typeof message["image"] === "string" && CURSOR_IMAGE.test(message["image"]) === true ? {
                         "image": message["image"],
                         "width": Number(message["width"]) || 0,
                         "height": Number(message["height"]) || 0,

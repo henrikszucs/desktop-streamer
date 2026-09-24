@@ -67,7 +67,16 @@ const confLoad = new Promise(async function(resolve) {
         result[keys[i]] = res[i];
     }
 
-    result["exitShortcuts"] = JSON.parse(result["exitShortcuts"]);
+    // a stored value that does not parse is the default, not a boot that
+    // never resolves - this runs inside a promise nothing else would reject
+    try {
+        result["exitShortcuts"] = JSON.parse(result["exitShortcuts"]);
+    } catch (error) {
+        result["exitShortcuts"] = [];
+    }
+    if (Array.isArray(result["exitShortcuts"]) === false) {
+        result["exitShortcuts"] = [];
+    }
     try {
         result["accounts"] = JSON.parse(result["accounts"]);
     } catch (error) {

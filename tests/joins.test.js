@@ -12,7 +12,8 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createJoin, attachJoin, detachJoins, releaseJoins, heldJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
+import { createJoin, attachJoin, detachJoins, detachUserJoins, releaseJoins, heldJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
+import { createRoom } from "../src/server/ws/handlers/rooms.js";
 
 // a remembered join is a row, so these run against a real SQLite file - which
 // makes them the only cover database.js has as well
@@ -536,6 +537,107 @@ test("only the edges are pushed, and the last socket leaving is one", async () =
     const pushes = pushesOf(server, "host", "join-online");
     assert.equal(pushes.length, 2);
     assert.equal(pushes[1]["isOnline"], false);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+//
+// what an account's device is worth without the account
+//
+test("join-connect opens an account's device only for a socket signed in as it", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+    const join = await createJoin(server, true, "alice");
+
+    // a guest holding the code - one that got out, or one kept past a sign out
+    const guest = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(guest);
+    assert.deepEqual(guest.answers[0], {"success": false, "error": "not-allowed"});
+    assert.equal(heldJoin(server, "peer", join["joinId"]), undefined);
+
+    // somebody else's account is no better
+    server.clients.get("peer").set("userId", "bob");
+    const bob = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(bob);
+    assert.equal(bob.answers[0]["error"], "not-allowed");
+
+    // the account itself is let on
+    server.clients.get("peer").set("userId", "alice");
+    const alice = buildCtx(server, "peer", {"joinCode": join["peerCode"]});
+    await joinConnect(alice);
+    assert.equal(alice.answers[0]["success"], true);
+
+    // and the host side is the machine's, whoever is signed in there
+    const host = buildCtx(server, "host", {"joinCode": join["hostCode"]});
+    await joinConnect(host);
+    assert.equal(host.answers[0]["success"], true);
+    assert.equal(host.answers[0]["isHost"], true);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+test("a socket that stops being the account is taken off its devices and out of their rooms", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+    const owned = await createJoin(server, true, "alice");
+    const guests = await createJoin(server, false);
+    server.clients.get("peer").set("userId", "alice");
+    attachJoin(server, "host", owned, true);
+    attachJoin(server, "peer", owned, false);
+    attachJoin(server, "other", guests, true);
+    attachJoin(server, "peer", guests, false);
+    const room = createRoom(server, "host", "peer", owned["joinId"]);
+
+    detachUserJoins(server, "peer", "alice");
+
+    // off the account's device, which its host is told, and out of the room
+    // made through it - on both sides, the peer's own client included
+    assert.equal(heldJoin(server, "peer", owned["joinId"]), undefined);
+    assert.equal(pushesOf(server, "host", "join-online").at(-1)["isOnline"], false);
+    assert.equal(server.rooms.size, 0);
+    assert.equal(pushesOf(server, "host", "room-close")[0]["roomKey"], room.get("hostKey"));
+    assert.equal(pushesOf(server, "peer", "room-close")[0]["roomKey"], room.get("peerKey"));
+
+    // and still on the guest's device, which was never the account's
+    assert.notEqual(heldJoin(server, "peer", guests["joinId"]), undefined);
+
+    releaseJoins(server);
+    await dropDatabase(db, file);
+});
+
+//
+// what is connected through a join goes with it
+//
+test("join-delete ends the room standing on the join, on both sides", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db, true);
+    const room = createRoom(server, "host", "peer", join["joinId"]);
+
+    await joinDelete(buildCtx(server, "host", {"joinId": join["joinId"]}));
+
+    // the host asked, and its own client is told as well: the room it was
+    // sharing in is gone, not merely the record behind it
+    assert.equal(server.rooms.size, 0);
+    assert.equal(pushesOf(server, "host", "room-close")[0]["reason"], "removed");
+    assert.equal(pushesOf(server, "peer", "room-close")[0]["roomKey"], room.get("peerKey"));
+
+    await dropDatabase(db, file);
+});
+
+test("join-disconnect ends the caller's rooms on the joins it leaves, and no others", async () => {
+    const {db, file} = await buildDatabase();
+    const {server, join} = await buildJoin(db);
+    const kept = createRoom(server, "host", "other", "");      // a pairing nobody remembered
+    createRoom(server, "host", "peer", join["joinId"]);
+
+    joinDisconnect(buildCtx(server, "peer", {"joinIds": [join["joinId"]]}));
+
+    assert.equal(pushesOf(server, "peer", "room-close").length, 1);
+    assert.equal(pushesOf(server, "host", "room-close").length, 1);
+    assert.equal(pushesOf(server, "other", "room-close").length, 0);
+    assert.equal(server.rooms.get(kept.get("hostKey")), kept);
 
     releaseJoins(server);
     await dropDatabase(db, file);

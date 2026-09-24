@@ -38,6 +38,7 @@ const ServerHTTP = class {
     httpCacheUpdateLength = 5;
     httpCacheUpdateId = -1;
     httpCacheReloadId = -1;
+    isRefreshing = false;
     httpRedirect = null;
     httpDomain = "localhost";
     // where a client reaches this server, which is not where it listens when a
@@ -281,6 +282,24 @@ const ServerHTTP = class {
         this.httpCache = cache;
     };
 
+    // what the timer runs: one refresh at a time, and never one that fails out
+    // loud. A slow refresh - a zip read into memory - is not overtaken by the
+    // next tick, whose fresh index would take entries out from under it, and a
+    // rejection nobody handles would end the process.
+    async reloadCache() {
+        if (this.isRefreshing === true) {
+            return;
+        }
+        this.isRefreshing = true;
+        try {
+            await this.refreshCache();
+        } catch (error) {
+            console.error("Cannot refresh the file cache:", error);
+        } finally {
+            this.isRefreshing = false;
+        }
+    };
+
     async refreshCache() {
         await this.buildCache();
 
@@ -322,10 +341,11 @@ const ServerHTTP = class {
             }
         }
 
-        // and read in what it does
+        // and read in what it does - an entry a stop() cleared meanwhile is
+        // not there to fill
         for (const key of admitted) {
             const fileData = this.httpCache.get(key);
-            if (typeof fileData["buffer"] !== "undefined") {
+            if (typeof fileData === "undefined" || typeof fileData["buffer"] !== "undefined") {
                 continue;
             }
             const file = await this.getFileData(fileData["path"]);
@@ -419,6 +439,24 @@ const ServerHTTP = class {
         }
     };
 
+    // the path a redirect sends the client on to. The request target is attacker
+    // text just as the Host header is: one that is not a path is the site's
+    // root, and anything a header cannot carry is percent-encoded - the parser
+    // hands the target over one byte per character, so each is encoded as the
+    // byte it arrived as
+    redirectPath(url) {
+        if (typeof url !== "string" || url.startsWith("/") === false) {
+            return "/";
+        }
+        return url.replace(/[^\x21-\x7e]/g, function(char) {
+            const code = char.charCodeAt(0);
+            const bytes = (code <= 0xff ? [code] : [...new TextEncoder().encode(char)]);
+            return bytes.map(function(byte) {
+                return "%" + byte.toString(16).toUpperCase().padStart(2, "0");
+            }).join("");
+        });
+    };
+
     httpRedirectHandler = (req, res) => {
         // an HTTP/1.0 request carries no Host, and the header is attacker text
         // besides: the configured domain stands in for anything malformed
@@ -426,9 +464,15 @@ const ServerHTTP = class {
         const name = host.split(":")[0];
         const myURL = HOST_NAME.test(name) === true ? name : this.publicDomain;
         const myPort = this.publicPort !== 443 ? ":" + this.publicPort : "";
-        res.writeHead(302, {
-            "Location": "https://" + myURL + myPort + req.url
-        });
+        // this listener is synchronous and nothing above it catches, so a
+        // header writeHead refuses would end the process - it is answered 400
+        try {
+            res.writeHead(302, {
+                "Location": "https://" + myURL + myPort + this.redirectPath(req.url)
+            });
+        } catch (error) {
+            res.writeHead(400);
+        }
         res.end();
     };
 
@@ -465,8 +509,8 @@ const ServerHTTP = class {
 
             // reload cache periodically
             clearInterval(this.httpCacheReloadId);
-            this.httpCacheReloadId = setInterval(async () => {
-                await this.refreshCache();
+            this.httpCacheReloadId = setInterval(() => {
+                this.reloadCache();
             }, this.httpCacheUpdate * this.httpCacheUpdateLength);
 
             requestHandle = this.httpsRequestHandlerWithCache;

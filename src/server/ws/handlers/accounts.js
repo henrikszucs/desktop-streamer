@@ -17,7 +17,7 @@
 import { generateId, httpsGetText, httpsGetImage } from "../../common.js";
 import { notify } from "../notify.js";
 import { addressOf } from "../address.js";
-import { removeUserJoins } from "./joins.js";
+import { removeUserJoins, detachUserJoins } from "./joins.js";
 import { setRelayAllowed } from "./rooms.js";
 
 // how long a session stands without being presented; every login-session pushes
@@ -324,7 +324,12 @@ const attachAccount = function(server, sessionId, user, session) {
     if (client === undefined) {
         return;         // the socket went while the row was being read
     }
-    detachAccount(server, sessionId);
+    // a socket that was somebody else gives that account up first, and its
+    // devices with it (detachAccount); the same person signing in again keeps
+    // what this socket already holds of theirs
+    if (client.get("userId") !== user["user_id"]) {
+        detachAccount(server, sessionId);
+    }
 
     let account = server.accounts.get(user["user_id"]);
     if (account === undefined) {
@@ -353,6 +358,10 @@ const detachAccount = function(server, sessionId) {
     if (typeof userId !== "string") {
         return;
     }
+    // the account's devices are not this socket's once it is not the account,
+    // nor the connections it made through them - a sign out, a recovery or a
+    // deletion would otherwise leave a hijacked socket driving its devices
+    detachUserJoins(server, sessionId, userId);
     client.delete("userId");
     client.delete("accountSessionId");
     setRelayAllowed(server, sessionId, server.confPublic?.["permissions"]?.["guestAllowRelay"] === true);

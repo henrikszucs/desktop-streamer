@@ -258,6 +258,38 @@ const detachRooms = function(server, sessionId) {
     }
 };
 
+// every room standing on one join, both sides told. A room outlives nothing
+// it was made through: a device that is forgotten (dropJoin in joins.js) is not
+// one that stays connected, or deleting it would leave whoever is on it
+// driving the host. `server.rooms` may be missing on a server that never made
+// one.
+const closeJoinRooms = function(server, joinId, reason) {
+    if (typeof joinId !== "string" || joinId === "") {
+        return;
+    }
+    for (const room of new Set(server.rooms?.values() ?? [])) {
+        if (room.get("joinId") === joinId) {
+            closeRoom(server, room, reason);
+        }
+    }
+};
+
+// and the rooms one socket stands in on the joins named - the connections it
+// made through devices it holds no longer, which go with them. Both sides are
+// told, the socket's own client included: it did not leave by itself.
+const closeRoomsOf = function(server, sessionId, joinIds, reason) {
+    const roomKeys = server.clients.get(sessionId)?.get("roomKeys");
+    if (roomKeys === undefined) {
+        return;
+    }
+    for (const roomKey of new Set(roomKeys)) {
+        const room = server.rooms.get(roomKey);
+        if (room !== undefined && joinIds.has(room.get("joinId")) === true) {
+            closeRoom(server, room, reason);
+        }
+    }
+};
+
 // the whole table, for a server that is stopping
 const releaseRooms = function(server) {
     server.rooms.clear();
@@ -441,5 +473,5 @@ const handlers = {
     "room-leave": roomLeave
 };
 
-export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, receiveLimitOf, setRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG, RELAY_RECEIVE_MAX };
+export { handlers, createRoom, closeRoom, closeJoinRooms, closeRoomsOf, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, receiveLimitOf, setRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG, RELAY_RECEIVE_MAX };
 export default handlers;

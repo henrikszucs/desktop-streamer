@@ -615,14 +615,14 @@ const Communicator = class {
             return;
         }
 
-        // my packets
+        // my packets - returned rather than left running, so what they throw
+        // reaches the caller of receive() instead of being an unhandled rejection
         if (messageId % 2 === this.myReminder) {
-            this.receiveMy(isAbort, messageId, packetId);
-            return;
+            return this.receiveMy(isAbort, messageId, packetId);
         }
 
         // other packets
-        this.receiveOther(isInvoke, isSplit, isAbort, isAnswer, messageId, packetId, packetCount, answerFor, data);
+        return this.receiveOther(isInvoke, isSplit, isAbort, isAnswer, messageId, packetId, packetCount, answerFor, data);
     };
     async receiveMy(isAbort, messageId, packetId) {
         //get relevant object
@@ -709,7 +709,26 @@ const Communicator = class {
             }
             return;
         }
-        
+
+        //the packets of one message are numbered from 0 up to the count its
+        //first packet names, so a packet at or past that count - or a count of
+        //none - belongs to a message that cannot be put back together: it is
+        //refused whole rather than assembled around the gap it would leave
+        const count = (packetId === 0 ? packetCount : messageObj.packetCount);
+        let isMisplaced = (count < 1 || packetId >= count);
+        if (isMisplaced === false && packetId === 0) {
+            for (const heldId of messageObj.packets.keys()) {
+                if (heldId >= count) {
+                    isMisplaced = true;
+                    break;
+                }
+            }
+        }
+        if (isMisplaced) {
+            console.warn("packet outside its message, message refused", messageId);
+            this.receiveRefuse(messageObj);
+            return;
+        }
 
         //the other side may only hold so much here at once: a message that
         //would take more is refused, and the sender is told

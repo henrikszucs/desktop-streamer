@@ -60,66 +60,71 @@ const binarySearch = function(arr, x, getVal=function(el) {return el}) {
 //
 // REST helpers
 //
-// read a text (JSON) resource of an HTTPS endpoint
-const httpsGetText = async function(url) {
-    return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            const statusCode = res.statusCode;
+// how long a request to another server is given, answer and all: a sign-in
+// waits on Google's, and one that never comes must not hold the call open
+const HTTPS_TIMEOUT = 10000;
 
+// one GET of an HTTPS resource, its body in the encoding asked for, settled
+// once whichever way it ends - an answer, an error, a response cut off before
+// its end, or the clock
+const httpsGetBody = function(url, encoding, timeout) {
+    return new Promise((resolve, reject) => {
+        let isSettled = false;
+        let timeoutId = -1;
+        const settle = function(error, value) {
+            if (isSettled === true) {
+                return;
+            }
+            isSettled = true;
+            clearTimeout(timeoutId);
+            if (error !== null) {
+                reject(error);
+            } else {
+                resolve(value);
+            }
+        };
+
+        const req = https.get(url, (res) => {
+            const statusCode = res.statusCode;
             if (statusCode !== 200) {
-                const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
-                //console.error(error.message);
                 // Consume response data to free up memory
                 res.resume();
-                reject(error);
+                settle(new Error("Request Failed.\n" + `Status Code: ${statusCode}`));
                 return;
             }
 
             let rawData = "";
-            res.setEncoding("utf8");
+            res.setEncoding(encoding);
             res.on("data", (chunk) => {
                 rawData += chunk;
             });
             res.on("end", () => {
-                resolve(rawData);
+                settle(null, {"body": rawData, "contentType": res.headers["content-type"]});
             });
-        }).on("error", (error) => {
-            console.error(`Got error: ${error.message}`);
-            reject(error);
+            res.on("close", () => {
+                settle(new Error("Response closed before its end"));
+            });
         });
+        req.on("error", (error) => {
+            console.error(`Got error: ${error.message}`);
+            settle(error);
+        });
+        timeoutId = setTimeout(function() {
+            req.destroy();
+            settle(new Error("Request timed out after " + timeout + " ms"));
+        }, timeout);
     });
 };
 
+// read a text (JSON) resource of an HTTPS endpoint
+const httpsGetText = async function(url, timeout=HTTPS_TIMEOUT) {
+    return (await httpsGetBody(url, "utf8", timeout))["body"];
+};
+
 // read an image of an HTTPS endpoint into a data URI
-const httpsGetImage = async function(url) {
-    return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            const statusCode = res.statusCode;
-            const contentType = res.headers["content-type"];
-
-            if (statusCode !== 200) {
-                const error = new Error("Request Failed.\n" + `Status Code: ${statusCode}`);
-                //console.error(error.message);
-                // Consume response data to free up memory
-                res.resume();
-                reject(error);
-                return;
-            }
-
-            let rawData = "";
-            res.setEncoding("base64");
-            res.on("data", (chunk) => {
-                rawData += chunk;
-            });
-            res.on("end", () => {
-                const data = "data:" + contentType + ";base64," + rawData;
-                resolve(data);
-            });
-        }).on("error", (error) => {
-            console.error(`Got error: ${error.message}`);
-            reject(error);
-        });
-    });
+const httpsGetImage = async function(url, timeout=HTTPS_TIMEOUT) {
+    const answer = await httpsGetBody(url, "base64", timeout);
+    return "data:" + answer["contentType"] + ";base64," + answer["body"];
 };
 
 // search in parameters: a switch, "--name=value" with isInline, or "--name value"

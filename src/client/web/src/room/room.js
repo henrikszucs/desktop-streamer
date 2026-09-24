@@ -521,8 +521,10 @@ const createRoom = function(ctx) {
     };
 
     // everything this client holds of the connection, and nothing about the
-    // server's half of it - which is why the two ways out below are different
-    const teardown = function(reason) {
+    // server's half of it - which is why the two ways out below are different.
+    // `isRemote` is a close the server reported: the reason is then the other
+    // side's doing, and "left" means it left rather than that this side did.
+    const teardown = function(reason, isRemote = false) {
         const closedRoomKey = roomKey;
         roomKey = "";
         joinId = "";
@@ -538,8 +540,8 @@ const createRoom = function(ctx) {
             return "";
         }
         state = "closed";
-        console.log("Room " + closedRoomKey + " closed (" + reason + ")");
-        emit("closed", {"roomKey": closedRoomKey, "reason": reason});
+        console.log("Room " + closedRoomKey + " closed (" + reason + (isRemote === true ? ", by the other side" : "") + ")");
+        emit("closed", {"roomKey": closedRoomKey, "reason": reason, "isRemote": isRemote === true});
         return closedRoomKey;
     };
 
@@ -587,7 +589,7 @@ const createRoom = function(ctx) {
         if (event.detail?.["roomKey"] !== roomKey) {
             return;
         }
-        teardown(event.detail?.["reason"] ?? "closed");
+        teardown(event.detail?.["reason"] ?? "closed", true);
     });
 
     return {

@@ -73,12 +73,13 @@ const main = async function() {
     const itemList = new Set([
 		{"path": "./package-lock.json", "keepDir": false, "skipPaths": []},
         {"path": "./node_modules", "keepDir": false, "skipPaths": []},
-		{"path": "./tmp", "keepDir": true, "skipPaths": ["tmp"]}
+		// the folders stay, and so do the placeholders that keep them in git
+		{"path": "./tmp", "keepDir": true, "skipPaths": ["TEMPORARY_FOLDER"]}
     ]);
 
-    const binFlag = getArg(process.argv, "--bin", false); 
+    const binFlag = getArg(process.argv, "--bin", false);
     if (binFlag) {
-        itemList.add({"path": "./bin", "keepDir": true, "skipPaths": ["bin"]});
+        itemList.add({"path": "./bin", "keepDir": true, "skipPaths": ["PUT_BIN_HERE"]});
     }
 
     for (const item of itemList) {

@@ -1095,7 +1095,7 @@ const RoomScreen = class extends Screen {
         if (this.isOpen === false) {
             return;
         }
-        if (event.detail?.["reason"] === "left") {
+        if (event.detail?.["reason"] === "left" && event.detail?.["isRemote"] !== true) {
             return;     // this side left it, and is on its way out already
         }
 

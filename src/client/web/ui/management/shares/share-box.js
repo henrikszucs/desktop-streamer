@@ -22,6 +22,10 @@ const ShareBox = class extends EventTarget {
                                     <i>settings</i>
                                     <span data-localization="shares.settings">Settings</span>
                                 </li>
+                                <li class="btn-share-disconnect hide">
+                                    <i>stop_screen_share</i>
+                                    <span data-localization="shares.disconnect">Disconnect</span>
+                                </li>
                                 <li class="btn-share-delete">
                                     <i>delete</i>
                                     <span data-localization="shares.delete">Delete</span>
@@ -69,6 +73,7 @@ const ShareBox = class extends EventTarget {
 
         this.nameEl = this.el.querySelector(".share-name");
         this.settingsBtn = this.el.querySelector(".btn-share-settings");
+        this.disconnectBtn = this.el.querySelector(".btn-share-disconnect");
         this.deleteBtn = this.el.querySelector(".btn-share-delete");
         this.tagLive = this.el.querySelector(".share-tag-live");
         this.tagLocal = this.el.querySelector(".share-tag-local");
@@ -79,6 +84,9 @@ const ShareBox = class extends EventTarget {
         this.settingsBtn.addEventListener("click", () => {
             this.dispatchEvent(new CustomEvent("settings", {"detail": {"joinId": this.joinId, "hostCode": this.hostCode}}));
         });
+        this.disconnectBtn.addEventListener("click", () => {
+            this.dispatchEvent(new CustomEvent("disconnect", {"detail": {"joinId": this.joinId}}));
+        });
         this.deleteBtn.addEventListener("click", () => {
             this.dispatchEvent(new CustomEvent("delete", {"detail": {"joinId": this.joinId}}));
         });
@@ -87,6 +95,13 @@ const ShareBox = class extends EventTarget {
     // the chip that says this one may come back without anybody being asked
     setUnattended(isUnattended=false) {
         this.tagUnattended.classList.toggle("hide", isUnattended === false);
+    };
+
+    // the entry that ends the connection standing on this share, there only
+    // while one does: the host's way to put a connected device off its
+    // keyboard without forgetting it
+    setLive(isLive=false) {
+        this.disconnectBtn.classList.toggle("hide", isLive === false);
     };
     setName(name="") {
         this.nameEl.textContent = name;

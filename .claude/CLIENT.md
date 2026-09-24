@@ -88,7 +88,11 @@ needs, since it can only hide chrome that is already in the document. A module
 that mounts into another's markup has to follow it, which is what the dot-depth
 ordering is for — `settings` carries the markup `settings.appearance` mounts
 into. A module that throws is logged and skipped rather than taking the boot
-down with it.
+down with it - and the failure is not kept: `registry.load` forgets a build that
+failed, takes back out whatever markup it had already mounted, and remembers no
+stylesheet that did not load, so the next time the module is asked for (the
+router opening it) it is built again rather than failing for the life of the
+page over one request that failed at boot.
 
 ## The snackbar
 
@@ -659,7 +663,11 @@ The two ways out are not the same. `leave()` is this side deciding: it tears the
 connection down **and** tells the server, so the other end hears `room-close` and
 stops. A `room-close` that arrives from the server is the other end having gone,
 and only takes this side down. Either way the state ends at `closed` and the
-event says why. One room at a time on this client - a second `room-open` replaces
+event says why - and whose doing it was: `isRemote` marks a close the server
+reported, because the reason is then the other end's. A `left` from the server
+is the other end leaving (the host ending the connection from its share card),
+which the room screen shows as the connection lost; only a `left` of this
+side's own is the screen on its way out already. One room at a time on this client - a second `room-open` replaces
 the first - which the server does not impose and a host with two peers will
 eventually need.
 
@@ -825,6 +833,17 @@ is `room.leave()`, because deleting a share that **is** only a connection is
 ending it. One dialog for both, since a host that has just let somebody in should
 not have to learn a second screen for the connection it did not tick a box for.
 
+**A live card also carries *disconnect*.** Where the live room stands on a
+remembered join, the card is that join's and its *delete* forgets the device -
+which the server answers by ending the room on it too (`removed`) - so ending
+the connection *without* forgetting the device needs an entry of its own.
+`setLive()` shows it on whichever card is live, the connection-only card
+included, and it is `room.leave()` behind `confirm.endRoom`, for the room the
+click was about and no other: one that replaced it while the question stood is
+left alone. It is the host's one way to put a connected device off its keyboard
+and keep it; an unsupervised device may walk straight back in, and forgetting it
+is what keeps it out.
+
 **Neither delete is taken without asking.** `ctx["ui"].confirm()` is the one
 question the shell puts before something is undone for good -
 `ui/management/confirm/`, opened *nested* so whatever asked it is still behind
@@ -834,8 +853,9 @@ the document from `data-localization`, so a line written in as text would go bac
 to whatever the markup was built with - which is the same reason
 `management/connection` writes the key of its hint onto the element before
 reading it. The two questions are not one question: forgetting a join is gone from
-both devices for good (`confirm.deleteJoin`), ending a live share only ends what
-is up (`confirm.endRoom`, and the button says *End* rather than *Delete*).
+both devices for good, a connection standing on it with it (`confirm.deleteJoin`),
+ending a live share only ends what is up (`confirm.endRoom`, and the button says
+*End* rather than *Delete*).
 
 **A rebuild the room asked for is not dropped.** The grid answers two sources and
 they need opposite guards: `joins` fires `change` *because* the build asked it
@@ -1099,7 +1119,10 @@ fractions. Chromium ignores a cursor image over 128 pixels, so the `auto`
 behind it is what a pointer that large falls through to; and the `cursor: none`
 still in the stylesheet is what is left for a host that sends no shape at all -
 a browser sharing through `getDisplayMedia` draws its own into the picture, and
-a second one over it would be two pointers.
+a second one over it would be two pointers. Because the shape lands in a CSS
+`url()` and an `img src`, the peer takes one only as the PNG data URL
+`cursor.js` packs (`CURSOR_IMAGE` in `stream.js`); a string that is anything
+else - a quote closing the `url()`, an address to fetch - is read as no pointer.
 
 **Where it is drawn is where a click lands.** `#room-cursor` sits over
 `#room-stage` and is placed by `pictureBox()` in `stream-input.js` - the same

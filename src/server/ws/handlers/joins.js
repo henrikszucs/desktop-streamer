@@ -20,7 +20,7 @@
 import { generateId } from "../../common.js";
 import { push, notify, notifyAll, ANSWER_TIMEOUT } from "../notify.js";
 import { addressOf } from "../address.js";
-import { createRoom } from "./rooms.js";
+import { createRoom, closeJoinRooms, closeRoomsOf } from "./rooms.js";
 
 // a join code is a capability, not something anybody reads out: it is ten
 // characters of the full alphabet, where a pair code is six digits
@@ -79,6 +79,7 @@ const createJoin = async function(server, isUnsupervised, peerUserId="") {
     if (joinId === undefined || codes === undefined) {
         return undefined;
     }
+    const owner = (typeof peerUserId === "string" ? peerUserId : "");
 
     /*{
         "join_id", "peer_code", "host_code", "peer_user_id", "host_user_id",
@@ -88,7 +89,7 @@ const createJoin = async function(server, isUnsupervised, peerUserId="") {
         "join_id": joinId,
         "peer_code": codes["peerCode"],
         "host_code": codes["hostCode"],
-        "peer_user_id": typeof peerUserId === "string" ? peerUserId : "",
+        "peer_user_id": owner,
         "host_user_id": "",
         "peer_name": "",
         "host_name": "",
@@ -100,7 +101,8 @@ const createJoin = async function(server, isUnsupervised, peerUserId="") {
         "joinId": joinId,
         "peerCode": codes["peerCode"],
         "hostCode": codes["hostCode"],
-        "isUnsupervised": isUnsupervised === true
+        "isUnsupervised": isUnsupervised === true,
+        "peerUserId": owner
     };
 };
 
@@ -116,6 +118,7 @@ const attachJoin = function(server, sessionId, record, isHost) {
     if (join === undefined) {
         /*{
             "joinId", "peerCode", "hostCode", "isUnsupervised",
+            "peerUserId": string,           (the account the device is, "" for a guest's)
             "hostSessionIds": Set, "peerSessionIds": Set,
             "requestSessionId": string,     (the peer waiting for an answer)
             "answerSessionId": string,      (the host socket that was asked)
@@ -126,6 +129,7 @@ const attachJoin = function(server, sessionId, record, isHost) {
             ["peerCode", record["peerCode"]],
             ["hostCode", record["hostCode"]],
             ["isUnsupervised", record["isUnsupervised"] === true],
+            ["peerUserId", typeof record["peerUserId"] === "string" ? record["peerUserId"] : ""],
             ["hostSessionIds", new Set()],
             ["peerSessionIds", new Set()]
         ]);
@@ -160,7 +164,8 @@ const recordOf = function(row) {
         "joinId": row["join_id"],
         "peerCode": row["peer_code"],
         "hostCode": row["host_code"],
-        "isUnsupervised": row["is_unsupervised"] === true || row["is_unsupervised"] === 1
+        "isUnsupervised": row["is_unsupervised"] === true || row["is_unsupervised"] === 1,
+        "peerUserId": typeof row["peer_user_id"] === "string" ? row["peer_user_id"] : ""
     };
 };
 
@@ -327,6 +332,16 @@ const joinConnect = async function(ctx) {
     if (found === undefined) {
         // the row is gone, or was never there: the caller should forget the code
         ctx["messageObj"].send({"success": false, "error": "unknown-join"});
+        return;
+    }
+
+    // the device side of a join an account owns is that account's: its code
+    // opens it only on a socket signed in as the account, so a code that got
+    // out - or one kept by a session that has since been signed out - opens
+    // nothing. A guest's device is its code alone, and a share is the machine's.
+    const owner = recordOf(found["row"])["peerUserId"];
+    if (found["isHost"] === false && owner !== "" && server.clients.get(ctx["sessionId"])?.get("userId") !== owner) {
+        ctx["messageObj"].send({"success": false, "error": "not-allowed"});
         return;
     }
 
@@ -568,6 +583,9 @@ const dropJoin = async function(server, joinId, exceptSessionIds=new Set()) {
     if (server.db !== null) {
         await server.db("joins").where("join_id", joinId).del();
     }
+    // and whatever is connected through it is not any more: a device that is
+    // forgotten does not stay on the host's keyboard (see closeJoinRooms)
+    closeJoinRooms(server, joinId, "removed");
     for (const sessionId of sessionIds) {
         server.clients.get(sessionId)?.get("joinIds")?.delete(joinId);
     }
@@ -666,9 +684,42 @@ const joinDisconnect = function(ctx) {
     /*{
         "success": boolean
     }*/
+    const server = ctx["server"];
+    const sessionId = ctx["sessionId"];
     const joinIds = ctx["message"]["joinIds"];
-    detachJoins(ctx["server"], ctx["sessionId"], Array.isArray(joinIds) === true ? joinIds : undefined);
+    const named = (Array.isArray(joinIds) === true ? joinIds : undefined);
+
+    // as if the socket had closed for them, the connections made through them
+    // end as well - a guest signing out is not left in a room on a device it
+    // has just let go of
+    const leaving = [...(server.clients.get(sessionId)?.get("joinIds") ?? [])].filter(function(joinId) {
+        return named === undefined || named.includes(joinId);
+    });
+    closeRoomsOf(server, sessionId, new Set(leaving), "gone");
+    detachJoins(server, sessionId, named);
     ctx["messageObj"].send({"success": true});
+};
+
+// the devices of one account a socket was on, taken off it. For an account the
+// sign-in is the credential (see the top of this file), so a socket that stops
+// being that user - signed out, recovered from, switched away - holds its
+// devices no longer, and the connections it made through them end with it.
+// Called by detachAccount in handlers/accounts.js.
+const detachUserJoins = function(server, sessionId, userId) {
+    const held = server.clients.get(sessionId)?.get("joinIds");
+    if (held === undefined || typeof userId !== "string" || userId === "") {
+        return;
+    }
+    const joinIds = [...held].filter(function(joinId) {
+        const join = server.joins.get(joinId);
+        return join !== undefined && join.get("peerUserId") === userId
+            && join.get("peerSessionIds").has(sessionId) === true;
+    });
+    if (joinIds.length === 0) {
+        return;
+    }
+    closeRoomsOf(server, sessionId, new Set(joinIds), "gone");
+    detachJoins(server, sessionId, joinIds);
 };
 
 // the types this group answers
@@ -684,5 +735,5 @@ const handlers = {
     "join-sync": joinSync
 };
 
-export { handlers, createJoin, attachJoin, recordOf, detachJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, dropJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
+export { handlers, createJoin, attachJoin, recordOf, detachJoins, detachUserJoins, releaseJoins, findJoin, heldJoin, isOnline, notifyPresence, generateJoinCodes, dropJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_CODE_LENGTH, JOIN_NAME_MAX };
 export default handlers;
