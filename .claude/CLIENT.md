@@ -549,7 +549,9 @@ is what this client knows the room by; there is no id behind it that both sides
 share.
 
 What crosses the server is SDP and ICE and nothing else, one message per call
-(`room-signal`), so the server holds nothing between two of them. Three details
+(`room-signal`), so the server holds nothing between two of them - that, and
+one `key` signal from each side, the public half of the key the relay is sealed
+with (see "The relay is sealed"). Three details
 are worth keeping, and two of them are the same mistake at different heights:
 
 - an ICE candidate that arrives **before the description it belongs to** is held
@@ -666,8 +668,8 @@ what the control protocol and the stream's settings go over (`send()`/`message`)
 side in the same offer, `ordered: false, maxRetransmits: 0`, wrapped in nothing:
 `sendFrame()` hands a chunk to it as it is and reports `false` rather than
 queueing when `bufferedAmount` is past `VIDEO_BACKLOG`, and whatever arrives on
-it is the `frame` event. On the relay the same chunk is the socket's binary frame
-(`roomDataSend`), refused the same way once the socket's `bufferedAmount` is past
+it is the `frame` event. On the relay the same chunk is sealed and sent as the
+socket's binary frame (`roomDataSend`), refused the same way once the socket's `bufferedAmount` is past
 `RELAY_BACKLOG` - the server acknowledges as fast as it reads, so without that
 line a relay slower than the encoder is a queue that only grows - and the
 relayed bytes come back as `frame` too, so the stream
@@ -694,6 +696,57 @@ picture, and any key the peer held down left down on the host, since only the
 stream stopping lets go of it. One room at a time on this client - a second `room-open` replaces
 the first - which the server does not impose and a host with two peers will
 eventually need.
+
+## The relay is sealed
+
+A direct room is encrypted end to end by WebRTC itself: both channels are DTLS
+and nothing turns that off. **The relay is not WebRTC** - it is this project's
+own socket, and `wss` is TLS from each client to the server and no further, so
+without a layer of its own the server would hold the picture, every key the peer
+types on the host and the shared clipboard in plain bytes. `src/room/seal.js` is
+that layer, and `room.js` puts every relayed payload through it.
+
+- **Keys per room, made at `room-open`.** Each side makes an ephemeral ECDH
+  P-256 pair (the private half never leaves WebCrypto) and sends the public half
+  as a `key` signal at once, so both halves have crossed long before any
+  fallback is taken. The first `key` of a room is the one taken; a later one
+  cannot re-key it. HKDF-SHA-256 over the shared secret, salted with the two
+  public keys in host-then-peer order, gives **one AES-GCM key per direction** -
+  so a payload the server hands back to the side that sealed it does not open.
+- **One layout for everything relayed**: `[version][8 byte counter][ciphertext +
+  tag]`, the header as additional data and the counter as the nonce. Bytes and
+  JSON are told apart by a byte *inside* the seal, so the relay frame is always
+  kind 1 and the server does not even learn which a message is - only its size.
+  The server needed no change: it already forwards a binary frame without
+  reading it.
+- **A replay window, not a strict order.** Relayed messages finish out of order
+  (see above), so the receiver keeps the newest counter and a slot for each of
+  the `REPLAY_WINDOW` (1024) before it. A counter is asked about before it is
+  decrypted and marked only after it opened, so a forged one cannot move the
+  window.
+- **Order is kept on both sides of the crypto.** Sealing and opening are async,
+  so `room.js` chains them: payloads reach the socket in the order they were
+  given and reach the stream in the order they arrived, while the encryption
+  itself runs at once. `seal()` copies its input before it returns, so the
+  stream may reuse a buffer the moment `sendFrame()` does; bytes still being
+  sealed count against `RELAY_BACKLOG` like bytes the socket holds.
+- **An unsealed relay is not a fallback.** A room on the relay is `connected`
+  only once the seal is in; one still without it after `SEAL_TIMEOUT` (5 s) has
+  lost a signal and leaves with `failed` rather than waiting on nothing - and
+  rather than sending in the clear. Whatever arrives on the relay that is not
+  sealed bytes (the server's own JSON `room-data` path, a frame of kind 2) or
+  does not open is dropped and logged, and is never taken as the other end
+  giving up.
+
+**What it does not cover yet: an active server.** The public keys cross the
+server, so a server that swaps both for its own sits in the middle of the relay
+exactly as it could of a direct room by swapping the DTLS fingerprints in the
+SDP. What the seal defeats is everything short of that - a server, a proxy or a
+log that reads what passes, and one that injects, replays or reflects.
+Authenticating the keys is the next step: pinning each side's long-term key on
+the join at `pair-accept` (trust on first use) and signing each room's key with
+it, or a short string both screens show. Neither the six-digit code nor the
+room key can do it - the server issued both.
 
 ## The room
 

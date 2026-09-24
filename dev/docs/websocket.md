@@ -338,6 +338,14 @@ silent receiver from having the server hold whatever the sender pushes. The
 client draws the same line at its own socket (`RELAY_BACKLOG` in
 `src/room/room.js`, 1 MiB) and refuses the frame there, as the direct leg does.
 
+**What today's client puts in a frame is sealed** (`src/room/seal.js`): always
+kind 1, and the payload `[version][8 byte counter][AES-GCM ciphertext + tag]`,
+with bytes and JSON told apart only inside the seal. The key is agreed across
+`room-signal` - one `{"kind": "key", "key": <base64 P-256 public key>}` from each
+side at `room-open` - so the server forwards what it cannot read, and the client
+drops a kind 2 frame and a `room-data` call as the server's own writing. Neither
+the server's handling nor the kind 2 path changed; only what the clients send.
+
 **Every socket is pinged every `HEARTBEAT_INTERVAL`** (30 s, `ws/ws.js`) and one
 that has not answered the previous ping by the next is terminated. A browser
 answers on its own, so what this ends is a socket that stopped reading - which
