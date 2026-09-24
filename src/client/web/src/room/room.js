@@ -382,8 +382,20 @@ const createRoom = function(ctx) {
         }
         const ownRoomKey = roomKey;
         let made = null;
+
+        // what the seal says on its own - the rekey - goes out the way any
+        // relayed payload does, in its place in the chain
+        const transmit = function(sealing) {
+            if (made === null || seal !== made) {
+                sealing.catch(function() {});
+                return;
+            }
+            queue(made, ownRoomKey, sealing, 0).catch(function(error) {
+                console.error("Cannot relay a rekey:", error);
+            });
+        };
         try {
-            made = await deriveSeal(keys, otherKey, isHost);
+            made = await deriveSeal(keys, otherKey, isHost, {"transmit": transmit});
         } catch (error) {
             console.error("Cannot seal the relay:", error);
             return;
@@ -403,14 +415,15 @@ const createRoom = function(ctx) {
     // they went before - while the encryption itself runs at once. What is
     // reported is what roomDataSend reports: that the frame left.
     const relay = function(data) {
-        const ownSeal = seal;
-        const ownRoomKey = roomKey;
-        const size = (data instanceof ArrayBuffer ? data.byteLength : 0);
-        sealingBytes += size;
-
         // sealed here rather than inside the chain: the bytes are copied before
         // this returns, so the caller may reuse its buffer
-        const sealing = ownSeal.seal(data);
+        const size = (data instanceof ArrayBuffer ? data.byteLength : 0);
+        return queue(seal, roomKey, seal.seal(data), size);
+    };
+
+    // the chain itself, for a payload that is being sealed
+    const queue = function(ownSeal, ownRoomKey, sealing, size) {
+        sealingBytes += size;
         const handed = outbound.then(function() {
             return sealing;
         }).then(function(sealed) {
@@ -443,6 +456,10 @@ const createRoom = function(ctx) {
             }
             if (typeof opened === "undefined") {
                 console.warn("Room " + roomKey + " dropped a relayed message that did not open");
+                return;
+            }
+            // the seal's own - a rekey - and nothing for the stream
+            if (opened["isControl"] === true) {
                 return;
             }
 

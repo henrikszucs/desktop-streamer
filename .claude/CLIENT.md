@@ -713,10 +713,12 @@ that layer, and `room.js` puts every relayed payload through it.
   cannot re-key it. HKDF-SHA-256 over the shared secret, salted with the two
   public keys in host-then-peer order, gives **one AES-GCM key per direction** -
   so a payload the server hands back to the side that sealed it does not open.
-- **One layout for everything relayed**: `[version][8 byte counter][ciphertext +
-  tag]`, the header as additional data and the counter as the nonce. Bytes and
-  JSON are told apart by a byte *inside* the seal, so the relay frame is always
-  kind 1 and the server does not even learn which a message is - only its size.
+- **One layout for everything relayed**: `[version][4 byte epoch][8 byte
+  counter][ciphertext + tag]`, the header as additional data and the counter as
+  the nonce - one counter per direction through every epoch, so a nonce never
+  repeats under any key. Bytes, JSON and the seal's own rekey messages are told
+  apart by a byte *inside* the seal, so the relay frame is always kind 1 and the
+  server does not even learn which a message is - only its size.
   The server needed no change: it already forwards a binary frame without
   reading it.
 - **A replay window, not a strict order.** Relayed messages finish out of order
@@ -737,16 +739,38 @@ that layer, and `room.js` puts every relayed payload through it.
   sealed bytes (the server's own JSON `room-data` path, a frame of kind 2) or
   does not open is dropped and logged, and is never taken as the other end
   giving up.
+- **The keys renew from inside the seal.** After `REKEY_BYTES` (1 GiB, sealed
+  and opened on its side) or `REKEY_INTERVAL` (an hour), whichever is first, the
+  host offers a fresh ECDH key and the peer answers with one - both as sealed
+  messages, so **the only public keys that ever cross in the clear are the two
+  of the first exchange**, and the server can neither see nor swap a later one.
+  The new epoch's keys are HKDF over the new shared secret, salted with the
+  previous epoch's root, the epoch number and the two new keys, so every epoch
+  hangs from the one before it and through them all from the first exchange; a
+  key that got out stops being worth anything at the next rekey. Only the host
+  offers, so the two ends never offer at once; the peer answers under the old
+  keys and moves its own sending across at the host's first message under the
+  new ones (the host sends a `confirm` straight away for that). An unanswered
+  offer is sent again after `REKEY_RETRY` (10 s) - a relayed frame can be dropped
+  at a full socket - and a repeated offer gets the same answer. Each side keeps
+  the previous epoch's receive key for `KEY_GRACE` (30 s) after the other end
+  has moved, for what is still on its way, and then deletes it; a new rekey
+  waits for the other end to be on the last one, so three epochs are never live.
 
-**What it does not cover yet: an active server.** The public keys cross the
-server, so a server that swaps both for its own sits in the middle of the relay
-exactly as it could of a direct room by swapping the DTLS fingerprints in the
-SDP. What the seal defeats is everything short of that - a server, a proxy or a
-log that reads what passes, and one that injects, replays or reflects.
-Authenticating the keys is the next step: pinning each side's long-term key on
-the join at `pair-accept` (trust on first use) and signing each room's key with
-it, or a short string both screens show. Neither the six-digit code nor the
-room key can do it - the server issued both.
+**The trust model: the server is trusted at `room-open`, and only then.** The
+first public keys cross the server, so a server that swaps both for its own at
+that moment sits in the middle of the relay - exactly as it could of a direct
+room by swapping the DTLS fingerprints in the SDP. That is accepted: the
+exchange happens at every `room-open`, and what a server compromised *after* it
+cannot do is decrypt the room, re-key it (the first `key` signal is the only one
+taken, and every later key is sealed), or decrypt anything recorded, since the
+private keys never leave WebCrypto and go with the room. A server, proxy or log
+that only reads what passes never sees plaintext at all. Moving the trust point
+from every `room-open` to the first pairing would mean pinning each side's
+long-term key on the join at `pair-accept` and signing each room's key with it -
+not built, and neither the six-digit code nor the room key could stand in for it,
+since the server issued both. Nor can any key exchange help against the server
+that serves the web client its JavaScript.
 
 ## The room
 

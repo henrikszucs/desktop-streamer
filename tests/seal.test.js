@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { createKeys, deriveSeal, createReplayWindow, SEAL_HEADER, TAG_SIZE, REPLAY_WINDOW } from "../src/client/web/src/room/seal.js";
+import { createKeys, deriveSeal, createReplayWindow, SEAL_HEADER, TAG_SIZE, REPLAY_WINDOW, KEY_GRACE } from "../src/client/web/src/room/seal.js";
 
 // The relay's seal is WebCrypto and nothing else, so it runs whole under Node.
 // What has to be true is what the server must not be able to do with a relayed
@@ -166,4 +166,143 @@ test("the replay window is moved only by what opened", function() {
 
     assert.equal(replay.isFresh(-1), false);
     assert.equal(replay.isFresh(1.5), false);
+});
+
+//
+// the rekey
+//
+// Two seals on a fake clock, with what each says on its own (the rekey) held on
+// a wire the test delivers - or drops - by hand.
+const link = async function(options = {}) {
+    const clock = {"now": 0};
+    const wire = {"toPeer": [], "toHost": []};
+    const base = {"now": () => clock.now, ...options};
+    const hostKeys = await createKeys();
+    const peerKeys = await createKeys();
+    const host = await deriveSeal(hostKeys, peerKeys["publicKey"], true, {...base, "transmit": (sealing) => wire.toPeer.push(sealing)});
+    const peer = await deriveSeal(peerKeys, hostKeys["publicKey"], false, {...base, "transmit": (sealing) => wire.toHost.push(sealing)});
+    const seen = [];
+
+    // everything on the wire, both ways, until it is quiet; `drop` sees each one
+    const flush = async function(drop = () => false) {
+        for (let quiet = 0; quiet < 3; quiet++) {
+            let isMoved = false;
+            for (const [queue, to, from] of [[wire.toPeer, peer, "host"], [wire.toHost, host, "peer"]]) {
+                while (queue.length > 0) {
+                    const sealed = await queue.shift();
+                    seen.push(new Uint8Array(sealed));
+                    isMoved = true;
+                    if (drop(from) !== true) {
+                        await to.open(sealed);
+                    }
+                }
+            }
+            if (isMoved === true) {
+                quiet = -1;
+            }
+            // what was started in the background - the host making its offer's key
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+    };
+    return {host, peer, clock, wire, flush, seen};
+};
+
+// one payload each way, which is also what moves the two onto what they agreed
+const exchange = async function(host, peer, size = 10) {
+    assert.notEqual(await peer.open(await host.seal(bytesOf(size).buffer)), undefined);
+    assert.notEqual(await host.open(await peer.seal({"kind": "input"})), undefined);
+};
+
+test("the keys renew from inside the seal once enough has crossed, again and again", async function() {
+    const {host, peer, flush} = await link({"rekeyBytes": 1000});
+    assert.equal(host.getEpoch(), 0);
+
+    for (let epoch = 1; epoch <= 3; epoch++) {
+        await exchange(host, peer, 1500);
+        await flush();
+        await exchange(host, peer);
+        assert.equal(host.getEpoch(), epoch, "host on " + epoch);
+        assert.equal(peer.getEpoch(), epoch, "peer on " + epoch);
+    }
+});
+
+test("a new public key never crosses in the clear", async function() {
+    const {host, peer, flush, seen} = await link({"rekeyBytes": 1000});
+    await exchange(host, peer, 1500);
+    await flush();
+    await exchange(host, peer);
+    assert.equal(host.getEpoch(), 1);
+
+    // offer, answer, confirm - all of them sealed, none of them readable
+    assert.equal(seen.length, 3);
+    for (const sealed of seen) {
+        const text = new TextDecoder("latin1").decode(sealed);
+        assert.equal(/offer|answer|confirm|"key"/.test(text), false);
+    }
+});
+
+test("time alone renews the keys", async function() {
+    const {host, peer, clock, flush} = await link({"rekeyInterval": 1000});
+    await exchange(host, peer);
+    await flush();
+    assert.equal(host.getEpoch(), 0);
+
+    clock.now = 1001;
+    await exchange(host, peer);
+    await flush();
+    await exchange(host, peer);
+    assert.equal(host.getEpoch(), 1);
+    assert.equal(peer.getEpoch(), 1);
+});
+
+test("a lost answer is asked for again, and the same answer comes back", async function() {
+    const {host, peer, clock, flush} = await link({"rekeyBytes": 1000, "rekeyRetry": 5000});
+    await exchange(host, peer, 1500);
+    await flush((from) => from === "peer");     // the answer goes missing
+    assert.equal(host.getEpoch(), 0);
+
+    // the peer is ready, but does not move before the host does
+    await exchange(host, peer);
+    assert.equal(peer.getEpoch(), 0);
+
+    clock.now = 5000;
+    await exchange(host, peer);
+    await flush();
+    await exchange(host, peer);
+    assert.equal(host.getEpoch(), 1);
+    assert.equal(peer.getEpoch(), 1);
+});
+
+test("what was sealed before the switch opens during the grace, and not after", async function() {
+    const {host, peer, clock, flush} = await link({"rekeyBytes": 1000});
+    const early = await peer.seal({"n": 1});
+    const late = await peer.seal({"n": 2});
+
+    await exchange(host, peer, 1500);
+    await flush();
+    await exchange(host, peer);
+    assert.equal(peer.getEpoch(), 1);
+
+    // epoch 0 is still there for what was on its way
+    assert.deepEqual((await host.open(early))["data"], {"n": 1});
+    assert.deepEqual(host.getReceiveEpochs(), [0, 1]);
+
+    // and gone once the grace is over: a key that got out later opens nothing old
+    clock.now += KEY_GRACE;
+    assert.equal(await host.open(late), undefined);
+    assert.deepEqual(host.getReceiveEpochs(), [1]);
+});
+
+test("a rekey message replayed by the server changes nothing", async function() {
+    const {host, peer, wire, flush} = await link({"rekeyBytes": 1000});
+    await exchange(host, peer, 1500);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const offer = await wire.toPeer[0];
+    await flush();
+    await exchange(host, peer);
+    assert.equal(peer.getEpoch(), 1);
+
+    assert.equal(await peer.open(offer.slice(0)), undefined);
+    assert.equal(peer.getEpoch(), 1);
+    await exchange(host, peer);
 });

@@ -339,8 +339,10 @@ client draws the same line at its own socket (`RELAY_BACKLOG` in
 `src/room/room.js`, 1 MiB) and refuses the frame there, as the direct leg does.
 
 **What today's client puts in a frame is sealed** (`src/room/seal.js`): always
-kind 1, and the payload `[version][8 byte counter][AES-GCM ciphertext + tag]`,
-with bytes and JSON told apart only inside the seal. The key is agreed across
+kind 1, and the payload `[version][4 byte epoch][8 byte counter][AES-GCM
+ciphertext + tag]`, with bytes, JSON and the seal's own rekey messages told apart
+only inside the seal - so a rekey is invisible to the server, and the only
+public keys it ever carries are the two `key` signals. The key is agreed across
 `room-signal` - one `{"kind": "key", "key": <base64 P-256 public key>}` from each
 side at `room-open` - so the server forwards what it cannot read, and the client
 drops a kind 2 frame and a `room-data` call as the server's own writing. Neither
