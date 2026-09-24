@@ -82,8 +82,10 @@ one of each.
         "proxy": {                      //(optional) the address the clients reach this server at, when a proxy
             "domain": "example.com",    //  stands in front of it. The server still listens on "domain"/"port"
             "port": 443,                //  above; this is what is built into the clients and what a redirect
-            "redirect": 80              //  points at. "redirect" is the plaintext port of the proxy in front of
-        },                              //  "http.redirect" below, refused without one - see "Behind a proxy"
+            "redirect": 80,             //  points at. "redirect" is the plaintext port of the proxy in front of
+                                        //  "http.redirect" below, refused without one - see "Behind a proxy".
+            "trust": ["127.0.0.1"]      //  (optional) where the proxy connects from, addresses or ranges
+        },                              //  ("10.0.0.0/8"); this machine when left out
         "redirect": 80,                 //(optional) plaintext HTTP port that redirects to HTTPS
         "cache": {                      //(optional) serve the client files from memory instead of from disk
             "size": 524288000,          //  max cache size in bytes
@@ -101,7 +103,8 @@ one of each.
         "cert": "server.crt",           //  required when the port is shared, although it is not used then
         "proxy": {                      //(optional) the address the clients open their socket on, when a proxy
             "domain": "example.com",    //  stands in front of this server. Without it the clients are pointed
-            "port": 443                 //  at the "http" host and this server's own port
+            "port": 443,                //  at the "http" host and this server's own port
+            "trust": ["127.0.0.1"]      //  (optional) where the proxy connects from, as on "http.proxy"
         },
         "database": {                   //a MySQL server...
             "type": "mysql",
@@ -217,6 +220,27 @@ Starting HTTP server...
 > [!NOTE]
 > The clients carry these addresses from the compile, not from the boot, so
 > changing a `proxy` needs `npm run server -- --compile`.
+
+Behind a proxy the realtime server knows a client by the last
+`X-Forwarded-For` entry, the one the proxy appended - but only on a connection
+that comes **from the proxy**. The server listens on every interface, and a
+client that reaches its port directly could write any address it likes into
+the header, and with a fresh one per try walk past the limit on guessing
+connection codes and on open sockets. So `proxy.trust` names where the proxy
+connects from, as addresses or `address/prefix` ranges, and a connection from
+anywhere else is known by its own address. Left out, the proxy is taken to be
+on the same machine (`127.0.0.0/8` and `::1`); a proxy anywhere else - another
+host, a container network - has to be listed, or every client counts as the
+proxy. The boot prints the list as `Proxy from`. The `ws` section reads its
+own `proxy.trust`, or the `http` one when the two share a port.
+
+```json
+"ws": {
+    "domain": "localhost",
+    "port": 8444,
+    "proxy": {"domain": "botto.hu", "port": 443, "trust": ["172.16.0.0/12"]}
+}
+```
 
 ## Google sign-in and email setup
 

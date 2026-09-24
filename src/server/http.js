@@ -115,6 +115,13 @@ const ServerHTTP = class {
             server.once("error", onError);
             server.listen(port, function() {
                 server.removeListener("error", onError);
+                // and one that is listening still reports: an accept that fails
+                // when the process is out of file descriptors - which a flood of
+                // connections that never finish their handshake gets it to - is
+                // an "error" event, and one nobody hears ends the process
+                server.on("error", function(error) {
+                    console.error("Server error on port " + port + ":", error.message);
+                });
                 resolve();
             });
         });

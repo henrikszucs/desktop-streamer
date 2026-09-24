@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // first-party dependencies
-import { clientAddress, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, CONNECTION_MAX, CONNECTION_MAX_WIDE } from "../src/server/ws/address.js";
+import { clientAddress, parseTrustEntry, buildProxyTrust, isTrustedProxy, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, PROXY_TRUST_DEFAULT, CONNECTION_MAX, CONNECTION_MAX_WIDE } from "../src/server/ws/address.js";
 
 // the upgrade request as ws hands it to the connection listener
 const buildRequest = function(remoteAddress, forwardedFor) {
@@ -23,23 +23,66 @@ const buildRequest = function(remoteAddress, forwardedFor) {
 // where a connection came from
 //
 test("without a proxy the socket is the client and the header is ignored", () => {
-    assert.equal(clientAddress(buildRequest("198.51.100.7"), false), "198.51.100.7");
-    assert.equal(clientAddress(buildRequest("198.51.100.7", "203.0.113.1"), false), "198.51.100.7");
+    assert.equal(clientAddress(buildRequest("198.51.100.7"), null), "198.51.100.7");
+    assert.equal(clientAddress(buildRequest("198.51.100.7", "203.0.113.1"), null), "198.51.100.7");
 });
 
 test("behind a proxy the address is the last one the proxy forwarded", () => {
-    assert.equal(clientAddress(buildRequest("127.0.0.1", "203.0.113.1"), true), "203.0.113.1");
+    const trust = buildProxyTrust();
+    assert.equal(clientAddress(buildRequest("127.0.0.1", "203.0.113.1"), trust), "203.0.113.1");
 
     // what the client wrote into the header itself stands to the left of what
     // the proxy appended, and is never read
-    assert.equal(clientAddress(buildRequest("127.0.0.1", "10.0.0.1, 203.0.113.1"), true), "203.0.113.1");
-    assert.equal(clientAddress(buildRequest("127.0.0.1", ["10.0.0.1", "203.0.113.1"]), true), "203.0.113.1");
+    assert.equal(clientAddress(buildRequest("127.0.0.1", "10.0.0.1, 203.0.113.1"), trust), "203.0.113.1");
+    assert.equal(clientAddress(buildRequest("127.0.0.1", ["10.0.0.1", "203.0.113.1"]), trust), "203.0.113.1");
 });
 
 test("a proxy that forwards nothing leaves the socket's own address", () => {
-    assert.equal(clientAddress(buildRequest("127.0.0.1"), true), "127.0.0.1");
-    assert.equal(clientAddress(buildRequest("127.0.0.1", " , "), true), "127.0.0.1");
-    assert.equal(clientAddress(undefined, true), "");
+    const trust = buildProxyTrust();
+    assert.equal(clientAddress(buildRequest("127.0.0.1"), trust), "127.0.0.1");
+    assert.equal(clientAddress(buildRequest("127.0.0.1", " , "), trust), "127.0.0.1");
+    assert.equal(clientAddress(undefined, trust), "");
+});
+
+test("a client that reaches the port past the proxy writes nothing it is believed on", () => {
+    // the listener is bound to every interface, so the header of a socket that
+    // is not the proxy's is the client's own - a fresh budget per try otherwise
+    const trust = buildProxyTrust();
+    assert.equal(clientAddress(buildRequest("198.51.100.7", "203.0.113.1"), trust), "198.51.100.7");
+    assert.equal(clientAddress(buildRequest("::ffff:198.51.100.7", "203.0.113.1"), trust), "::ffff:198.51.100.7");
+    assert.equal(clientAddress(buildRequest("2001:db8::7", "203.0.113.1"), trust), "2001:db8::7");
+    assert.equal(clientAddress(buildRequest("", "203.0.113.1"), trust), "");
+});
+
+test("the proxy is this machine unless its trust names where it is", () => {
+    const local = buildProxyTrust();
+    assert.deepEqual(PROXY_TRUST_DEFAULT, ["127.0.0.0/8", "::1"]);
+    assert.equal(isTrustedProxy(local, "127.0.0.1"), true);
+    assert.equal(isTrustedProxy(local, "127.10.0.1"), true);
+    assert.equal(isTrustedProxy(local, "::1"), true);
+    assert.equal(isTrustedProxy(local, "::ffff:127.0.0.1"), true, "an IPv4 proxy on a dual-stack listener");
+    assert.equal(isTrustedProxy(local, "10.0.0.2"), false);
+
+    // a proxy elsewhere is named, as an address or as a range
+    const named = buildProxyTrust(["10.0.0.0/8", "2001:db8:1::/48", "192.0.2.5"]);
+    assert.equal(isTrustedProxy(named, "10.1.2.3"), true);
+    assert.equal(isTrustedProxy(named, "::FFFF:10.1.2.3"), true);
+    assert.equal(isTrustedProxy(named, "2001:db8:1:ff::1"), true);
+    assert.equal(isTrustedProxy(named, "192.0.2.5"), true);
+    assert.equal(isTrustedProxy(named, "192.0.2.6"), false);
+    assert.equal(isTrustedProxy(named, "127.0.0.1"), false, "naming a proxy replaces this machine");
+    assert.equal(clientAddress(buildRequest("10.1.2.3", "203.0.113.1"), named), "203.0.113.1");
+    assert.equal(isTrustedProxy(named, "not an address"), false);
+});
+
+test("a trust entry is an address or an address/prefix range", () => {
+    assert.deepEqual(parseTrustEntry("10.0.0.0/8"), {"address": "10.0.0.0", "type": "ipv4", "prefix": 8});
+    assert.deepEqual(parseTrustEntry("::1"), {"address": "::1", "type": "ipv6", "prefix": undefined});
+    assert.deepEqual(parseTrustEntry("fd00::/8"), {"address": "fd00::", "type": "ipv6", "prefix": 8});
+    for (const entry of ["localhost", "10.0.0.0/33", "fd00::/129", "10.0.0.0/", "10.0.0.0/8/8", "10.0.0.0/-1", "10.0.0.0/ 8", "", 7]) {
+        assert.equal(parseTrustEntry(entry), undefined, String(entry));
+    }
+    assert.throws(() => buildProxyTrust(["localhost"]), /localhost/);
 });
 
 test("a connection is known by the address it was taken from", () => {

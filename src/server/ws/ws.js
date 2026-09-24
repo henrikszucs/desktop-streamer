@@ -22,7 +22,7 @@ import { detachRooms, releaseRooms, receiveLimitOf, RELAY_RECEIVE_MAX } from "./
 import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.js";
 import { startDatabase, stopDatabase } from "./database.js";
 import { createMailer } from "./mail.js";
-import { clientAddress, holdAddress, releaseAddress } from "./address.js";
+import { clientAddress, buildProxyTrust, holdAddress, releaseAddress, PROXY_TRUST_DEFAULT } from "./address.js";
 
 // the packet layer of every socket, the same on the client (src/client/web/src/server.js):
 // one video chunk of the stream is one packet, and a whole frame is a handful
@@ -65,9 +65,10 @@ const ServerWS = class {
     pairFailuresSweep = 0;
     connections = new Map();        // key-an address (see ./address.js), value-how many sockets it holds open
 
-    // whether a proxy stands in front of the socket, which is then the proxy's
-    // and the client's address is the one it forwarded - see ./address.js
-    isProxied = false;
+    // where the proxy in front of the socket connects from, null when none
+    // stands there: a socket from one of these is the proxy's, and the client's
+    // address is the one it forwarded - see ./address.js
+    proxyTrust = null;
     heartbeatId = -1;
 
     // the sign-in providers and the rules on who may sign in, built from the
@@ -138,8 +139,11 @@ const ServerWS = class {
 
         // a shared port is the HTTP server's listener, and its proxy with it
         const isSharedPort = (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]);
-        this.isProxied = (typeof conf["ws"]["proxy"] === "object"
-            || (isSharedPort === true && typeof conf["http"]["proxy"] === "object"));
+        let proxy = conf["ws"]["proxy"];
+        if (typeof proxy !== "object" && isSharedPort === true) {
+            proxy = conf["http"]["proxy"];
+        }
+        this.proxyTrust = (typeof proxy === "object" ? buildProxyTrust(proxy["trust"]) : null);
 
         // Listen WS port
         if (isSharedPort === true) {
@@ -167,6 +171,11 @@ const ServerWS = class {
                 "maxPayload": SOCKET_FRAME_MAX
             });
         }
+        // what it emits is the error of the server it stands on, re-emitted - an
+        // accept that failed on a process out of file descriptors - which that
+        // server's own listener has logged (listen in ../http.js). Unheard here,
+        // it would end the process.
+        this.wsServer.addListener("error", function() {});
         this.wsServer.addListener("connection", (ws, req) => {
             if (this.isClosing === true) {
                 ws.terminate();
@@ -174,7 +183,7 @@ const ServerWS = class {
             }
             // one address holds only so many sockets; the close handler of
             // clientConnect gives this one back
-            const address = clientAddress(req, this.isProxied);
+            const address = clientAddress(req, this.proxyTrust);
             if (holdAddress(this, address) === false) {
                 ws.close(1008, "too-many-connections");
                 return;
@@ -207,6 +216,12 @@ const ServerWS = class {
         if (typeof conf["ws"]["proxy"] === "object") {
             // the line above is the proxy's address, name the socket as well
             process.stdout.write("    Listening: wss://" + conf["ws"]["domain"] + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
+        }
+        if (typeof proxy === "object") {
+            // the client address is taken from these connections alone, anyone
+            // else is known by their own - a proxy missing here counts every
+            // client as the proxy
+            process.stdout.write("    Proxy from: " + (proxy["trust"] ?? PROXY_TRUST_DEFAULT).join(", ") + "\n");
         }
         process.stdout.write("done\n");
     };

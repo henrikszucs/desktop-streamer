@@ -187,3 +187,21 @@ test("the redirect encodes what a header cannot carry, and sends anything but a 
     assert.equal(redirect("http://elsewhere.example/")["headers"]["Location"], "https://example.com/");
     assert.equal(redirect("*")["headers"]["Location"], "https://example.com/");
 });
+
+//
+// listen
+//
+// a server that is listening still emits "error" - an accept that fails on a
+// process out of file descriptors - and one nobody hears ends the process
+test("a listening server survives the error an accept can end in", async (t) => {
+    const server = http.createServer();
+    await serverHTTP.listen(server, 0);
+    t.after(function() {
+        server.close();
+    });
+    const error = Object.assign(new Error("accept EMFILE"), {"code": "EMFILE"});
+    assert.doesNotThrow(function() {
+        server.emit("error", error);
+    });
+    assert.equal(server.listening, true);
+});

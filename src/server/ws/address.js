@@ -5,14 +5,84 @@
 // and open sockets are counted against. Behind a proxy the socket is the proxy's, so the address
 // is the one the proxy says it forwarded - read once, when the socket is taken.
 
+//
+// Import dependencies
+//
+// internal dependencies
+import net from "node:net";
+
+// Where the proxy connects from when its `trust` names nothing: this machine.
+// The header is believed from the proxy alone - the listener is bound to every
+// interface, so a client that reaches the port directly writes whatever address
+// it likes into it, and would walk the pair-code budget and the socket cap with
+// a fresh one per try.
+const PROXY_TRUST_DEFAULT = ["127.0.0.0/8", "::1"];
+
+// one entry of a proxy's `trust` - an address, or a range as address/prefix -
+// or undefined when it is neither
+const parseTrustEntry = function(entry) {
+    if (typeof entry !== "string") {
+        return undefined;
+    }
+    const parts = entry.split("/");
+    const version = net.isIP(parts[0]);
+    if (version === 0 || parts.length > 2) {
+        return undefined;
+    }
+    const type = (version === 4 ? "ipv4" : "ipv6");
+    if (parts.length === 1) {
+        return {"address": parts[0], "type": type, "prefix": undefined};
+    }
+    const prefix = Number(parts[1]);
+    if (/^[0-9]{1,3}$/.test(parts[1]) === false || prefix > (version === 4 ? 32 : 128)) {
+        return undefined;
+    }
+    return {"address": parts[0], "type": type, "prefix": prefix};
+};
+
+// the addresses a proxy's header is believed from, built once in start()
+const buildProxyTrust = function(entries = PROXY_TRUST_DEFAULT) {
+    const trust = new net.BlockList();
+    for (const entry of entries) {
+        const parsed = parseTrustEntry(entry);
+        if (parsed === undefined) {
+            throw new Error("Not an address or a range of addresses: " + entry);
+        }
+        if (parsed["prefix"] === undefined) {
+            trust.addAddress(parsed["address"], parsed["type"]);
+        } else {
+            trust.addSubnet(parsed["address"], parsed["prefix"], parsed["type"]);
+        }
+    }
+    return trust;
+};
+
+// whether a socket is the proxy's. An IPv4 proxy on a dual-stack listener
+// arrives mapped into IPv6, and is matched as the IPv4 address it is.
+const isTrustedProxy = function(trust, address) {
+    let text = String(address ?? "");
+    const zone = text.indexOf("%");
+    if (zone !== -1) {
+        text = text.slice(0, zone);
+    }
+    if (text.toLowerCase().startsWith("::ffff:") === true && net.isIPv4(text.slice(7)) === true) {
+        text = text.slice(7);
+    }
+    const version = net.isIP(text);
+    if (version === 0) {
+        return false;
+    }
+    return trust.check(text, version === 4 ? "ipv4" : "ipv6");
+};
+
 // The client's address from the upgrade request. A proxy appends the address it
 // took the connection from to X-Forwarded-For, so the last entry is the one our
 // own proxy wrote; anything to the left of it is whatever the client claimed and
-// is never read. Without a proxy the header is the client's own text and is
-// ignored altogether.
-const clientAddress = function(req, isProxied) {
+// is never read. Without a proxy - `trust` is null then - or on a socket that is
+// not the proxy's, the header is the client's own text and is ignored altogether.
+const clientAddress = function(req, trust) {
     const socketAddress = req?.socket?.remoteAddress ?? "";
-    if (isProxied !== true) {
+    if (trust instanceof net.BlockList === false || isTrustedProxy(trust, socketAddress) === false) {
         return socketAddress;
     }
     const header = req?.headers?.["x-forwarded-for"];
@@ -125,5 +195,5 @@ const releaseAddress = function(server, address) {
     }
 };
 
-export { clientAddress, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, CONNECTION_MAX, CONNECTION_MAX_WIDE };
-export default { clientAddress, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, CONNECTION_MAX, CONNECTION_MAX_WIDE };
+export { clientAddress, parseTrustEntry, buildProxyTrust, isTrustedProxy, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, PROXY_TRUST_DEFAULT, CONNECTION_MAX, CONNECTION_MAX_WIDE };
+export default { clientAddress, parseTrustEntry, buildProxyTrust, isTrustedProxy, addressOf, addressKeys, expandIPv6, holdAddress, releaseAddress, PROXY_TRUST_DEFAULT, CONNECTION_MAX, CONNECTION_MAX_WIDE };

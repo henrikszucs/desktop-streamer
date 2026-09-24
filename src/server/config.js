@@ -9,6 +9,7 @@ import Ajv from "ajv"
 
 // first-party dependencies
 import { setAbsolute } from "./common.js";
+import { parseTrustEntry } from "./ws/address.js";
 
 const definitions = {
     "port": {
@@ -24,18 +25,14 @@ const definitions = {
         "type": "integer",
         "minimum": 0
     },
-    // an address a client is handed rather than one a server listens on
-    "address": {
-        "type": "object",
-        "required": ["domain", "port"],
-        "additionalProperties": false,
-        "properties": {
-            "domain": {
-                "$ref": "#/definitions/text"
-            },
-            "port": {
-                "$ref": "#/definitions/port"
-            }
+    // where a proxy connects from - addresses and address/prefix ranges - so
+    // the client address it forwards is believed from it and from nobody else;
+    // each entry is checked in checkConstraints
+    "trust": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+            "$ref": "#/definitions/text"
         }
     }
 };
@@ -108,6 +105,11 @@ const httpSchema = {
                 // reached, so it needs a "redirect" to stand in front of
                 "redirect": {
                     "$ref": "#/definitions/port"
+                },
+                // (optional) where the proxy connects from, this machine when
+                // left out - read by the WS server when it shares this port
+                "trust": {
+                    "$ref": "#/definitions/trust"
                 }
             }
         },
@@ -177,7 +179,22 @@ const wsSchema = {
         // proxy stands in front of it - what a client opens its socket on,
         // instead of the domain and port it listens on
         "proxy": {
-            "$ref": "#/definitions/address"
+            "type": "object",
+            "required": ["domain", "port"],
+            "additionalProperties": false,
+            "properties": {
+                "domain": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                },
+                // (optional) where the proxy connects from, this machine when
+                // left out
+                "trust": {
+                    "$ref": "#/definitions/trust"
+                }
+            }
         },
         // database connection, a MySQL server or a local SQLite file
         "database": {
@@ -495,6 +512,16 @@ const checkConstraints = (config) => {
     if (typeof http === "object" && typeof http["proxy"] === "object"
         && typeof http["proxy"]["redirect"] === "number" && typeof http["redirect"] !== "number") {
         return "HTTP proxy redirect port is configured without an HTTP redirect port!";
+    }
+
+    // a trust entry the schema only knows as text has to be an address or a
+    // range, or the WS server would fail on it at boot rather than here
+    for (const [label, proxy] of [["HTTP", http?.["proxy"]], ["WS", ws?.["proxy"]]]) {
+        for (const entry of proxy?.["trust"] ?? []) {
+            if (parseTrustEntry(entry) === undefined) {
+                return label + " proxy trust is not an address or an address/prefix range: " + entry;
+            }
+        }
     }
 
     // check HTTP and WS server constraints

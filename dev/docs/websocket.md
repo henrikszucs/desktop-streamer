@@ -351,9 +351,12 @@ every request from it is answered `too-many-attempts` before any code is looked
 up, so a live code and a dead one read the same. An IPv4 address is one key; an
 IPv6 address counts against its /64 and, with ten times the budget, its /48, so a
 site cannot walk its /64s for fresh budgets. Behind a configured `proxy` the
-address is the last `X-Forwarded-For` entry - the one the proxy appended - and
-without one the header is ignored (`ws/address.js`); the same address is what a
-host is shown in `pair-request`/`join-request` and what `sessions` records.
+address is the last `X-Forwarded-For` entry - the one the proxy appended - on a
+connection from an address the proxy's `trust` names (this machine when it
+names none); from anywhere else, and without a proxy, the header is ignored
+(`ws/address.js`), since a client that reaches the port directly would write a
+fresh address into it per try. The same address is what a host is shown in
+`pair-request`/`join-request` and what `sessions` records.
 
 **A remembered device is its account's, and no room outlives the join it stands
 on.** A join made while the peer was signed in carries that account

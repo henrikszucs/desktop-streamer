@@ -339,6 +339,35 @@ test("loadConfig rejects an unknown field in a proxy", async (t) => {
     assert.match(await loadError(t, {"ws": ws}), /additional properties/i);
 });
 
+test("loadConfig accepts where each proxy connects from", async (t) => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["10.0.0.0/8", "::1"]};
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["192.0.2.5"]};
+    const conf = await writeConf(t, {"http": http, "ws": ws});
+    const config = await loadConfig(conf["path"]);
+    assert.deepEqual(config["http"]["proxy"]["trust"], ["10.0.0.0/8", "::1"]);
+    assert.deepEqual(config["ws"]["proxy"]["trust"], ["192.0.2.5"]);
+});
+
+test("loadConfig rejects a proxy trust that is not an address", async (t) => {
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["proxy.botto.hu"]};
+    assert.match(await loadError(t, {"ws": ws}), /WS proxy trust is not an address.*proxy\.botto\.hu/);
+
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["10.0.0.0/40"]};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /HTTP proxy trust is not an address.*10\.0\.0\.0\/40/);
+});
+
+test("a proxy trust is a list of at least one address", async () => {
+    for (const trust of [[], "127.0.0.1", [""]]) {
+        const ws = wsSection();
+        ws["proxy"] = {"domain": "botto.hu", "port": 443, "trust": trust};
+        assert.equal(checkConfig({"ws": ws})["valid"], false, JSON.stringify(trust));
+    }
+});
+
 test("a proxy port is a port, not a name", async () => {
     const http = httpSection();
     http["proxy"] = {"domain": "botto.hu", "port": "443"};
