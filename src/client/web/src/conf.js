@@ -42,8 +42,20 @@ const LOCAL_DEFAULTS = {
 
 let DB = null;
 
+// the users' rows while there is no database - storage blocked or broken: the
+// client runs on the defaults, and nothing it stores outlives the page
+const memoryUsers = new Map();
+
+// the defaults as the local configuration, parsed the way a stored one is
+const defaultLocal = function() {
+    const result = {...LOCAL_DEFAULTS};
+    result["exitShortcuts"] = JSON.parse(result["exitShortcuts"]);
+    result["accounts"] = JSON.parse(result["accounts"]);
+    return result;
+};
+
 // open the database and read the local configuration out of it
-const confLoad = new Promise(async function(resolve) {
+const openLocal = async function() {
     await IDB.TableSet(DATABASE, CONF_TABLE);
     await IDB.TableSet(DATABASE, USER_TABLE);
 
@@ -67,8 +79,7 @@ const confLoad = new Promise(async function(resolve) {
         result[keys[i]] = res[i];
     }
 
-    // a stored value that does not parse is the default, not a boot that
-    // never resolves - this runs inside a promise nothing else would reject
+    // a stored value that does not parse is the default
     try {
         result["exitShortcuts"] = JSON.parse(result["exitShortcuts"]);
     } catch (error) {
@@ -85,7 +96,14 @@ const confLoad = new Promise(async function(resolve) {
     if (Array.isArray(result["accounts"]) === false) {
         result["accounts"] = [];
     }
-    resolve(result);
+    return result;
+};
+
+// a database that will not open is the defaults, never a boot that waits for ever
+const confLoad = openLocal().catch(function(error) {
+    console.error("Cannot open the local database, nothing will be kept:", error);
+    DB = null;
+    return defaultLocal();
 });
 
 // the IndexedDB table behind a name, only after confLoad resolved
@@ -96,6 +114,9 @@ const table = function(name) {
 // write one local value through to disk, conf["local"] is the copy in memory
 const setLocal = async function(key, value, stored=value) {
     conf["local"][key] = value;
+    if (DB === null) {
+        return;
+    }
     await IDB.RowSet(table(CONF_TABLE), [[key, stored]]);
 };
 
@@ -116,17 +137,28 @@ const resetLocal = async function() {
         conf["local"][key] = (key === "exitShortcuts" ? JSON.parse(stored) : stored);
         rows.push([key, stored]);
     }
+    if (DB === null) {
+        return;
+    }
     await IDB.RowSet(table(CONF_TABLE), rows);
 };
 
 // the records of one user, one row each and the guest under GUEST_ID - a user
-// nothing was stored for reads back as an empty record rather than as a row
+// nothing was stored for reads back as an empty record rather than as a row.
+// A copy either way, as a database read is, so a caller's changes are its own.
 const getUser = async function(id=GUEST_ID) {
+    if (DB === null) {
+        return structuredClone(memoryUsers.get(id) ?? {});
+    }
     const rows = await IDB.RowGet(table(USER_TABLE), [id]);
     return rows[0] ?? {};
 };
 
 const setUser = async function(id, data) {
+    if (DB === null) {
+        memoryUsers.set(id, structuredClone(data));
+        return;
+    }
     await IDB.RowSet(table(USER_TABLE), [[id, data]]);
 };
 
@@ -163,6 +195,10 @@ const removeJoin = async function(joinId, id=GUEST_ID) {
 // forget everything this client keeps for one user - the guest is no session, so
 // this is its sign out; the local configuration is its own table and survives
 const resetUser = async function(id=GUEST_ID) {
+    if (DB === null) {
+        memoryUsers.delete(id);
+        return;
+    }
     await IDB.RowDel(table(USER_TABLE), [id]);
 };
 

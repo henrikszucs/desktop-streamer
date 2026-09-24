@@ -138,6 +138,16 @@ const LoginScreen = class extends Screen {
         }
     };
 
+    // where the button's frame is served from: this page's own address in a
+    // browser, the HTTP server's under the desktop shell, which is on local://
+    buttonOrigin() {
+        if (this.ctx["desktop"]?.isAvailable !== true) {
+            return location.origin;
+        }
+        const http = this.ctx["conf"]["http"];
+        return "https://" + http["domain"] + (http["port"] === 443 ? "" : ":" + http["port"]);
+    };
+
     async setupGoogle() {
         const ctx = this.ctx;
         const clientId = ctx["conf"]["remote"]?.["auth"]?.["google"]?.["clientId"];
@@ -148,7 +158,7 @@ const LoginScreen = class extends Screen {
             return;
         }
         if (this.google === null) {
-            this.google = new GoogleLogin(clientId);
+            this.google = new GoogleLogin(clientId, this.buttonOrigin());
             this.google.addEventListener("login", (event) => {
                 const credential = event.detail?.["credential"];
                 if (this.mode === "recover") {

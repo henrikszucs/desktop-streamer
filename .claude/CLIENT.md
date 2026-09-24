@@ -163,11 +163,26 @@ the administrator's decision and gets `main.authDisabled`, the same string as
 the bar's tooltip. A provider that *is* offered can still fail in the browser:
 Google's button is a script fetched from Google itself, and offline, behind a
 filter or with the script blocked by an extension there would be an empty
-screen and no error. `GoogleLogin.load()` resolves to whether that script is
-usable — its `load`/`error` events with `LOAD_TIMEOUT` behind them — and a
-failure shows `login.unavailable` with a retry instead of the button. A failed
-tag is removed so the retry fetches again rather than finding a dead element,
-and the button is rendered through `google.accounts.id.renderButton` rather
+screen and no error.
+
+**The Google button is framed, never loaded into the page.** The desktop
+shell's window runs with Node (`nodeIntegration`, no context isolation), so a
+script in it is a script with the whole machine - and Google's is a stranger's
+script. `login/google.js` puts an iframe of `login/google-frame.html` on the
+screen instead, served by the HTTP server (this page's own origin in a browser,
+`conf["http"]`'s under the desktop shell, which is on `local://`), and Google's
+script runs in there: a frame is a plain web page (`nodeIntegrationInSubFrames`
+is off, and `main.js` says so), and the server's origin is also the one Google
+has the client id for. The frame says `ready` or `error`, its `size` as the
+button lands, and the `credential`; the screen listens to its own frames on that
+origin alone, and the frame posts only to its own origin and `local://local.local`
+and renders nothing for any other parent - a credential is a sign-in to this
+server, so a page elsewhere that frames it hears nothing. `createButton()`
+resolves to whether the frame got a button, with `LOAD_TIMEOUT` behind it, and a
+failure shows `login.unavailable` with a retry instead of the button; the frame
+is drawn in the `normal` colour scheme, since a frame whose scheme differs from
+the page's is painted opaque. Inside, the button is rendered through
+`google.accounts.id.renderButton` rather
 than the declarative `g_id_onload` markup, which Google's script only parses
 once at its own load and so would never draw a button created after it. The
 button is rendered at `size: "medium"` on purpose: Google personalizes the
@@ -667,7 +682,16 @@ event says why - and whose doing it was: `isRemote` marks a close the server
 reported, because the reason is then the other end's. A `left` from the server
 is the other end leaving (the host ending the connection from its share card),
 which the room screen shows as the connection lost; only a `left` of this
-side's own is the screen on its way out already. One room at a time on this client - a second `room-open` replaces
+side's own is the screen on its way out already. **A socket that drops is a
+room that ended**: the server ends every room of a closing socket and tells
+only the other side, since this one is not there to hear it, and the key it
+held was that socket's - no later socket can present it. So `offline` takes the
+room down here as `gone`, remote, exactly as a `room-close` would have. Left
+standing, the other end's teardown closed the channel, the fallback took the
+room onto a relay with a dead key, and it sat there "connected": the host
+capturing into nothing and still drawn as sharing, the peer on a frozen
+picture, and any key the peer held down left down on the host, since only the
+stream stopping lets go of it. One room at a time on this client - a second `room-open` replaces
 the first - which the server does not impose and a host with two peers will
 eventually need.
 
@@ -1324,7 +1348,13 @@ with all three on), the
 queue is bounded, and the drop count says what the GPU could not keep up
 with. A `reset` (the stream over, or restarted) bumps a generation,
 and a frame still in flight across it is let go rather than becoming the first
-frame of the next stream's pair.
+frame of the next stream's pair. A change of size is not a reset - the host
+restarts its encoder at a new resolution inside the same stream, which the
+peer's `auto` resolution does on every bandwidth step - so the previous picture
+is dropped when the new one is not the same frame size (`isSameShape`, tested):
+a two-frame graph handed two sizes throws, and the enhancer would switch itself
+off for a bandwidth click. The picture a frame is made into is given back on
+every way out of `process` but the one that keeps it as the next previous.
 
 **What the bar shows is what the worker said, not what was clicked.** A click
 draws the wish at once and greys the rows until the worker answers; the

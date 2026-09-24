@@ -357,6 +357,12 @@ const planTiles = function(width, height) {
     };
 };
 
+// whether two pictures are of the same frame size, which is what a two-frame
+// model needs of the previous one and the current one
+const isSameShape = function(a, b) {
+    return a?.["plan"]?.["width"] === b?.["plan"]?.["width"] && a?.["plan"]?.["height"] === b?.["plan"]?.["height"];
+};
+
 //
 // WebGPU: the picture stays on the GPU
 //
@@ -862,55 +868,74 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         const started = performance.now();
         const timestamp = frame.timestamp;
         await ensureEngine();
-        const current = engine.fromFrame(frame);
-        frame.close();
+        let current = null;
+        try {
+            current = engine.fromFrame(frame);
+        } finally {
+            frame.close();
+        }
         const startGeneration = generation;
 
-        // the interval from the stream's own clock, in ms
-        if (previousTimestamp >= 0 && timestamp > previousTimestamp) {
-            interval = Math.min(MAX_INTERVAL, Math.max(MIN_INTERVAL, (timestamp - previousTimestamp) / 1000));
-        }
-        flushScheduled();
-
-        const steps = schedule(options, previous !== null);
-        for (const step of steps) {
-            let picture = current;
-            if (step["kind"] !== "frame") {
-                const session = await loadSession(step["kind"], current["dims"]);
-                picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"]);
+        // the picture is this call's until it is kept as the next previous, so
+        // every other way out - a reset, a model that throws - gives it back
+        let isKept = false;
+        try {
+            // a picture of another size - the host changed resolution - has
+            // nothing a two-frame model could pair it with
+            if (previous !== null && isSameShape(previous, current) === false) {
+                dropPrevious();
             }
-            if (options["upscale"] === true) {
-                const source = picture;
-                try {
-                    picture = await engine.run(await loadSession("upscale", source["dims"]), {"input": source}, MODELS["upscale"]["scale"]);
-                } finally {
-                    if (source !== current) {
-                        engine.release(source);
+
+            // the interval from the stream's own clock, in ms
+            if (previousTimestamp >= 0 && timestamp > previousTimestamp) {
+                interval = Math.min(MAX_INTERVAL, Math.max(MIN_INTERVAL, (timestamp - previousTimestamp) / 1000));
+            }
+            flushScheduled();
+
+            const steps = schedule(options, previous !== null);
+            for (const step of steps) {
+                let picture = current;
+                if (step["kind"] !== "frame") {
+                    const session = await loadSession(step["kind"], current["dims"]);
+                    picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"]);
+                }
+                if (options["upscale"] === true) {
+                    const source = picture;
+                    try {
+                        picture = await engine.run(await loadSession("upscale", source["dims"]), {"input": source}, MODELS["upscale"]["scale"]);
+                    } finally {
+                        if (source !== current) {
+                            engine.release(source);
+                        }
                     }
                 }
-            }
-            if (generation !== startGeneration) {
-                // reset while running: the stream this picture was of is gone
+                if (generation !== startGeneration) {
+                    // reset while running: the stream this picture was of is gone
+                    if (picture !== current) {
+                        engine.release(picture);
+                    }
+                    return;
+                }
+                const delay = step["at"] * interval;
+                const out = engine.toFrame(picture, Math.round(timestamp + delay * 1000));
                 if (picture !== current) {
                     engine.release(picture);
                 }
-                engine.release(current);
-                return;
+                present(out, delay);
             }
-            const delay = step["at"] * interval;
-            const out = engine.toFrame(picture, Math.round(timestamp + delay * 1000));
-            if (picture !== current) {
-                engine.release(picture);
-            }
-            present(out, delay);
-        }
-        await engine.sync();
+            await engine.sync();
 
-        dropPrevious();
-        previous = current;
-        previousTimestamp = timestamp;
-        runCount++;
-        runMs += performance.now() - started;
+            dropPrevious();
+            previous = current;
+            isKept = true;
+            previousTimestamp = timestamp;
+            runCount++;
+            runMs += performance.now() - started;
+        } finally {
+            if (isKept === false) {
+                engine.release(current);
+            }
+        }
     };
 
     // frames are taken one at a time, and one that arrived meanwhile waits -
@@ -1042,5 +1067,5 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     };
 };
 
-export { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
-export default { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export default { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };

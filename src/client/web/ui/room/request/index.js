@@ -196,6 +196,9 @@ const RoomRequestDialog = class extends Dialog {
     };
 
     open(params) {
+        // a clock of an earlier opening would answer this request with its time
+        clearInterval(this.updateIntervalId);
+        clearTimeout(this.timeoutId);
         this.info.innerHTML = params["info"];
         this.timeout = params["timeout"];
         this.mode = params["mode"] ?? "pair";

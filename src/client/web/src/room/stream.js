@@ -1890,6 +1890,8 @@ const createStream = function(ctx) {
                     emit("share", message);
                     break;
                 case "share-end":
+                    // the next share counts its frames from zero again
+                    reassembler?.reset();
                     hostInfo = null;
                     viewer?.reset();
                     audioPlayer?.reset();

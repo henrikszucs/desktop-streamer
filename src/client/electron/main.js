@@ -129,9 +129,9 @@ const main = async function() {
     const ses = session.fromPartition(partition);
 
     // A certificate that does not verify is refused, the way a browser refuses
-    // it: this window runs with Node, so a script a stranger on the network
-    // could swap for their own - Google's sign-in, loaded into the page - must
-    // come over a connection that is what it says it is. This machine's own
+    // it: this window runs with Node, so what it loads - and the server the
+    // Google button's frame comes from - must come over a connection that is
+    // what it says it is. This machine's own
     // address is the one exception, for the development server on the
     // self-signed pair in conf/.
     ses.setCertificateVerifyProc(function(request, callback) {
@@ -199,6 +199,9 @@ const main = async function() {
                 "contextIsolation": false,
                 "nodeIntegration": true,
                 "nodeIntegrationInWorker": false,
+                // a frame - the Google button, served from the HTTP server -
+                // is a plain web page with no Node in it (ui/management/login/)
+                "nodeIntegrationInSubFrames": false,
                 "devTools": true,
                 // A sharing host is a window somebody switched away from, and
                 // Chromium throttles a hidden page's timers to one a second.

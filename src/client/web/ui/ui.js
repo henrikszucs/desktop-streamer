@@ -323,6 +323,7 @@ const createUI = function(ctx) {
         "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
         "closeDialog": function(id) { return ctx["router"].closeDialog(id); },
         "closeDialogs": function() { return ctx["router"].closeDialogs(); },
+        "isDialogOpen": function(id) { return ctx["router"].isDialogOpen(id); },
         // the open route again, for a screen whose records changed under it
         "reload": function() { return ctx["router"].loadPath(); },
         // the local configuration applied again, for a reset of it

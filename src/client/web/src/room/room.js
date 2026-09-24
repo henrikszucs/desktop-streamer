@@ -592,6 +592,14 @@ const createRoom = function(ctx) {
         teardown(event.detail?.["reason"] ?? "closed", true);
     });
 
+    // the socket went, and the server ended the room with it - telling only the
+    // other side, since this one was not there to hear (see CLIENT.md)
+    ctx["server"].addEventListener("offline", function() {
+        if (roomKey !== "") {
+            teardown("gone", true);
+        }
+    });
+
     return {
         "addEventListener": events.addEventListener.bind(events),
         "removeEventListener": events.removeEventListener.bind(events),

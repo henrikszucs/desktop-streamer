@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
+import { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
 
 const modelsPath = path.resolve(import.meta.dirname, "..", "src", "client", "web", "media", "models");
 
@@ -172,6 +172,19 @@ test("every 16:9 frame from 720p up is whole steps, each with its halo", () => {
         const last = plan["tiles"][plan["tiles"].length - 1];
         assert.equal(last["ox"], 2 * HALO);
     }
+});
+
+// a two-frame model is only ever fed two pictures of one size: a host that
+// changed resolution is a previous picture that pairs with nothing
+test("pictures of another frame size are not the same shape", () => {
+    const picture = function(width, height) {
+        return {"plan": planTiles(width, height)};
+    };
+    assert.equal(isSameShape(picture(1280, 720), picture(1280, 720)), true);
+    assert.equal(isSameShape(picture(1280, 720), picture(1920, 1080)), false);
+    // the same tile grid, a different frame: 1280x720 and 1270x720 are both 4x4 tiles
+    assert.equal(isSameShape(picture(1280, 720), picture(1270, 720)), false);
+    assert.equal(isSameShape(null, picture(1280, 720)), false);
 });
 
 test("a frame smaller than a tile is one tile of its own size", () => {
