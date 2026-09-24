@@ -14,6 +14,7 @@ import fs from "node:fs/promises";
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
 import { createJoin, attachJoin, detachJoins, detachUserJoins, releaseJoins, heldJoin, removeUserJoins, joinConnect, joinList, joinRename, joinRequest, joinAccept, joinReject, joinDelete, joinDisconnect, joinSync, JOIN_NAME_MAX } from "../src/server/ws/handlers/joins.js";
 import { createRoom } from "../src/server/ws/handlers/rooms.js";
+import { pairAccept } from "../src/server/ws/handlers/pairing.js";
 
 // a remembered join is a row, so these run against a real SQLite file - which
 // makes them the only cover database.js has as well
@@ -270,6 +271,58 @@ test("a supervised join asks the host again", async () => {
 
     releaseJoins(server);
     await dropDatabase(db, file);
+});
+
+// a host handing out a code and a peer waiting on it, which is what
+// pair-accept answers
+const buildPairing = function(server) {
+    const code = "123456";
+    server.pairs.set(code, new Map([["hostSessionId", "host"], ["peerSessionId", "peer"]]));
+    server.clients.get("host").set("pairCode", code);
+    server.clients.get("peer").set("pairCode", code);
+};
+
+test("a pairing remembered while the peer's socket goes leaves no row behind", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+    try {
+        buildPairing(server);
+
+        // the peer goes while the row is being written
+        const ctx = buildCtx(server, "host", {"remember": true});
+        const accepting = pairAccept(ctx);
+        server.clients.delete("peer");
+        await accepting;
+
+        // the host is not handed a device that can never come back
+        assert.equal((await db("joins")).length, 0);
+        assert.equal(server.joins.size, 0);
+        assert.equal(ctx.answers[0]["success"], true);
+        assert.equal(ctx.answers[0]["isRemember"], false);
+        assert.equal(pushesOf(server, "host", "room-open").length, 0);
+    } finally {
+        releaseJoins(server);
+        await dropDatabase(db, file);
+    }
+});
+
+test("a remembered pairing hands each side its own code", async () => {
+    const {db, file} = await buildDatabase();
+    const server = buildServer(db);
+    try {
+        buildPairing(server);
+        const ctx = buildCtx(server, "host", {"remember": true});
+        await pairAccept(ctx);
+
+        const rows = await db("joins");
+        assert.equal(rows.length, 1);
+        assert.equal(ctx.answers[0]["isRemember"], true);
+        assert.equal(ctx.answers[0]["joinCode"], rows[0]["host_code"]);
+        assert.equal(pushesOf(server, "peer", "pair-accept")[0]["joinCode"], rows[0]["peer_code"]);
+    } finally {
+        releaseJoins(server);
+        await dropDatabase(db, file);
+    }
 });
 
 test("a room opened for a remembered device is not a new one", async () => {

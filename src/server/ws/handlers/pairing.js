@@ -437,6 +437,17 @@ const pairAccept = async function(ctx) {
         } catch (error) {
             console.log("Cannot remember the pairing:", error);
         }
+        // either socket may have gone while the row was written: the peer never
+        // hears its code then, so the row is a device nobody can bring back
+        const isGone = (server.clients.has(sessionId) === false || server.clients.has(peerSessionId) === false);
+        if (join !== undefined && isGone === true) {
+            try {
+                await server.db("joins").where("join_id", join["joinId"]).del();
+            } catch (error) {
+                console.log("Cannot forget the pairing:", error);
+            }
+            join = undefined;
+        }
     }
 
     const peerAnswer = {"type": "pair-accept", "isRemember": false};

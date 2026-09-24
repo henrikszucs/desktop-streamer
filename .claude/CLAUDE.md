@@ -161,6 +161,16 @@ shape does not come back.
   connections that never finish a handshake is enough - ended the process.
   `listen` leaves a logging listener behind, and `wsServer` carries a silent
   one, since what it re-emits is already logged.
+- **A row read before an `await` may be gone after it.** `login-session` read
+  the session, waited on two more queries and signed the socket in - so a
+  `sessions-revoke`, `logout` or `delete` landing in between ended every
+  socket it could see except the one about to be signed in, which then stood
+  on a session that no longer existed (the recovery a hijacked account is
+  taken back with lost to a key presented in a loop). The last write before
+  `attachAccount` is the question now: an update that touched no row signs
+  nobody in, and `login-google` makes a new session instead. `pair-accept`
+  likewise forgets a join it wrote while either socket went, since the peer
+  never heard its code.
 
 ## Code conventions
 

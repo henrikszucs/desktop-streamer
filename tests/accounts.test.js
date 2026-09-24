@@ -820,6 +820,75 @@ test("sessions-revoke refuses a bad credential and an account it has never seen,
     }
 });
 
+// whatever a sign-in finds, a socket it leaves signed in stands on a row that
+// still exists - or a revoke would have nothing to end it by
+const assertSessionStands = async function(server, db, sessionId) {
+    const held = heldUser(server, sessionId);
+    if (held === undefined) {
+        return;
+    }
+    const row = await db("sessions").where("session_id", held["accountSessionId"]).first();
+    assert.notEqual(row, undefined, "the socket is signed in on a session that is gone");
+};
+
+test("a login-session in flight when the sessions are revoked signs nobody in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice = await signIn(server, "one", "alice");
+        detachAccount(server, "one");
+
+        const presenting = buildCtx(server, "two", {"sessionKey": alice["sessionKey"]});
+        const revoking = buildCtx(server, "three", {"credential": "alice"});
+        await Promise.all([loginSession(presenting), sessionsRevoke(revoking)]);
+
+        assert.equal(revoking["answers"][0]["success"], true);
+        assert.equal(presenting["answers"][0]["error"], "unknown-session");
+        assert.equal(heldUser(server, "two"), undefined);
+        await assertSessionStands(server, db, "two");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a login-session in flight when the account is deleted signs nobody in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+        await requestDelete(server, "one");
+        const deleteKey = server.mailer.sent[0]["key"];
+
+        const presenting = buildCtx(server, "two", {"sessionKey": alice["sessionKey"]});
+        const deleting = buildCtx(server, "one", {"deleteKey": deleteKey});
+        await Promise.all([loginSession(presenting), deleteAccount(deleting)]);
+
+        assert.equal(deleting["answers"][0]["success"], true);
+        assert.equal(heldUser(server, "two"), undefined);
+        await assertSessionStands(server, db, "two");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a login-google holding a key that is revoked meanwhile stands on a session that exists", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice = await signIn(server, "one", "alice");
+
+        const signing = buildCtx(server, "one", {"credential": "alice", "userAgent": {}, "sessionKey": alice["sessionKey"]});
+        const revoking = buildCtx(server, "three", {"credential": "alice"});
+        await Promise.all([loginGoogle(signing), sessionsRevoke(revoking)]);
+
+        assert.equal(signing["answers"][0]["success"], true);
+        await assertSessionStands(server, db, "one");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
 //
 // the devices of an account, and a socket that stops being it
 //

@@ -507,12 +507,14 @@ const loginGoogle = async function(ctx) {
     };
 
     // the same person again: the session they have, pushed out and brought up
-    // to date, is the one answered
+    // to date, is the one answered - unless it ended since it was found, in
+    // which case the fresh credential starts a new one
     let session = await findOwnSession(server, sessionId, user["user_id"], ctx["message"]["sessionKey"]);
     if (typeof session !== "undefined") {
-        await db("sessions").where("session_id", session["session_id"]).update(change);
-        session = {...session, ...change};
-    } else {
+        const updated = await db("sessions").where("session_id", session["session_id"]).update(change);
+        session = (updated === 0 ? undefined : {...session, ...change});
+    }
+    if (typeof session === "undefined") {
         const newSessionId = await generateUnique(db, "sessions", "session_id");
         const sessionKey = await generateUnique(db, "sessions", "session_key", SESSION_KEY_LENGTH);
         if (newSessionId === undefined || sessionKey === undefined) {
@@ -572,11 +574,19 @@ const loginSession = async function(ctx) {
         return;
     }
 
-    await db("sessions").where("session_id", session["session_id"]).update({
+    // the row may have gone since it was read - a logout, a sessions-revoke or
+    // the account deleted meanwhile - and whatever ended it has signed out
+    // every socket it could see, which this one is not yet. The update is the
+    // last wait before the socket is signed in, so it is the question asked.
+    const updated = await db("sessions").where("session_id", session["session_id"]).update({
         "expire": Date.now() + SESSION_LIFETIME,
         "last_used": Date.now(),
         "ip_address": addressOf(server, sessionId)
     });
+    if (updated === 0) {
+        messageObj.send({"success": false, "error": "unknown-session"});
+        return;
+    }
 
     attachAccount(server, sessionId, user, session);
     const picture = await pictureOf(server, user["user_id"]);
