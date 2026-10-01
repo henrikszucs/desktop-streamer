@@ -18,6 +18,10 @@ const url = require("node:url");
 const os = require("node:os");
 const cmd = require("node:child_process");
 const partition = "persist:remote_desktop";
+// how long the main window waits for its first paint before it is shown anyway
+const SHOW_TIMEOUT = 5000;
+// the addresses a self-signed certificate is accepted on: this machine's own
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 
 //
@@ -102,13 +106,41 @@ const main = async function() {
             }
         }
     ]);
-	app.commandLine.appendSwitch("ignore-certificate-errors"); //for debug
+
+    // the loopback device a display capture's sound comes from is Windows'
+    // own; on macOS it is ScreenCaptureKit's (13 and later) and on Linux the
+    // PulseAudio monitor, each behind Chromium features that are off by default
+    if (process.platform === "darwin") {
+        app.commandLine.appendSwitch("enable-features", "MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride");
+    } else if (process.platform === "linux") {
+        app.commandLine.appendSwitch("enable-features", "PulseaudioLoopbackForScreenShare");
+    }
+
+    // a Wayland session lists its screens through the desktop portal, which
+    // asks the person every time - a dialog on the host for every unmute of
+    // the peer - so there the capture is refused and the renderer takes the
+    // sound from ffmpeg's PulseAudio monitor instead
+    const isPortalCapture = (process.platform === "linux" && process.env["XDG_SESSION_TYPE"] === "wayland");
     
     // Wait for load
     await app.whenReady();
 
     // Simulate web server at local://local.local
     const ses = session.fromPartition(partition);
+
+    // A certificate that does not verify is refused, the way a browser refuses
+    // it: this window runs with Node, so what it loads - and the server the
+    // Google button's frame comes from - must come over a connection that is
+    // what it says it is. This machine's own
+    // address is the one exception, for the development server on the
+    // self-signed pair in conf/.
+    ses.setCertificateVerifyProc(function(request, callback) {
+        if (request.errorCode !== 0 && LOCAL_HOSTS.has(request.hostname) === true) {
+            callback(0);
+            return;
+        }
+        callback(-3);       // Chromium's own verdict
+    });
     ses.protocol.handle("local", function(req) {
         let { pathname } = new URL(req.url);
         if (pathname === "/" || pathname === "") {
@@ -119,22 +151,126 @@ const main = async function() {
         const pathFull = url.pathToFileURL(path.join(app.getAppPath(), pathname)).toString();
         return net.fetch(pathFull);
     });
-    
+
+    // The one display capture the renderer asks for: the sharing host's system
+    // sound. ffmpeg has no system audio input that is the same on every
+    // platform, so src/room/stream.js asks for a display capture and keeps its
+    // audio track alone - the picture is a 4x4 one it never reads, there
+    // because a capture cannot be asked for without one. Nothing is picked:
+    // any screen will do for that picture, and the sound is the loopback
+    // device, the whole of what the system plays. A refusal is not an error
+    // there: the renderer goes on to its ffmpeg lines.
+    ses.setDisplayMediaRequestHandler(async function(request, callback) {
+        if (isPortalCapture === true) {
+            callback({});
+            return;
+        }
+        try {
+            const sources = await desktopCapturer.getSources({
+                "types": ["screen"],
+                "thumbnailSize": {"width": 0, "height": 0}
+            });
+            if (sources.length === 0) {
+                callback({});
+                return;
+            }
+            const streams = {"video": sources[0]};
+            if (request.audioRequested === true) {
+                streams["audio"] = "loopback";
+            }
+            callback(streams);
+        } catch (error) {
+            console.log("Cannot answer a display capture:", error);
+            callback({});
+        }
+    });
+
     // Main window create "local://local.local/"
-    const createMainWindow = function(url="https://localhost") {
+    const createMainWindow = function(url="local://local.local/") {
         const win = new BrowserWindow({
             "width": 800,
             "height": 600,
             "icon": path.join(app.getAppPath(), "media/icon-32.png"),
+            // shown once the page has painted, in the theme it keeps, rather
+            // than as a blank window a moment before
+            "show": false,
             "webPreferences": {
                 "partition": partition,
                 "contextIsolation": false,
                 "nodeIntegration": true,
                 "nodeIntegrationInWorker": false,
-                "devTools": true
+                // a frame - the Google button, served from the HTTP server -
+                // is a plain web page with no Node in it (ui/management/login/)
+                "nodeIntegrationInSubFrames": false,
+                "devTools": true,
+                // A sharing host is a window somebody switched away from, and
+                // Chromium throttles a hidden page's timers to one a second.
+                // What runs on those timers here is the share itself - the
+                // pointer the peer is watching move, the shared clipboard -
+                // so the window being in the background must not slow them.
+                "backgroundThrottling": false
             }
         });
         
+        // shown on the first paint, or anyway on a failed load or after
+        // SHOW_TIMEOUT - a page that never paints must not leave no window
+        let isShown = false;
+        const showWindow = function() {
+            if (isShown === false && win.isDestroyed() === false) {
+                isShown = true;
+                clearTimeout(showTimeoutId);
+                win.show();
+            }
+        };
+        const showTimeoutId = setTimeout(showWindow, SHOW_TIMEOUT);
+        // shown by anything - the tray, a second launch - counts, so a window
+        // hidden to the tray since is not brought back by the first paint
+        win.once("show", function() {
+            isShown = true;
+            clearTimeout(showTimeoutId);
+        });
+        win.once("ready-to-show", showWindow);
+        // the page's own load only - a frame inside it (the Google button)
+        // failing, or a navigation aborted (-3), leaves the page painting
+        win.webContents.on("did-fail-load", function(event, errorCode, errorDescription, validatedURL, isMainFrame) {
+            if (isMainFrame === true && errorCode !== -3) {
+                showWindow();
+            }
+        });
+        // the window takes the page's title on its own - the configured name
+        // in the client's language - and the tray's tooltip follows it
+        win.on("page-title-updated", function(event, title) {
+            if (tray !== null) {
+                tray.setToolTip(title);
+            }
+        });
+        // The window is the bundled client and nothing else: a page it was
+        // navigated to would run with this window's Node. A window the page
+        // opens - Google's sign-in popup - is allowed, over https only, and
+        // runs as a plain sandboxed browser window with no Node in it.
+        const keepLocal = function(event, targetUrl) {
+            if (targetUrl.startsWith("local://") === false) {
+                event.preventDefault();
+            }
+        };
+        win.webContents.on("will-navigate", keepLocal);
+        win.webContents.on("will-redirect", keepLocal);
+        win.webContents.setWindowOpenHandler(function(details) {
+            if (details.url.startsWith("https://") === false) {
+                return {"action": "deny"};
+            }
+            return {
+                "action": "allow",
+                "overrideBrowserWindowOptions": {
+                    "webPreferences": {
+                        "partition": partition,
+                        "nodeIntegration": false,
+                        "contextIsolation": true,
+                        "sandbox": true
+                    }
+                }
+            };
+        });
         win.loadURL(url);
         win.setMenu(null);
         win.on("close", function(event) {
@@ -218,6 +354,9 @@ const main = async function() {
             const isOn = args[0];
             if (isOn && tray === null) {
                 tray = new Tray(path.join(app.getAppPath(), "media/icon-32.png"));
+                if (winMain) {
+                    tray.setToolTip(winMain.getTitle());
+                }
                 tray.on("click", function() {
                     if (winMain) {
                         winMain.show();

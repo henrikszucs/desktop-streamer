@@ -122,6 +122,13 @@ const RoomCreateDialog = class extends Dialog {
         const localization = ctx["localization"];
         const details = event.detail?.["details"] ?? {};
 
+        // the request dialog answers one flow at a time, and a remembered device
+        // is on it already: this one is refused, as a second join would be
+        if (ctx["ui"].isDialogOpen("room-request") === true) {
+            ctx["server"].pairReject();
+            return;
+        }
+
         // the line carries a bold run of its own, so it reaches the document as
         // markup - the address in it came from the server, so it goes in escaped
         const fullName = localization.get("new.share.guest");

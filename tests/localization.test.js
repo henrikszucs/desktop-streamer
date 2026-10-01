@@ -14,9 +14,9 @@ import localization from "../src/client/web/src/localization.js";
 
 // a missing translation degrades quietly: get() warns and returns "", so only a
 // completeness check catches a key that never got its second language. The
-// dictionary is split now - the core carries the shell strings and every UI
-// module ships its own localization.json - so both checks below walk the whole
-// tree.
+// dictionary is split - the shell's strings are ui/localization.json, which the
+// core load()s at boot, and every UI module ships its own localization.json -
+// so the checks below walk the whole tree.
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 const webPath = path.join(repoPath, "src", "client", "web");
@@ -53,10 +53,10 @@ const keysOf = function(dict) {
     }));
 };
 
-// the shell slice, taken before a module slice is merged into it - add() grows
-// the one dictionary object the core exports, so this is the only moment the
-// shell keys stand alone
-const SHELL_KEYS = keysOf(localization["dict"]);
+// the slice of the ui folder itself, the one every level shares - the
+// application's name. The loading layer's and the management chrome's sit in
+// their own folders, loaded by the shell beside it (LEVEL_DICTIONARIES in ui/ui.js).
+const SHELL_KEYS = keysOf(JSON.parse(await fs.readFile(path.join(webPath, "ui", "localization.json"), "utf8")));
 
 // every file of the client tree, whatever its extension
 const clientFiles = async function(extension) {
@@ -89,7 +89,8 @@ const moduleSlices = async function() {
     return slices;
 };
 
-// the core slice plus every module slice, the way the client builds it at runtime
+// every slice in the tree, the way the client builds it at runtime - the shell's
+// level slices at boot and every module's as it is built
 const wholeDictionary = async function() {
     for (const slice of (await moduleSlices()).values()) {
         localization["add"](slice);
@@ -115,7 +116,8 @@ test("the client dictionary has every language on every key", async () => {
     assert.deepEqual(missing, []);
 });
 
-test("the client reports the languages the dictionary carries", () => {
+test("the client reports the languages the dictionary carries", async () => {
+    await wholeDictionary();
     for (const lang of LANGUAGES) {
         assert.equal(localization["supportedLanguages"].includes(lang), true, "missing language: " + lang);
     }
@@ -159,6 +161,9 @@ test("no module leans on the dictionary slice of another module", async () => {
         slices.set(folder, keysOf(dict));
     }
     assert.equal(slices.size > 1, true, "no dictionary slices found, the walker is broken");
+    for (const level of ["ui", path.join("ui", "loading"), path.join("ui", "management")]) {
+        assert.equal(slices.has(level), true, "no level slice in " + level);
+    }
 
     const missing = [];
     for (const file of await clientFiles(".html")) {
@@ -244,4 +249,30 @@ test("putParameters leaves an unknown placeholder alone", () => {
 
 test("putParameters unescapes a literal brace without substituting it", () => {
     assert.equal(localization["putParameters"]("\\{name\\}", new Map([["name", "Ann"]])), "{name}");
+});
+
+test("every line a script asks the dictionary for resolves", async () => {
+    await wholeDictionary();
+
+    // a key handed to get() whole, as one literal - one built at runtime
+    // ("login.error." + reason) is the business of the module's own test
+    const keys = new Map();
+    for (const file of await clientFiles(".js")) {
+        const code = await fs.readFile(path.join(webPath, file), "utf8");
+        for (const match of code.matchAll(/localization"?\]?\.get\("([^"]+)"\s*[,)]/g)) {
+            keys.set(match[1], file);
+        }
+    }
+    assert.equal(keys.size > 0, true, "no get() calls found, the scanner is broken");
+
+    const missing = [];
+    for (const [key, file] of keys) {
+        for (const lang of LANGUAGES) {
+            const line = localization["get"](key, lang);
+            if (typeof line !== "string" || line === "") {
+                missing.push(key + " (" + lang + ") in " + file);
+            }
+        }
+    }
+    assert.deepEqual(missing, []);
 });

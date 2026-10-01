@@ -11,7 +11,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { checkConfig, loadConfig } from "../src/server/config.js";
+import { checkConfig, loadConfig, getPublicAddress, getPublicWsAddress, getPublicRedirect } from "../src/server/config.js";
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 
@@ -145,6 +145,19 @@ test("loadConfig accepts an http section pointed at a remote ws server", async (
     assert.equal(config["http"]["remote"]["port"], 444);
 });
 
+test("loadConfig accepts an appearance with any of its fields", async (t) => {
+    const http = httpSection();
+    http["appearance"] = {"name": {"en": "Streamer"}, "color": "#1A2b3C", "theme": "dark"};
+    const conf = await writeConf(t, {"http": http, "ws": wsSection()});
+    const config = await loadConfig(conf["path"]);
+    assert.deepEqual(config["http"]["appearance"], {"name": {"en": "Streamer"}, "color": "#1A2b3C", "theme": "dark"});
+
+    // each field is optional on its own
+    http["appearance"] = {"theme": "light"};
+    const alone = await writeConf(t, {"http": http, "ws": wsSection()});
+    assert.equal((await loadConfig(alone["path"]))["http"]["appearance"]["theme"], "light");
+});
+
 //
 // Rejected configurations
 //
@@ -173,7 +186,31 @@ test("loadConfig rejects a missing required field", async (t) => {
 test("loadConfig rejects an unknown field", async (t) => {
     const http = httpSection();
     http["unknown"] = true;
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties: "unknown"$/m);
+});
+
+test("loadConfig rejects an appearance it cannot hand a client", async (t) => {
+    const http = httpSection();
+
+    // the colour is a six digit hex RGB, nothing shorter, longer or named
+    for (const color of ["006e1c", "#06e", "#006e1c80", "green", "#00ge1c"]) {
+        http["appearance"] = {"color": color};
+        assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /must match pattern/, color);
+    }
+
+    // the theme is one of the three a client knows
+    http["appearance"] = {"theme": "night"};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /allowed values/);
+
+    // and nothing else sits beside them
+    http["appearance"] = {"font": "serif"};
     assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties/);
+});
+
+test("loadConfig rejects the name outside the appearance it moved into", async (t) => {
+    const http = httpSection();
+    http["name"] = {"en": "Streamer"};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /additional properties: "name" \(moved to \/http\/appearance\/name\)/);
 });
 
 test("loadConfig rejects a port outside the valid range", async (t) => {
@@ -271,4 +308,183 @@ test("loadConfig rejects a local ws server beside an http remote", async (t) => 
 test("loadConfig rejects a certificate file it cannot read", async (t) => {
     const message = await loadError(t, {"ws": wsSection()}, {"withCerts": false});
     assert.match(message, /Cannot read WS key file/);
+});
+
+//
+// The proxy in front of a server
+//
+test("loadConfig accepts a proxy on both sections", async (t) => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443};
+    const conf = await writeConf(t, {"http": http, "ws": ws});
+    const config = await loadConfig(conf["path"]);
+
+    // the proxy is what a client is told, the section still holds what it listens on
+    assert.equal(config["http"]["domain"], "localhost");
+    assert.equal(config["http"]["proxy"]["domain"], "botto.hu");
+    assert.equal(config["ws"]["proxy"]["port"], 443);
+});
+
+test("loadConfig rejects a proxy missing a half of the address", async (t) => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu"};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /port/);
+});
+
+test("loadConfig rejects an unknown field in a proxy", async (t) => {
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "scheme": "https"};
+    assert.match(await loadError(t, {"ws": ws}), /additional properties/i);
+});
+
+test("loadConfig accepts where each proxy connects from", async (t) => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["10.0.0.0/8", "::1"]};
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["192.0.2.5"]};
+    const conf = await writeConf(t, {"http": http, "ws": ws});
+    const config = await loadConfig(conf["path"]);
+    assert.deepEqual(config["http"]["proxy"]["trust"], ["10.0.0.0/8", "::1"]);
+    assert.deepEqual(config["ws"]["proxy"]["trust"], ["192.0.2.5"]);
+});
+
+test("loadConfig rejects a proxy trust that is not an address", async (t) => {
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["proxy.botto.hu"]};
+    assert.match(await loadError(t, {"ws": ws}), /WS proxy trust is not an address.*proxy\.botto\.hu/);
+
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "trust": ["10.0.0.0/40"]};
+    assert.match(await loadError(t, {"http": http, "ws": wsSection()}), /HTTP proxy trust is not an address.*10\.0\.0\.0\/40/);
+});
+
+test("a proxy trust is a list of at least one address", async () => {
+    for (const trust of [[], "127.0.0.1", [""]]) {
+        const ws = wsSection();
+        ws["proxy"] = {"domain": "botto.hu", "port": 443, "trust": trust};
+        assert.equal(checkConfig({"ws": ws})["valid"], false, JSON.stringify(trust));
+    }
+});
+
+test("a proxy port is a port, not a name", async () => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": "443"};
+    assert.equal(checkConfig({"http": http, "ws": wsSection()})["valid"], false);
+});
+
+//
+// getPublicAddress / getPublicWsAddress
+//
+test("getPublicAddress answers the section itself when nothing proxies it", () => {
+    assert.deepEqual(
+        getPublicAddress({"http": httpSection()}, "http"),
+        {"domain": "localhost", "port": 8443}
+    );
+});
+
+test("getPublicAddress answers the proxy when one stands in front", () => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    assert.deepEqual(getPublicAddress({"http": http}, "http"), {"domain": "botto.hu", "port": 443});
+});
+
+test("getPublicAddress answers null for a section that is not configured", () => {
+    assert.equal(getPublicAddress({"ws": wsSection()}, "http"), null);
+});
+
+test("getPublicWsAddress answers the ws proxy over everything else", () => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "ws.botto.hu", "port": 8443};
+    assert.deepEqual(getPublicWsAddress({"http": http, "ws": ws}), {"domain": "ws.botto.hu", "port": 8443});
+});
+
+test("getPublicWsAddress takes the proxied host of the http server it stands beside", () => {
+    // the two servers are reached at one host, so a proxied http domain is the
+    // ws one too - the port stays the ws server's, it is a listener of its own
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    assert.deepEqual(
+        getPublicWsAddress({"http": http, "ws": wsSection()}),
+        {"domain": "botto.hu", "port": 8444}
+    );
+});
+
+test("getPublicWsAddress takes the whole http address when the port is shared", () => {
+    // one listener behind the proxy, so the socket is opened where the page was
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    const ws = wsSection();
+    ws["port"] = http["port"];
+    assert.deepEqual(
+        getPublicWsAddress({"http": http, "ws": ws}),
+        {"domain": "botto.hu", "port": 443}
+    );
+});
+
+test("getPublicWsAddress answers a ws section standing on its own", () => {
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443};
+    assert.deepEqual(getPublicWsAddress({"ws": ws}), {"domain": "botto.hu", "port": 443});
+    assert.deepEqual(getPublicWsAddress({"ws": wsSection()}), {"domain": "localhost", "port": 8444});
+});
+
+test("getPublicWsAddress answers the remote server, which is client-facing already", () => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    http["remote"] = {"host": "ws.example.com", "port": 444};
+    assert.deepEqual(getPublicWsAddress({"http": http}), {"domain": "ws.example.com", "port": 444});
+});
+
+test("loadConfig accepts a redirect port on the http proxy", async (t) => {
+    const http = httpSection();
+    http["redirect"] = 8080;
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    const conf = await writeConf(t, {"http": http, "ws": wsSection()});
+    const config = await loadConfig(conf["path"]);
+    assert.equal(config["http"]["proxy"]["redirect"], 80);
+});
+
+test("loadConfig rejects a proxy redirect port with no redirect to stand in front of", async (t) => {
+    const http = httpSection();
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    assert.match(
+        await loadError(t, {"http": http, "ws": wsSection()}),
+        /HTTP proxy redirect port is configured without an HTTP redirect port/
+    );
+});
+
+test("the ws proxy takes no redirect port, it redirects nothing", async () => {
+    const ws = wsSection();
+    ws["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    assert.equal(checkConfig({"ws": ws})["valid"], false);
+});
+
+test("getPublicRedirect answers the configured redirect when nothing proxies it", () => {
+    const http = httpSection();
+    http["redirect"] = 8080;
+    assert.deepEqual(getPublicRedirect({"http": http}), {"domain": "localhost", "port": 8080});
+});
+
+test("getPublicRedirect answers the proxy port on the proxy domain", () => {
+    const http = httpSection();
+    http["redirect"] = 8080;
+    http["proxy"] = {"domain": "botto.hu", "port": 443, "redirect": 80};
+    assert.deepEqual(getPublicRedirect({"http": http}), {"domain": "botto.hu", "port": 80});
+});
+
+test("getPublicRedirect answers null where the outside address is unknown", () => {
+    // a proxy that was given no redirect port hides the one the socket is on,
+    // and a port nobody named is not one to guess
+    const http = httpSection();
+    http["redirect"] = 8080;
+    http["proxy"] = {"domain": "botto.hu", "port": 443};
+    assert.equal(getPublicRedirect({"http": http}), null);
+
+    // and there is no redirect at all to have an address
+    assert.equal(getPublicRedirect({"http": httpSection()}), null);
+    assert.equal(getPublicRedirect({"ws": wsSection()}), null);
 });

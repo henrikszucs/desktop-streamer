@@ -1,96 +1,100 @@
 "use strict";
 
-// the Google Identity button, loaded from Google itself. The callback it wants
-// is a global by name, so there is one of these per page.
+// the Google Identity button, framed from the HTTP server rather than loaded
+// into this page: the desktop shell's window runs with Node, and a frame never
+// does, so Google's script runs where it cannot reach it (google-frame.js, and
+// .claude/CLIENT.md, "Permissions")
 
-const SCRIPT_SRC = "https://accounts.google.com/gsi/client";
+const FRAME_PATH = "/ui/management/login/google-frame.html";
 
-// how long the button is given to render before the screen gives up on it
-const LOAD_TIMEOUT = 10000;
+// how long a frame is given to say it has a button before the screen gives up
+const LOAD_TIMEOUT = 15000;
+
+// the size a frame is drawn at until it says its own
+const FRAME_WIDTH = 400;
+const FRAME_HEIGHT = 44;
 
 const GoogleLogin = class extends EventTarget {
-    constructor(clientId) {
+    // the frames this made, each with the answer to its createButton() while
+    // it has not said ready or error
+    frames = new Map();     // iframe -> resolve or null
+
+    // `origin` is the HTTP server's, which is what Google has the client id for
+    constructor(clientId, origin) {
         super();
-
-        // store client id
         this.clientId = clientId;
+        this.origin = origin;
+        window.addEventListener("message", this.onMessage);
+    };
 
-        // global callback function
-        window.onGoogleLogin = async (response) => {
-            this.dispatchEvent(
-                new CustomEvent("login", {"detail": response})
-            );
+    // only a frame this made, on the origin it was made from, is listened to
+    onMessage = (event) => {
+        if (event.origin !== this.origin) {
+            return;
         }
-    };
-    // fetch Google's script; resolves true when it is usable, false when it
-    // could not be loaded. A failed tag is removed so the next call tries again.
-    load() {
-        if (typeof window["google"]?.["accounts"]?.["id"] !== "undefined") {
-            return Promise.resolve(true);
-        }
-        if (typeof this.loading !== "undefined") {
-            return this.loading;
-        }
-        this.loading = new Promise((resolve) => {
-            let googleScript = document.querySelector("head script[src=\"" + SCRIPT_SRC + "\"]");
-            if (googleScript === null) {
-                googleScript = document.createElement("script");
-                googleScript.setAttribute("src", SCRIPT_SRC);
-                document.head.appendChild(googleScript);
+        let frame = null;
+        for (const held of this.frames.keys()) {
+            if (held.contentWindow === event.source) {
+                frame = held;
             }
-            const done = (isLoaded) => {
-                clearTimeout(timeoutId);
-                this.loading = undefined;
-                if (isLoaded === false) {
-                    googleScript.remove();
-                }
-                resolve(isLoaded);
-            };
-            const timeoutId = setTimeout(done, LOAD_TIMEOUT, false);
-            googleScript.addEventListener("load", () => done(true), {"once": true});
-            googleScript.addEventListener("error", () => done(false), {"once": true});
-        });
-        return this.loading;
-    };
-    // render the button into el; false when Google's script is not there
-    async createButton(el) {
-        const isLoaded = await this.load();
-        if (isLoaded === false) {
-            return false;
         }
-        el.innerHTML = "<div></div>";
-        window["google"]["accounts"]["id"].initialize({
-            "client_id": this.clientId,
-            "callback": window.onGoogleLogin,
-            "context": "signin",
-            "ux_mode": "popup",
-            "auto_prompt": false
-        });
-        // Google draws a "Sign in as <name>" button of its own accord when the
-        // browser has a session that approved this client id, and there is no
-        // switch against it - what there is, is that the personalized form is
-        // not rendered at all below "large", so the button is "medium" to
-        // always read "Sign in with Google" and show nobody's picture
-        window["google"]["accounts"]["id"].renderButton(el.firstElementChild, {
-            "logo_alignment": "left",
-            "shape": "pill",
-            "size": "medium",
-            "width": 400,           // the widest Google draws; view.css scales the rest
-            "text": "signin_with",
-            "theme": "filled_blue",
-            "type": "standard"
-        });
-        return true;
+        if (frame === null) {
+            return;
+        }
+        const message = event.data ?? {};
+        if (message["type"] === "credential" && typeof message["credential"] === "string") {
+            this.dispatchEvent(new CustomEvent("login", {"detail": {"credential": message["credential"]}}));
+        } else if (message["type"] === "size") {
+            frame.style.width = Math.max(1, Number(message["width"]) || FRAME_WIDTH) + "px";
+            frame.style.height = Math.max(1, Number(message["height"]) || FRAME_HEIGHT) + "px";
+        } else if (message["type"] === "ready" || message["type"] === "error") {
+            this.settle(frame, message["type"] === "ready");
+        }
     };
-    decodeJWT(token) {
-        // note: you can extract the credential data but google API guarantees its validity
-        let base64Url = token.split(".")[1];
-        let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-        let jsonPayload = decodeURIComponent(atob(base64).split("").map(function (c) {
-                return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
-            }).join("")
-        );
-        return JSON.parse(jsonPayload);
+
+    settle(frame, isReady) {
+        const resolve = this.frames.get(frame);
+        if (typeof resolve !== "function") {
+            return;
+        }
+        this.frames.set(frame, null);
+        if (isReady === false) {
+            frame.remove();
+            this.frames.delete(frame);
+        }
+        resolve(isReady);
+    };
+
+    // render the button into el; false when the frame could not get one
+    createButton(el) {
+        el.replaceChildren();
+        for (const held of [...this.frames.keys()]) {
+            if (held.isConnected === false) {
+                this.settle(held, false);
+                this.frames.delete(held);
+            }
+        }
+
+        const frame = document.createElement("iframe");
+        frame.title = "Google";
+        frame.src = this.origin + FRAME_PATH + "?clientId=" + encodeURIComponent(this.clientId);
+        // FedCM, which Google's script uses where the browser has it, asks the
+        // frame's permission policy
+        frame.allow = "identity-credentials-get";
+        frame.style.border = "0";
+        frame.style.width = FRAME_WIDTH + "px";
+        frame.style.height = FRAME_HEIGHT + "px";
+        // the same scheme as the page inside, or the browser paints it opaque
+        frame.style.colorScheme = "normal";
+        frame.setAttribute("scrolling", "no");
+
+        return new Promise((resolve) => {
+            this.frames.set(frame, resolve);
+            setTimeout(() => {
+                this.settle(frame, false);
+            }, LOAD_TIMEOUT);
+            el.appendChild(frame);
+        });
     };
 };
 

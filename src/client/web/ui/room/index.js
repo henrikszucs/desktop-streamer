@@ -9,6 +9,7 @@
 
 // first-party dependencies
 import { Screen } from "../../src/view.js";
+import { pictureBox } from "../../src/room/stream-input.js";
 
 // what the peer allows the stream to cost, in Mbps. Steps rather than a slider:
 // these are the numbers the resolutions below are priced against, so every step
@@ -34,6 +35,12 @@ const RESOLUTIONS = [
 // which is the peer's trade to make, and the picture says how it went.
 const FRAMERATES = [24, 30, 45, 60, 120];
 const DEFAULT_FRAMERATE = 30;
+
+// what this client may do to the picture after it arrives, in the order the
+// menu lists them. Each is a model the decoder's worker runs over the frames
+// (src/room/stream-enhance.js), and any number of them may be on at once; the
+// short name is what the bar shows while one is.
+const ENHANCEMENTS = ["upscale", "interpolate", "extrapolate"];
 
 // the entry that takes whatever the line allows and follows it down when the
 // bandwidth moves - which is what a peer that has not thought about it wants
@@ -78,6 +85,7 @@ const RoomScreen = class extends Screen {
     // the stage and the bar over it, all taken in mount()
     canvas = null;
     stage = null;
+    cursorEl = null;
     exitRing = null;
     bar = null;
     relayBtn = null;
@@ -92,6 +100,9 @@ const RoomScreen = class extends Screen {
     controlBtn = null;
     controlIcon = null;
     controlTooltip = null;
+    clipboardBtn = null;
+    clipboardIcon = null;
+    clipboardTooltip = null;
     bandwidthBtn = null;
     bandwidthLabel = null;
     bandwidthMenu = null;
@@ -104,6 +115,10 @@ const RoomScreen = class extends Screen {
     framerateBtn = null;
     framerateLabel = null;
     framerateMenu = null;
+    enhanceBtn = null;
+    enhanceLabel = null;
+    enhanceMenu = null;
+    enhanceStatus = null;
     fullscreenIcon = null;
     fullscreenTooltip = null;
 
@@ -129,11 +144,40 @@ const RoomScreen = class extends Screen {
     // which answers for the guest and for an account alike
     isRelayAllowed = false;
 
+    // the enhancements over the picture: what is ticked, and what the stream
+    // last said of them - the backend it has ("" for none, and not yet known
+    // until it has said), and which are running. They are this client's and
+    // not the host's, so they are no part of `settings` and outlive a room.
+    enhance = {"upscale": false, "interpolate": false, "extrapolate": false};
+    enhanceBackend = "";
+    isEnhanceKnown = false;
+    isEnhanceLoading = false;
+    enhanceReading = "";    // the last cost reading, kept so the row never empties
+
     // what the host has to offer besides the picture (the "share" message):
-    // sound, and a keyboard and mouse to take. A button for what it has not
-    // got is greyed, and nothing until a share has said.
+    // sound, a keyboard and mouse to take, and its clipboard. A button for what
+    // it has not got is greyed, and nothing until a share has said.
     isAudioAvailable = false;
     isControlAvailable = false;
+    isHostClipboard = false;
+
+    // the one clipboard the two machines share while it is on. It is no part of
+    // `settings`: the host is told it in a message of its own, the way the
+    // keyboard is, and it says nothing about the picture. `isClipboardSaid` is
+    // so a browser that refuses to be read says so once per switch rather than
+    // on every click back onto the picture.
+    isClipboard = false;
+    isClipboardSaid = false;
+
+    // the host's mouse pointer, drawn over the picture rather than sent inside
+    // it - see drawCursor() below. `picture` is what the decoder is producing,
+    // which is what says where the letterboxed picture is inside the stage;
+    // `cursorAt` is where the pointer is in it, 0..1 both ways, as the host
+    // said or as this machine's own pointer puts it while it is driving.
+    picture = null;
+    cursorShape = null;
+    cursorAt = null;
+    cursorObserver = null;
 
     // the exit ring's clock, while a shortcut is held
     holdFrameId = -1;
@@ -141,6 +185,7 @@ const RoomScreen = class extends Screen {
     async mount(ctx) {
         this.canvas = document.getElementById("room-canvas");
         this.stage = document.getElementById("room-stage");
+        this.cursorEl = document.getElementById("room-cursor");
         this.exitRing = document.getElementById("room-exit-ring");
         this.statsEl = document.getElementById("room-stats");
         this.statsRateEl = document.getElementById("room-stats-rate");
@@ -152,6 +197,9 @@ const RoomScreen = class extends Screen {
         this.controlBtn = document.getElementById("btn-room-control");
         this.controlIcon = document.getElementById("btn-room-control-icon");
         this.controlTooltip = document.getElementById("btn-room-control-tooltip");
+        this.clipboardBtn = document.getElementById("btn-room-clipboard");
+        this.clipboardIcon = document.getElementById("btn-room-clipboard-icon");
+        this.clipboardTooltip = document.getElementById("btn-room-clipboard-tooltip");
         this.bandwidthBtn = document.getElementById("btn-room-bandwidth");
         this.bandwidthLabel = document.getElementById("room-bandwidth-label");
         this.bandwidthMenu = document.getElementById("room-bandwidth-menu");
@@ -164,6 +212,9 @@ const RoomScreen = class extends Screen {
         this.framerateBtn = document.getElementById("btn-room-framerate");
         this.framerateLabel = document.getElementById("room-framerate-label");
         this.framerateMenu = document.getElementById("room-framerate-menu");
+        this.enhanceBtn = document.getElementById("btn-room-enhance");
+        this.enhanceLabel = document.getElementById("room-enhance-label");
+        this.enhanceMenu = document.getElementById("room-enhance-menu");
         this.fullscreenIcon = document.getElementById("btn-room-fullscreen-icon");
         this.fullscreenTooltip = document.getElementById("btn-room-fullscreen-tooltip");
         this.relayBtn = document.getElementById("btn-room-relay");
@@ -184,6 +235,11 @@ const RoomScreen = class extends Screen {
         this.controlBtn.addEventListener("click", () => {
             if (this.isControlAvailable === true) {
                 this.setControl(this.settings["isControl"] === false);
+            }
+        });
+        this.clipboardBtn.addEventListener("click", () => {
+            if (this.isClipboardAvailable() === true) {
+                this.setClipboard(this.isClipboard === false);
             }
         });
         document.getElementById("btn-room-fullscreen").addEventListener("click", () => {
@@ -207,22 +263,40 @@ const RoomScreen = class extends Screen {
 
         // the picture: the stream draws on this canvas from now on, and says
         // once a second what it is drawing. The control it takes back on the
-        // peer's shortcut is drawn here as the button letting go.
+        // peer's shortcut is drawn here as the button letting go. The
+        // enhancer's first word - which backend it has - follows the attach,
+        // so the listener is on before it.
+        ctx["stream"].addEventListener("enhance", this.onStreamEnhance);
         ctx["stream"].attach(this.canvas);
         ctx["stream"].addEventListener("stats", this.onStreamStats);
         ctx["stream"].addEventListener("control", this.onStreamControl);
         ctx["stream"].addEventListener("share", this.onStreamShare);
+        ctx["stream"].addEventListener("clipboard", this.onStreamClipboard);
         ctx["stream"].addEventListener("hold", this.onStreamHold);
+
+        // the host's pointer - the picture of it and where it is. The stage
+        // changing shape - a window resized, the fullscreen taken - moves the
+        // picture under it, so the box it is placed in is measured again
+        // rather than remembered.
+        ctx["stream"].addEventListener("cursor", this.onStreamCursor);
+        ctx["stream"].addEventListener("size", this.onStreamSize);
+        this.cursorObserver = new ResizeObserver(() => {
+            this.drawCursor();
+        });
+        this.cursorObserver.observe(this.stage);
 
         this.buildBandwidthMenu();
         this.buildResolutionMenu();
         this.buildFramerateMenu();
+        this.buildEnhanceMenu();
         this.buildScreenMenu();
         this.setAudio(this.settings["isAudio"]);
         this.setControl(this.settings["isControl"]);
+        this.setClipboard(this.isClipboard);
         this.drawBandwidth();
         this.drawResolution();
         this.drawFramerate();
+        this.drawEnhance();
         this.drawScreen();
         this.drawFullscreen();
         this.drawAvailable();
@@ -309,6 +383,30 @@ const RoomScreen = class extends Screen {
             this.framerateMenu.appendChild(item);
             item.dataset["framerate"] = String(framerate);
         }
+    };
+
+    // one row per enhancement, each a switch of its own since any number may
+    // be on, then one row that is not a choice: the state of the enhancer -
+    // why the rows above are greyed when they are, or what they cost when
+    // they run. It is one row and it is always there: a row that appears or
+    // goes moves the rows under the pointer of an open menu.
+    buildEnhanceMenu() {
+        const localization = this.ctx["localization"];
+        this.enhanceMenu.innerHTML = "";
+        for (const kind of ENHANCEMENTS) {
+            const item = document.createElement("li");
+            item.appendChild(this.buildCheck());
+            item.appendChild(this.buildText(localization.get("room.enhance." + kind)));
+            item.addEventListener("click", () => {
+                this.blur(this.enhanceBtn);
+                this.setEnhance(kind, this.enhance[kind] !== true);
+            });
+            this.enhanceMenu.appendChild(item);
+            item.dataset["enhance"] = kind;
+        }
+        this.enhanceStatus = document.createElement("li");
+        this.enhanceStatus.className = "room-menu-note";
+        this.enhanceMenu.appendChild(this.enhanceStatus);
     };
 
     // the mark of the entry in force. It is in every row and hidden in all but
@@ -413,7 +511,42 @@ const RoomScreen = class extends Screen {
         this.controlTooltip.innerText = localization.get(isControl === true ? "room.control.release" : "room.control.take");
         this.el.classList.toggle("room-controlling", isControl === true);
         this.ctx["stream"].setControl(isControl === true);
+        this.drawCursor();
         this.emit();
+    };
+
+    // the one clipboard: on, and what is copied on either machine is on both -
+    // what this one copies goes over when the picture is clicked back into,
+    // what the other one copies lands here (src/room/clipboard.js). Off, and
+    // neither machine reads or writes anything of the other's.
+    setClipboard(isClipboard) {
+        this.isClipboard = (isClipboard === true);
+        this.isClipboardSaid = false;
+        this.ctx["stream"].setClipboard(this.isClipboard);
+        this.drawAvailable();
+    };
+
+    // whether there is one to share at all: the host has to have a clipboard
+    // and so does this client, and either side may be the one that has not
+    isClipboardAvailable() {
+        return (this.isHostClipboard === true && this.ctx["stream"].isClipboardAvailable() === true);
+    };
+
+    // what the clipboard could not do, said once: a browser that will not be
+    // read is refusing every click back onto the picture, not just this one
+    onStreamClipboard = (event) => {
+        const error = event.detail?.["error"];
+        if (this.isOpen === false || typeof error !== "string" || error === "") {
+            return;
+        }
+        if (error === "refused") {
+            if (this.isClipboardSaid === true) {
+                return;
+            }
+            this.isClipboardSaid = true;
+        }
+        this.ctx["ui"].snackbar.show(this.ctx["localization"].get(error === "too-large"
+            ? "room.clipboard.large" : "room.clipboard.refused"), true);
     };
 
     onStreamControl = (event) => {
@@ -441,6 +574,7 @@ const RoomScreen = class extends Screen {
         this.statsRateEl.innerText = rate;
         this.statsLineEl.innerText = line;
         this.statsEl.title = rate + "\n" + line;    // the whole of it where the bar cuts it short
+        this.drawEnhanceReading(stats["enhance"]);
     };
 
     clearStats() {
@@ -459,9 +593,15 @@ const RoomScreen = class extends Screen {
         const info = event.detail;
         this.screens = (Array.isArray(info?.["screens"]) ? info["screens"] : []);
         this.screenIndex = (Number.isInteger(info?.["screenIndex"]) ? info["screenIndex"] : undefined);
+        // the host says what it is encoding before a frame of it has arrived,
+        // which is a box to place the pointer in until the decoder says what
+        // it is really drawing (onStreamSize above)
+        if (info?.["width"] > 0 && info?.["height"] > 0) {
+            this.picture = {"width": info["width"], "height": info["height"]};
+        }
         this.buildScreenMenu();
         this.drawScreen();
-        this.setAvailable(info?.["isAudio"] === true, info?.["isControl"] === true);
+        this.setAvailable(info?.["isAudio"] === true, info?.["isControl"] === true, info?.["isClipboard"] === true);
 
         if (this.isOpen === false) {
             return;
@@ -474,10 +614,13 @@ const RoomScreen = class extends Screen {
 
     // what the host has to offer, from its "share" message. A keyboard taken
     // from a host that then says it has none is let go here, since the host
-    // has stopped listening for it either way.
-    setAvailable(isAudio, isControl) {
+    // has stopped listening for it either way. The clipboard is not let go the
+    // same way: it is a setting rather than something taken, so a host without
+    // one greys the button and leaves the switch where the peer put it.
+    setAvailable(isAudio, isControl, isClipboard) {
         this.isAudioAvailable = (isAudio === true);
         this.isControlAvailable = (isControl === true);
+        this.isHostClipboard = (isClipboard === true);
         if (this.isControlAvailable === false && this.settings["isControl"] === true) {
             this.setControl(false);
         }
@@ -489,14 +632,106 @@ const RoomScreen = class extends Screen {
     // button that cannot be pressed reads as a setting rather than a refusal.
     drawAvailable() {
         const localization = this.ctx["localization"];
+        const isClipboard = this.isClipboardAvailable();
         this.audioBtn.classList.toggle("room-tool-off", this.isAudioAvailable === false);
         this.controlBtn.classList.toggle("room-tool-off", this.isControlAvailable === false);
+        this.clipboardBtn.classList.toggle("room-tool-off", isClipboard === false);
         this.audioBtn.classList.toggle("active", this.settings["isAudio"] === true && this.isAudioAvailable === true);
         this.controlBtn.classList.toggle("active", this.settings["isControl"] === true && this.isControlAvailable === true);
+        this.clipboardBtn.classList.toggle("active", this.isClipboard === true && isClipboard === true);
+        this.clipboardIcon.innerText = (this.isClipboard === true ? "content_paste" : "content_paste_off");
+
+        // the tooltip of a greyed clipboard says which of the two machines is
+        // the one without one, since neither the peer nor the host can see the
+        // other's browser
+        this.clipboardTooltip.innerText = localization.get(isClipboard === false
+            ? (this.ctx["stream"].isClipboardAvailable() === false ? "room.clipboard.unsupported" : "room.clipboard.none")
+            : (this.isClipboard === true ? "room.clipboard.stop" : "room.clipboard.share"));
         this.audioTooltip.innerText = localization.get(this.isAudioAvailable === false ? "room.audio.none"
             : (this.settings["isAudio"] === true ? "room.audio.mute" : "room.audio.unmute"));
         this.controlTooltip.innerText = localization.get(this.isControlAvailable === false ? "room.control.none"
             : (this.settings["isControl"] === true ? "room.control.release" : "room.control.take"));
+    };
+
+    //
+    // the host's pointer
+    //
+    // The picture arrives with no cursor drawn into it: the host reads its own
+    // pointer and sends the shape and the position as messages
+    // (src/room/cursor.js). Which of the two this screen uses depends on whose
+    // hand the pointer is in.
+    //
+    // While this peer is driving, the pointer over the picture *is* the host's
+    // pointer, so the shape is handed to the browser as the canvas's own
+    // cursor and the browser draws it - no image to place, no position to
+    // wait for, and nothing between the hand and what it sees. While this peer
+    // is only watching, the host's pointer is somewhere this machine has no
+    // way of knowing, so the image is drawn over the picture where the host
+    // last said it was.
+    onStreamCursor = (event) => {
+        this.cursorShape = event.detail?.["shape"] ?? null;
+        this.cursorAt = event.detail?.["at"] ?? null;
+        this.drawCursor();
+    };
+
+    // what the decoder is drawing, which is what the letterbox is measured
+    // from - the canvas element cannot be asked, since its surface belongs to
+    // the worker from the moment it is handed over
+    onStreamSize = (event) => {
+        const width = event.detail?.["width"];
+        const height = event.detail?.["height"];
+        if (width > 0 && height > 0) {
+            this.picture = {"width": width, "height": height};
+        }
+        this.drawCursor();
+    };
+
+    // the shape as this browser's own cursor over the picture: the hotspot is
+    // in the shape's own pixels, which is why the host sends that size beside
+    // the fractions. A shape the browser will not take - Chromium ignores a
+    // cursor image over 128 pixels - falls through to the `auto` behind it
+    // rather than leaving the pointer invisible.
+    drawCursorStyle(shape) {
+        const isDriving = (this.settings["isControl"] === true && shape !== null && this.isOpen === true);
+        if (isDriving === false) {
+            this.canvas.style.cursor = "";
+            return;
+        }
+        const x = Math.round(shape["hotspotX"] * (shape["imageWidth"] || 0));
+        const y = Math.round(shape["hotspotY"] * (shape["imageHeight"] || 0));
+        this.canvas.style.cursor = "url(\"" + shape["image"] + "\") " + x + " " + y + ", auto";
+    };
+
+    // and over the picture, for a peer that is watching rather than driving:
+    // the shape's size and its hotspot arrive as fractions - of the shared
+    // display and of the shape - so a pointer covering a button on the host
+    // covers the same button here, whatever this window is doing with the
+    // picture. Nothing is drawn while there is no shape, no position, or no
+    // picture under either.
+    drawCursor() {
+        const shape = this.cursorShape;
+        const at = this.cursorAt;
+        this.drawCursorStyle(shape);
+
+        const isOver = (this.settings["isControl"] === true);
+        const box = (shape === null || at === null || isOver === true
+            ? undefined
+            : pictureBox(this.canvas, this.picture));
+        if (typeof box === "undefined" || this.isOpen === false) {
+            this.cursorEl.classList.add("hide");
+            return;
+        }
+        const width = Math.max(1, shape["width"] * box["width"]);
+        const height = Math.max(1, shape["height"] * box["height"]);
+        const left = box["left"] + at["x"] * box["width"] - shape["hotspotX"] * width;
+        const top = box["top"] + at["y"] * box["height"] - shape["hotspotY"] * height;
+        if (this.cursorEl.getAttribute("src") !== shape["image"]) {
+            this.cursorEl.setAttribute("src", shape["image"]);
+        }
+        this.cursorEl.style.inlineSize = width + "px";
+        this.cursorEl.style.blockSize = height + "px";
+        this.cursorEl.style.translate = Math.round(left) + "px " + Math.round(top) + "px";
+        this.cursorEl.classList.remove("hide");
     };
 
     // the exit shortcut being held: the ring fills over the delay, and goes
@@ -566,6 +801,40 @@ const RoomScreen = class extends Screen {
         this.emit();
     };
 
+    // one enhancement on or off. The bar draws the wish at once and the
+    // stream's "enhance" event settles it: a model that will not load comes
+    // back off, with the reason in the snackbar. Nothing is asked of a browser
+    // with no backend - the rows are inert then.
+    setEnhance(kind, isOn) {
+        if (ENHANCEMENTS.includes(kind) === false || this.enhanceBackend === "") {
+            return;
+        }
+        this.enhance[kind] = (isOn === true);
+        this.isEnhanceLoading = (isOn === true);
+        this.drawEnhance();
+        this.ctx["stream"].setEnhance({...this.enhance});
+    };
+
+    // what the enhancer says: the backend it found (once, after the canvas is
+    // attached), and after every asking the options actually in force
+    onStreamEnhance = (event) => {
+        const state = event.detail ?? {};
+        this.enhanceBackend = (typeof state["backend"] === "string" ? state["backend"] : "");
+        this.isEnhanceKnown = (state["isKnown"] === true);
+        this.isEnhanceLoading = false;
+        for (const kind of ENHANCEMENTS) {
+            this.enhance[kind] = (state["options"]?.[kind] === true);
+        }
+        this.drawEnhance();
+        const error = state["error"];
+        if (typeof error === "string" && error !== "" && this.isOpen === true) {
+            const localization = this.ctx["localization"];
+            this.ctx["ui"].snackbar.show(localization.putParameters(localization.get("room.enhance.failed"), new Map([
+                ["reason", error]
+            ])), true);
+        }
+    };
+
     // which of the host's displays to show. The label does not move yet: the
     // host restarts its encoder on the new one and says so in its next
     // "share", which is what the bar draws - so what is marked is what is on
@@ -623,6 +892,15 @@ const RoomScreen = class extends Screen {
             const isBlocked = (typeof entry !== "undefined" && entry["bandwidth"] > this.settings["bandwidth"]);
             const isCurrent = (id === this.settings["resolution"]);
 
+            // the automatic row says what it comes out as, the way the label
+            // does, so the choice is made knowing what it is a choice of
+            if (id === AUTO) {
+                item.children.item(1).innerText = localization.putParameters(
+                    localization.get("room.resolution.autoValue"),
+                    new Map([["value", cap["id"]]])
+                );
+            }
+
             item.classList.toggle("active", isCurrent);
             item.classList.toggle("room-menu-blocked", isBlocked);
             item.children.item(0).classList.toggle("room-menu-unchecked", isCurrent === false);
@@ -655,6 +933,64 @@ const RoomScreen = class extends Screen {
             const isCurrent = (item.dataset["framerate"] === String(this.settings["framerate"]));
             item.classList.toggle("active", isCurrent);
             item.children.item(0).classList.toggle("room-menu-unchecked", isCurrent === false);
+        }
+    };
+
+    // the label is the short names of what is on, the rows carry their checks,
+    // and the status row says why nothing can be ticked or what ticking costs
+    drawEnhance() {
+        const localization = this.ctx["localization"];
+        const isSupported = (this.enhanceBackend !== "");
+        const on = ENHANCEMENTS.filter((kind) => this.enhance[kind] === true);
+
+        this.enhanceLabel.innerText = (on.length === 0
+            ? localization.get("room.enhance.off")
+            : on.map((kind) => localization.get("room.enhance." + kind + "Short")).join(" + "));
+        this.enhanceBtn.classList.toggle("active", on.length > 0);
+        this.enhanceBtn.classList.toggle("room-tool-dim", this.isEnhanceKnown === true && isSupported === false);
+
+        for (const item of this.enhanceMenu.children) {
+            const kind = item.dataset["enhance"];
+            if (typeof kind === "undefined") {
+                continue;
+            }
+            const isOn = (this.enhance[kind] === true);
+            item.classList.toggle("active", isOn);
+            item.classList.toggle("room-menu-blocked", isSupported === false || this.isEnhanceLoading === true);
+            item.children.item(0).classList.toggle("room-menu-unchecked", isOn === false);
+        }
+
+        // the status row, in the order the states are reached: the probe,
+        // its refusal, a load in progress, then the reading - the last one
+        // seen, or the backend alone until there has been one
+        this.enhanceStatus.innerText = (this.isEnhanceKnown === false
+            ? localization.get("room.enhance.checking")
+            : (isSupported === false ? localization.get("room.enhance.unsupported")
+                : (this.isEnhanceLoading === true ? localization.get("room.enhance.loading")
+                    : (this.enhanceReading !== "" ? this.enhanceReading : this.enhanceText(this.enhanceBackend, null)))));
+    };
+
+    // the reading of the status row: which backend, and what a frame costs
+    // from arriving to drawn while anything is on - or that it is ready
+    enhanceText(backend, ms) {
+        const localization = this.ctx["localization"];
+        const name = (backend === "webgpu" ? "WebGPU" : (backend === "webgl" ? "WebGL" : backend));
+        return localization.putParameters(
+            localization.get(ms === null ? "room.enhance.idle" : "room.enhance.reading"),
+            new Map([["backend", name], ["ms", String(ms ?? 0)]])
+        );
+    };
+
+    // the stream's stats carry the enhancer's reading once a second: kept,
+    // and drawn into the status row only when nothing else has to be said
+    drawEnhanceReading(stats) {
+        if (this.enhanceBackend === "" || typeof stats?.["backend"] !== "string" || stats["backend"] === "") {
+            return;
+        }
+        const isRunning = (typeof stats["runs"] === "number" && stats["runs"] > 0);
+        this.enhanceReading = this.enhanceText(stats["backend"], isRunning === true ? stats["ms"] : null);
+        if (this.isEnhanceKnown === true && this.isEnhanceLoading === false) {
+            this.enhanceStatus.innerText = this.enhanceReading;
         }
     };
 
@@ -754,12 +1090,12 @@ const RoomScreen = class extends Screen {
         this.buildScreenMenu();
         this.drawScreen();
         this.emit();
-        this.setAvailable(false, false);
+        this.setAvailable(false, false, false);
 
         if (this.isOpen === false) {
             return;
         }
-        if (event.detail?.["reason"] === "left") {
+        if (event.detail?.["reason"] === "left" && event.detail?.["isRemote"] !== true) {
             return;     // this side left it, and is on its way out already
         }
 
@@ -886,6 +1222,7 @@ const RoomScreen = class extends Screen {
         const joinId = params?.["path"]?.[0];
         const isEntered = (params?.["isConnecting"] === true || (typeof joinId === "string" && joinId !== ""));
         this.drawRelay(this.ctx["room"].isRelay());
+        this.drawCursor();
         this.setConnecting(isEntered === true && this.ctx["room"].isConnected() === false);
     };
     close() {
@@ -896,6 +1233,7 @@ const RoomScreen = class extends Screen {
             this.setControl(false);
         }
         this.onStreamHold({"detail": {"delay": null}});
+        this.drawCursor();
         this.setConnecting(false);
         // the guard belongs to being in the room, not to the way it was left:
         // the router closes this screen for a navigation, a dropped connection

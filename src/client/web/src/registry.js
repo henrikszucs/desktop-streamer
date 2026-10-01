@@ -210,6 +210,9 @@ const loadStylesheet = function(href) {
             resolve();
         }, {"once": true});
         link.addEventListener("error", function() {
+            // a failure is not kept, so the next build of the module asks again
+            styles.delete(href);
+            link.remove();
             reject(new Error("Cannot load stylesheet " + href));
         }, {"once": true});
         document.head.appendChild(link);
@@ -252,6 +255,7 @@ const build = async function(id, entry, ctx) {
     if (dictionary !== null) {
         ctx["localization"].add(dictionary);
     }
+    let nodes = [];
     if (markup !== "") {
         const template = document.createElement("template");
         template.innerHTML = markup.trim();
@@ -261,6 +265,7 @@ const build = async function(id, entry, ctx) {
         if (target === null) {
             throw new Error("No mount point " + Module.mountPoint + " for UI module " + id);
         }
+        nodes = [...template.content.childNodes];
         target.appendChild(template.content);
     }
 
@@ -268,7 +273,16 @@ const build = async function(id, entry, ctx) {
     if (Module.rootId !== "") {
         view.el = document.getElementById(Module.rootId);
     }
-    await view.mount(ctx);
+    try {
+        await view.mount(ctx);
+    } catch (error) {
+        // a module that did not mount leaves no markup behind, so building it
+        // again starts from nothing rather than beside a first copy
+        for (const node of nodes) {
+            node.remove();
+        }
+        throw error;
+    }
     return view;
 };
 
@@ -284,6 +298,14 @@ const load = function(id, ctx) {
     }
     pending = build(id, entry, ctx);
     modules.set(id, pending);
+    // a build that failed is not kept: the next load of the id tries again,
+    // so a request that failed once at boot does not cost the module for the
+    // life of the page
+    pending.catch(function() {
+        if (modules.get(id) === pending) {
+            modules.delete(id);
+        }
+    });
     return pending;
 };
 

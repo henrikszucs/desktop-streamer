@@ -11,6 +11,9 @@
 // third-party dependencies
 import Communicator from "../../libs/communicator/communicator.js";
 
+// first-party dependencies
+import { createKeys, deriveSeal } from "./seal.js";
+
 // how the two ends are told apart: the peer asked for the connection, so the
 // peer is the one that opens it and the host answers. It is one rule rather than
 // a negotiation about who negotiates.
@@ -30,6 +33,11 @@ const VIDEO_CHANNEL_NAME = "video";
 // queued: two frames of a generous size. What is above it is latency, not
 // throughput - the line is not taking it and the picture is falling behind.
 const VIDEO_BACKLOG = 512 * 1024;
+
+// the same line on the relay, drawn at the socket: a relayed frame goes whole
+// rather than in SCTP-sized pieces, so it is given room for a keyframe and one
+// more, and past it a frame is refused exactly as on the direct leg
+const RELAY_BACKLOG = 1024 * 1024;
 
 // how long the direct connection is given before the fallback is taken. ICE has
 // tried everything it has by then on any path that works, and what is left is a
@@ -53,6 +61,11 @@ const DATA_TIMEOUT = 60000;
 // having left, which arrives on the socket rather than on the channel
 const CLOSE_GRACE = 1000;
 
+// how long a room on the relay waits for the keys that seal it. They cross at
+// room-open, long before any fallback, so a room still without them by then
+// has lost a signal and would otherwise wait on nothing.
+const SEAL_TIMEOUT = 5000;
+
 const createRoom = function(ctx) {
     // events: connecting, connected, closed
     const events = new EventTarget();
@@ -70,6 +83,19 @@ const createRoom = function(ctx) {
     let directTimeoutId = -1;
     let attempt = 0;            // which direct attempt the channels belong to: a
                                 // retry from the relay is a second one
+
+    // the relay's end-to-end layer (src/room/seal.js): this side's key pair, the
+    // other end's public key, and the seal made of the two. Nothing crosses the
+    // relay without it, so a room on the relay is not "connected" until it is in.
+    let keys = null;
+    let otherKey = "";
+    let seal = null;
+    let isRelayPending = false;
+    let sealTimeoutId = -1;
+    let outbound = Promise.resolve();   // sealed payloads handed to the socket in order
+    let inbound = Promise.resolve();    // and opened ones handed up in the order they came
+    let sealingBytes = 0;               // frames still being sealed, for the backlog
+    const earlyRelay = [];              // relayed payloads that came before the seal
 
     // a candidate that arrives before the description it belongs to has nowhere
     // to go yet: ICE starts on both ends at once and the two messages cross
@@ -167,7 +193,7 @@ const createRoom = function(ctx) {
                 }
                 channel.send(data);
             },
-            "interactTimeout": 3000,
+            "interactTimeout": 1500,
             "timeout": 5000,
             "packetSize": CHANNEL_PACKET_SIZE,
             "packetTimeout": 1000,
@@ -217,6 +243,9 @@ const createRoom = function(ctx) {
             // proof, and the other end does the same on its own sync
             clearTimeout(directTimeoutId);
             directTimeoutId = -1;
+            clearTimeout(sealTimeoutId);
+            sealTimeoutId = -1;
+            isRelayPending = false;
             mode = MODE_DIRECT;
             state = "connected";
             emit("connected", {"roomKey": roomKey, "isHost": isHost, "isRelay": false});
@@ -277,11 +306,13 @@ const createRoom = function(ctx) {
         if (mode === MODE_RELAY || roomKey === "") {
             return;
         }
+        // A side with no relay leaves the room rather than only letting go of
+        // its own half: the other end may well have one, and it would sit on
+        // the relay "connected" - a host capturing and sending its screen -
+        // to a side that is no longer listening. Told or not, the room is over.
         if (isRelayAllowed() === false) {
-            if (isTold !== true) {
-                console.log("Room " + roomKey + " has no relay to fall back on");
-                teardown("failed");
-            }
+            console.log("Room " + roomKey + " has no relay to fall back on");
+            leave("failed");
             return;
         }
 
@@ -296,9 +327,169 @@ const createRoom = function(ctx) {
         if (isTold !== true) {
             send({"kind": "relay"});
         }
+        isRelayPending = true;
+        if (seal === null) {
+            console.log("Room " + roomKey + " is waiting for the keys to seal the relay");
+            clearTimeout(sealTimeoutId);
+            sealTimeoutId = setTimeout(function() {
+                if (isRelayPending === true && seal === null && roomKey !== "") {
+                    console.log("Room " + roomKey + " has no keys to seal the relay with");
+                    leave("failed");
+                }
+            }, SEAL_TIMEOUT);
+        }
+        finishRelay();
+    };
+
+    // the relay is a connection once it is sealed, and not before: an unsealed
+    // relay is the one thing this room will not fall back on
+    const finishRelay = function() {
+        if (isRelayPending === false || mode !== MODE_RELAY || seal === null || roomKey === "") {
+            return;
+        }
+        isRelayPending = false;
+        clearTimeout(sealTimeoutId);
+        sealTimeoutId = -1;
         state = "connected";
         console.log("Room " + roomKey + " is connected through the server");
         emit("connected", {"roomKey": roomKey, "isHost": isHost, "isRelay": true});
+    };
+
+    //
+    // the seal
+    //
+    // this side's key pair, made at room-open and its public half sent at once,
+    // so both halves have crossed long before any fallback is taken
+    const startKeys = async function() {
+        const ownRoomKey = roomKey;
+        try {
+            const made = await createKeys();
+            if (roomKey !== ownRoomKey) {
+                return;
+            }
+            keys = made;
+            await send({"kind": "key", "key": keys["publicKey"]});
+            await startSeal();
+        } catch (error) {
+            console.error("Cannot make the keys for the relay:", error);
+        }
+    };
+
+    // both halves in: the seal, then whatever came in on the relay before it
+    const startSeal = async function() {
+        if (keys === null || otherKey === "" || seal !== null) {
+            return;
+        }
+        const ownRoomKey = roomKey;
+        let made = null;
+
+        // what the seal says on its own - the rekey - goes out the way any
+        // relayed payload does, in its place in the chain
+        const transmit = function(sealing) {
+            if (made === null || seal !== made) {
+                sealing.catch(function() {});
+                return;
+            }
+            queue(made, ownRoomKey, sealing, 0).catch(function(error) {
+                console.error("Cannot relay a rekey:", error);
+            });
+        };
+        try {
+            made = await deriveSeal(keys, otherKey, isHost, {"transmit": transmit});
+        } catch (error) {
+            console.error("Cannot seal the relay:", error);
+            return;
+        }
+        if (roomKey !== ownRoomKey || seal !== null) {
+            return;
+        }
+        seal = made;
+        for (const data of earlyRelay.splice(0)) {
+            openRelayed(data);
+        }
+        finishRelay();
+    };
+
+    // one payload out over the relay, sealed. Sealing is async, so the payloads
+    // are handed to the socket in a chain - in the order they were given, as
+    // they went before - while the encryption itself runs at once. What is
+    // reported is what roomDataSend reports: that the frame left.
+    const relay = function(data) {
+        // sealed here rather than inside the chain: the bytes are copied before
+        // this returns, so the caller may reuse its buffer
+        const size = (data instanceof ArrayBuffer ? data.byteLength : 0);
+        return queue(seal, roomKey, seal.seal(data), size);
+    };
+
+    // the chain itself, for a payload that is being sealed
+    const queue = function(ownSeal, ownRoomKey, sealing, size) {
+        sealingBytes += size;
+        const handed = outbound.then(function() {
+            return sealing;
+        }).then(function(sealed) {
+            if (seal !== ownSeal) {
+                return {"sent": Promise.resolve(false)};
+            }
+            return {"sent": ctx["server"].roomDataSend(ownRoomKey, sealed)};
+        }).finally(function() {
+            if (seal === ownSeal) {
+                sealingBytes -= size;
+            }
+        });
+        outbound = handed.catch(function() {});
+        return handed.then(function(result) {
+            return result["sent"];
+        });
+    };
+
+    // one payload in, opened, and handed up in the order it arrived. What does
+    // not open - made, changed, replayed or turned round by the server - is
+    // dropped, and never taken as the other end giving up.
+    const openRelayed = function(data) {
+        const ownSeal = seal;
+        const opening = ownSeal.open(data);
+        inbound = inbound.then(function() {
+            return opening;
+        }).then(function(opened) {
+            if (seal !== ownSeal) {
+                return;
+            }
+            if (typeof opened === "undefined") {
+                console.warn("Room " + roomKey + " dropped a relayed message that did not open");
+                return;
+            }
+            // the seal's own - a rekey - and nothing for the stream
+            if (opened["isControl"] === true) {
+                return;
+            }
+
+            // the first relayed message is also the other end saying it gave up -
+            // while this side is still waiting on its direct attempt, see CLIENT.md
+            if (mode === MODE_DIRECT && state !== "connected") {
+                startRelay(true);
+            }
+
+            // bytes are the stream and an object is a message, on this leg as on
+            // the direct one - so what listens for either never asks which leg
+            const payload = opened["data"];
+            emit((payload instanceof ArrayBuffer ? "frame" : "message"), {"roomKey": roomKey, "data": payload});
+        }).catch(function(error) {
+            console.error("Cannot open a relayed message:", error);
+        });
+    };
+
+    // everything the seal holds, for a room that is over
+    const dropSeal = function() {
+        keys = null;
+        otherKey = "";
+        seal = null;
+        isRelayPending = false;
+        clearTimeout(sealTimeoutId);
+        sealTimeoutId = -1;
+        outbound = Promise.resolve();
+        inbound = Promise.resolve();
+        sealingBytes = 0;
+        earlyRelay.length = 0;
     };
 
     // the direct attempt, given a clock of its own. ICE reports "failed" where it
@@ -443,6 +634,7 @@ const createRoom = function(ctx) {
         if (roomKey === "") {
             return;
         }
+        startKeys();
         startDirectClock();
         createConnection();
 
@@ -454,11 +646,20 @@ const createRoom = function(ctx) {
 
     const onSignal = async function(detail) {
         const signal = detail?.["signal"] ?? {};
-        if (detail?.["roomKey"] !== roomKey || (connection === null && signal["kind"] !== "direct")) {
+        if (detail?.["roomKey"] !== roomKey || (connection === null && signal["kind"] !== "direct" && signal["kind"] !== "key")) {
             holdSignal(detail);
             return;
         }
         try {
+            // the other end's half of the seal - the first one only, so a key
+            // slipped in later cannot re-key a room that is already sealed
+            if (signal["kind"] === "key") {
+                if (otherKey === "" && typeof signal["key"] === "string") {
+                    otherKey = signal["key"];
+                    await startSeal();
+                }
+                return;
+            }
             if (signal["kind"] === "description") {
                 await connection.setRemoteDescription(signal["description"]);
 
@@ -514,8 +715,10 @@ const createRoom = function(ctx) {
     };
 
     // everything this client holds of the connection, and nothing about the
-    // server's half of it - which is why the two ways out below are different
-    const teardown = function(reason) {
+    // server's half of it - which is why the two ways out below are different.
+    // `isRemote` is a close the server reported: the reason is then the other
+    // side's doing, and "left" means it left rather than that this side did.
+    const teardown = function(reason, isRemote = false) {
         const closedRoomKey = roomKey;
         roomKey = "";
         joinId = "";
@@ -526,13 +729,14 @@ const createRoom = function(ctx) {
 
         closeConnection();
         earlySignals.clear();
+        dropSeal();
 
         if (state === "closed") {
             return "";
         }
         state = "closed";
-        console.log("Room " + closedRoomKey + " closed (" + reason + ")");
-        emit("closed", {"roomKey": closedRoomKey, "reason": reason});
+        console.log("Room " + closedRoomKey + " closed (" + reason + (isRemote === true ? ", by the other side" : "") + ")");
+        emit("closed", {"roomKey": closedRoomKey, "reason": reason, "isRemote": isRemote === true});
         return closedRoomKey;
     };
 
@@ -562,16 +766,21 @@ const createRoom = function(ctx) {
             return;
         }
 
-        // the first relayed message is also the other end saying it gave up -
-        // while this side is still waiting on its direct attempt, see CLIENT.md
-        if (mode === MODE_DIRECT && state !== "connected") {
-            startRelay(true);
-        }
-
-        // bytes are the stream and an object is a message, on this leg as on
-        // the direct one - so what listens for either never asks which leg
+        // everything the other end relays is sealed bytes, so anything else -
+        // the server's own JSON path, or an unsealed frame - is the server's
+        // writing and not the other end's
         const data = event.detail?.["data"];
-        emit((data instanceof ArrayBuffer ? "frame" : "message"), {"roomKey": roomKey, "data": data});
+        if ((data instanceof ArrayBuffer) === false) {
+            console.warn("Room " + roomKey + " dropped an unsealed relayed message");
+            return;
+        }
+        if (seal === null) {
+            if (earlyRelay.length < EARLY_MAX) {
+                earlyRelay.push(data);
+            }
+            return;
+        }
+        openRelayed(data);
     });
 
     // the other end left, or its socket did: the room is already gone on the
@@ -580,7 +789,15 @@ const createRoom = function(ctx) {
         if (event.detail?.["roomKey"] !== roomKey) {
             return;
         }
-        teardown(event.detail?.["reason"] ?? "closed");
+        teardown(event.detail?.["reason"] ?? "closed", true);
+    });
+
+    // the socket went, and the server ended the room with it - telling only the
+    // other side, since this one was not there to hear (see CLIENT.md)
+    ctx["server"].addEventListener("offline", function() {
+        if (roomKey !== "") {
+            teardown("gone", true);
+        }
     });
 
     return {
@@ -601,11 +818,17 @@ const createRoom = function(ctx) {
             if (mode === MODE_RELAY) {
                 // everything goes as a frame, bytes or not: the communicator
                 // splits those into packets, so this is the one path with no
-                // size to stay under and there is no reason to keep a second
-                if (roomKey === "") {
+                // size to stay under and there is no reason to keep a second -
+                // and every one of them sealed, bytes or not
+                if (roomKey === "" || seal === null) {
                     return false;
                 }
-                return await ctx["server"].roomDataSend(roomKey, data);
+                try {
+                    return await relay(data);
+                } catch (error) {
+                    console.error("Cannot relay a message:", error);
+                    return false;
+                }
             }
             // the direct leg is the same protocol as the relay: the communicator
             // splits it, acknowledges it and puts it together at the other end,
@@ -633,10 +856,11 @@ const createRoom = function(ctx) {
                 return false;
             }
             if (mode === MODE_RELAY) {
-                if (roomKey === "") {
+                // what is still being sealed is on its way to the socket too
+                if (roomKey === "" || seal === null || ctx["server"].getBufferedAmount() + sealingBytes > RELAY_BACKLOG) {
                     return false;
                 }
-                ctx["server"].roomDataSend(roomKey, buffer).catch(function(error) {
+                relay(buffer).catch(function(error) {
                     console.error("Cannot relay a frame:", error);
                 });
                 return true;
@@ -751,5 +975,5 @@ const createRoom = function(ctx) {
     };
 };
 
-export { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
-export default { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
+export { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, RELAY_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };
+export default { createRoom, isOfferer, CHANNEL_NAME, VIDEO_CHANNEL_NAME, VIDEO_BACKLOG, RELAY_BACKLOG, DIRECT_TIMEOUT, CLOSE_GRACE };

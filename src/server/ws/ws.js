@@ -12,21 +12,38 @@ import { WebSocketServer } from "ws";
 // first-party dependencies
 import Communicator from "../communicator.js";
 import { generateId, getVersion } from "../common.js";
+import { getPublicWsAddress } from "../config.js";
 import serverHTTP from "../http.js";
 import { handleAPI } from "./api.js";
 import { buildPublicConf } from "./handlers/conf.js";
 import { removePairCode, releasePairCodes } from "./handlers/pairing.js";
 import { detachJoins, releaseJoins } from "./handlers/joins.js";
-import { detachRooms, releaseRooms } from "./handlers/rooms.js";
+import { detachRooms, releaseRooms, receiveLimitOf, RELAY_RECEIVE_MAX } from "./handlers/rooms.js";
 import { createAuth, detachAccount, releaseAccounts } from "./handlers/accounts.js";
 import { startDatabase, stopDatabase } from "./database.js";
 import { createMailer } from "./mail.js";
+import { clientAddress, buildProxyTrust, holdAddress, releaseAddress, PROXY_TRUST_DEFAULT } from "./address.js";
 
 // the packet layer of every socket, the same on the client (src/client/web/src/server.js):
 // one video chunk of the stream is one packet, and a whole frame is a handful
 // in flight rather than a hundred acknowledged one by one
 const SOCKET_PACKET_SIZE = 65536;
 const SOCKET_SEND_THREADS = 64;
+
+// what one socket may make this process hold. A frame is one packet or one
+// JSON message - the largest of those is a relayed message of DATA_MAX - so a
+// frame far past that is not from a client; and a message is held here until
+// its last packet is in, so what one socket's unfinished messages hold at once
+// is capped too - by its relay permission, see receiveLimitOf in
+// handlers/rooms.js - and how many sockets one address may open is capped in
+// ./address.js
+const SOCKET_FRAME_MAX = 256 * 1024;
+const SOCKET_RECEIVE_MAX = RELAY_RECEIVE_MAX;
+
+// how often every socket is pinged, and so how long one that stopped reading is
+// kept: a socket that does not read is one the relay's frames and every push
+// pile up in front of, and a half-open one holds its codes and rooms forever
+const HEARTBEAT_INTERVAL = 30000;
 
 // the socket lifecycle only, the calls a connection carries are in ./api.js
 const ServerWS = class {
@@ -44,6 +61,15 @@ const ServerWS = class {
     joins = new Map();              // key-joinId, value-state of a join a socket holds open (see ./handlers/joins.js)
     rooms = new Map();              // key-one side's room key, value-the two sockets an accept put together - one room is in here twice, once per side (see ./handlers/rooms.js)
     accounts = new Map();           // key-userId, value-the sockets signed in as that user, while there is one (see ./handlers/accounts.js)
+    pairFailures = new Map();       // key-an address (see ./address.js), value-the pair codes it tried that opened nothing (see ./handlers/pairing.js)
+    pairFailuresSweep = 0;
+    connections = new Map();        // key-an address (see ./address.js), value-how many sockets it holds open
+
+    // where the proxy in front of the socket connects from, null when none
+    // stands there: a socket from one of these is the proxy's, and the client's
+    // address is the one it forwarded - see ./address.js
+    proxyTrust = null;
+    heartbeatId = -1;
 
     // the sign-in providers and the rules on who may sign in, built from the
     // configuration in start() - a server that never started signs nobody in
@@ -107,17 +133,24 @@ const ServerWS = class {
         }
         process.stdout.write(this.mailer === null ? "skipped" : "done");
 
-        // the WS server is reachable on the HTTP domain when they share a host
-        let domain = conf["ws"]["domain"];
-        if (typeof conf?.["http"]?.["domain"] === "string") {
-            domain = conf["http"]["domain"];
+        // where a client opens its socket: the proxy in front of this server
+        // when it has one, and the HTTP address when the two share a host
+        const address = getPublicWsAddress(conf);
+
+        // a shared port is the HTTP server's listener, and its proxy with it
+        const isSharedPort = (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]);
+        let proxy = conf["ws"]["proxy"];
+        if (typeof proxy !== "object" && isSharedPort === true) {
+            proxy = conf["http"]["proxy"];
         }
+        this.proxyTrust = (typeof proxy === "object" ? buildProxyTrust(proxy["trust"]) : null);
 
         // Listen WS port
-        if (typeof conf["http"] === "object" && conf["http"]["port"] === conf["ws"]["port"]) {
+        if (isSharedPort === true) {
             // the HTTP server already listens here, only add the upgrade
             this.wsServer = new WebSocketServer({
-                "server": serverHTTP.httpServer
+                "server": serverHTTP.httpServer,
+                "maxPayload": SOCKET_FRAME_MAX
             });
         } else {
             this.wsHttpServer = https.createServer({
@@ -134,17 +167,62 @@ const ServerWS = class {
             });
             await serverHTTP.listen(this.wsHttpServer, conf["ws"]["port"]);
             this.wsServer = new WebSocketServer({
-                "server": this.wsHttpServer
+                "server": this.wsHttpServer,
+                "maxPayload": SOCKET_FRAME_MAX
             });
         }
-        this.wsServer.addListener("connection", (ws) => {
+        // what it emits is the error of the server it stands on, re-emitted - an
+        // accept that failed on a process out of file descriptors - which that
+        // server's own listener has logged (listen in ../http.js). Unheard here,
+        // it would end the process.
+        this.wsServer.addListener("error", function() {});
+        this.wsServer.addListener("connection", (ws, req) => {
             if (this.isClosing === true) {
                 ws.terminate();
-            } else {
-                this.clientConnect(ws);
+                return;
             }
+            // one address holds only so many sockets; the close handler of
+            // clientConnect gives this one back
+            const address = clientAddress(req, this.proxyTrust);
+            if (holdAddress(this, address) === false) {
+                ws.close(1008, "too-many-connections");
+                return;
+            }
+            ws.isAlive = true;
+            ws.on("pong", function() {
+                ws.isAlive = true;
+            });
+            this.clientConnect(ws, address);
         });
-        process.stdout.write("\n    Available: wss://" + domain + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
+
+        // a browser answers a ping on its own, so a socket that has not
+        // answered the last one by the next is not reading at all
+        clearInterval(this.heartbeatId);
+        this.heartbeatId = setInterval(() => {
+            for (const socket of this.wsServer?.clients ?? []) {
+                if (socket.isAlive === false) {
+                    socket.terminate();
+                    continue;
+                }
+                socket.isAlive = false;
+                try {
+                    socket.ping();
+                } catch (error) {
+                    socket.terminate();
+                }
+            }
+        }, HEARTBEAT_INTERVAL);
+        process.stdout.write("\n    Available: wss://" + address["domain"] + (address["port"] !== 443 ? ":" + address["port"] : "") + "\n");
+        if (typeof conf["ws"]["proxy"] === "object") {
+            // the line above is the proxy's address, name the socket as well
+            process.stdout.write("    Listening: wss://" + conf["ws"]["domain"] + (conf["ws"]["port"] !== 443 ? ":" + conf["ws"]["port"] : "") + "\n");
+        }
+        if (typeof proxy === "object") {
+            // the client address is taken from these connections alone, anyone
+            // else is known by their own - a proxy missing here counts every
+            // client as the proxy
+            process.stdout.write("    Proxy from: " + (proxy["trust"] ?? PROXY_TRUST_DEFAULT).join(", ") + "\n");
+        }
         process.stdout.write("done\n");
     };
 
@@ -160,9 +238,15 @@ const ServerWS = class {
         return sessionId;
     };
 
-    async clientConnect(ws) {
+    // `ipAddress` is where the connection came from, the proxy's forwarded
+    // address when there is one - a socket handed in without it is known by
+    // the address it holds itself
+    async clientConnect(ws, ipAddress = ws?._socket?.remoteAddress ?? "") {
         // generate the session id of the connection
         const sessionId = this.generateSessionId();
+
+        // a guest until it signs in, so the configuration is its permission
+        const isRelayAllowed = (this.confPublic["permissions"]?.["guestAllowRelay"] === true);
 
         // create communicator
         const com = new Communicator({
@@ -172,7 +256,7 @@ const ServerWS = class {
                 }
                 ws.send(data);
             },
-            "interactTimeout": 3000,
+            "interactTimeout": 1500,
             "timeout": 5000,
             // a packet is acknowledged one by one with sendThreads of them in
             // flight, so packetSize * sendThreads is what one round trip can
@@ -181,7 +265,8 @@ const ServerWS = class {
             "packetSize": SOCKET_PACKET_SIZE,
             "packetTimeout": 1000,
             "packetRetry": Infinity,
-            "sendThreads": SOCKET_SEND_THREADS
+            "sendThreads": SOCKET_SEND_THREADS,
+            "maxReceiveBytes": receiveLimitOf(isRelayAllowed)
         });
 
         // Create state, the session id is taken before the first await.
@@ -192,18 +277,21 @@ const ServerWS = class {
         // guest until it signs in, so the configuration is the answer here, and
         // attachAccount in handlers/accounts.js is what fills the slot from the
         // user's row - read once per sign-in, because a permission is not
-        // expected to change under a live connection.
+        // expected to change under a live connection. The communicator's
+        // receive budget goes with it (setRelayAllowed in handlers/rooms.js).
         /*{
             "com": Communicator,
             "ws": WebSocket,
             "isRelayAllowed": boolean,
+            "ipAddress": string,
             "userId": string,               (signed in only)
             "accountSessionId": string      (signed in only - the sessions row, not this connection)
         }*/
         const client = new Map([
             ["com", com],
             ["ws", ws],
-            ["isRelayAllowed", this.confPublic["permissions"]?.["guestAllowRelay"] === true]
+            ["isRelayAllowed", isRelayAllowed],
+            ["ipAddress", ipAddress]
         ]);
         this.clients.set(sessionId, client);
 
@@ -221,7 +309,13 @@ const ServerWS = class {
                 console.log(error);
                 return;
             }
-            com.receive(data);
+            // receive is async, so what it throws on a frame it cannot read is a
+            // rejection - one nobody handled would end the process, from any
+            // socket that sends one. The connection is what goes instead.
+            com.receive(data).catch(function(error) {
+                console.log("Unreadable frame, closing (" + sessionId + "):", error);
+                ws.terminate();
+            });
         });
 
         // listen error
@@ -241,6 +335,7 @@ const ServerWS = class {
             detachJoins(this, sessionId);
             detachAccount(this, sessionId);
             client.get("com").release();
+            releaseAddress(this, client.get("ipAddress"));
             this.clients.delete(sessionId);
 
             console.log("Client disconnected (" + sessionId + ")");
@@ -266,6 +361,8 @@ const ServerWS = class {
 
     async stop() {
         this.isClosing = true;
+        clearInterval(this.heartbeatId);
+        this.heartbeatId = -1;
 
         process.stdout.write("\n    Closing WS server....    ");
         const wasRunning = this.wsServer !== null || this.wsHttpServer !== null;
@@ -345,6 +442,7 @@ const ServerWS = class {
         releaseJoins(this);
         releaseAccounts(this);
         this.clients.clear();
+        this.connections.clear();
 
         // the rows stay, the pool does not: an open one keeps the process alive
         // long after the last socket is gone - and neither does the transport
@@ -358,5 +456,5 @@ const ServerWS = class {
 // the server is a singleton, the module hands out the running instance
 const serverWS = new ServerWS();
 
-export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS };
+export { serverWS, SOCKET_PACKET_SIZE, SOCKET_SEND_THREADS, SOCKET_FRAME_MAX, SOCKET_RECEIVE_MAX, HEARTBEAT_INTERVAL };
 export default serverWS;

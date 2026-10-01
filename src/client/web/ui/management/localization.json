@@ -1,0 +1,68 @@
+{
+    "main": {
+        "new": {
+            "en": "New",
+            "hu": "Új"
+        },
+        "services": {
+            "en": "Services",
+            "hu": "Szolgáltatások"
+        },
+        "devices": {
+            "en": "Devices",
+            "hu": "Eszközök"
+        },
+        "shares": {
+            "en": "Shares",
+            "hu": "Megosztások"
+        },
+        "downloads": {
+            "en": "Download client",
+            "hu": "Kliens letöltése"
+        },
+        "search": {
+            "en": "Search...",
+            "hu": "Keresés..."
+        },
+        "login": {
+            "en": "Login",
+            "hu": "Bejelentkezés"
+        },
+        "account": {
+            "en": "Account settings",
+            "hu": "Fiók beállítások"
+        },
+        "logout": {
+            "en": "Logout",
+            "hu": "Kijelentkezés"
+        },
+        "guest": {
+            "en": "Guest",
+            "hu": "Vendég"
+        },
+        "switchAccount": {
+            "en": "Switch account",
+            "hu": "Fiókváltás"
+        },
+        "addUser": {
+            "en": "Add new user",
+            "hu": "Új felhasználó"
+        },
+        "menu": {
+            "en": "Menu",
+            "hu": "Menü"
+        },
+        "authDisabled": {
+            "en": "The administrator disabled authentication",
+            "hu": "Az adminisztrátor letiltotta a bejelentkezést"
+        },
+        "switchFailed": {
+            "en": "The account could not be switched.",
+            "hu": "A fiókot nem sikerült váltani."
+        },
+        "logoutFailed": {
+            "en": "Signing out failed. Please try again.",
+            "hu": "A kijelentkezés nem sikerült. Kérlek próbáld újra."
+        }
+    }
+}

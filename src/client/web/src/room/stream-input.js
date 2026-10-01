@@ -22,6 +22,33 @@
 
 const BUTTONS = ["left", "middle", "right", "back", "forward"];
 
+// where the picture sits inside the canvas element, in the element's own
+// pixels. The canvas is drawn `object-fit: contain`, so the picture is centred
+// in it with a letterbox on two sides and the element's rectangle is not the
+// picture's. `size` is the picture the decoder is producing, which the element
+// cannot be asked for: its surface belongs to the worker from the moment it is
+// transferred (`transferControlToOffscreen`), and the width and height the
+// element still reports are the ones it was born with. The room screen draws
+// the host's pointer over the same box - see ui/room/index.js.
+const pictureBox = function(canvas, size) {
+    const rect = canvas.getBoundingClientRect();
+    const width = Number(size?.["width"]) || 0;
+    const height = Number(size?.["height"]) || 0;
+    if (rect.width === 0 || rect.height === 0 || width === 0 || height === 0) {
+        return undefined;
+    }
+    const scale = Math.min(rect.width / width, rect.height / height);
+    const drawnWidth = width * scale;
+    const drawnHeight = height * scale;
+    return {
+        "left": (rect.width - drawnWidth) / 2,
+        "top": (rect.height - drawnHeight) / 2,
+        "width": drawnWidth,
+        "height": drawnHeight,
+        "rect": rect
+    };
+};
+
 // how many lines one notch of the wheel is worth on the host, whichever unit
 // the browser reported the wheel in
 const WHEEL_LINE = 100;
@@ -43,6 +70,7 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     // Shift ("a" down, "A" up), and it is what a shortcut is written in
     const held = new Map();         // KeyboardEvent.code -> KeyboardEvent.key
     const downButtons = new Set();  // the mouse buttons down right now
+    let picture = null;             // the size of the picture being drawn
 
     const shortcuts = function() {
         const own = (ctx["conf"]["local"]?.["exitShortcuts"] ?? []).filter(function(shortcut) {
@@ -73,20 +101,15 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         }
     };
 
-    // where a pointer is in the picture, 0..1 both ways, or nothing when it is
-    // on the letterbox beside it
+    // where a pointer is in the picture, 0..1 both ways, or nothing while
+    // there is no picture to be in
     const positionOf = function(event) {
-        const rect = canvas.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0 || canvas.width === 0 || canvas.height === 0) {
+        const box = pictureBox(canvas, picture);
+        if (typeof box === "undefined") {
             return undefined;
         }
-        const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
-        const drawnWidth = canvas.width * scale;
-        const drawnHeight = canvas.height * scale;
-        const left = rect.left + (rect.width - drawnWidth) / 2;
-        const top = rect.top + (rect.height - drawnHeight) / 2;
-        const x = (event.clientX - left) / drawnWidth;
-        const y = (event.clientY - top) / drawnHeight;
+        const x = (event.clientX - box["rect"].left - box["left"]) / box["width"];
+        const y = (event.clientY - box["rect"].top - box["top"]) / box["height"];
         return {
             "x": Math.min(1, Math.max(0, x)),
             "y": Math.min(1, Math.max(0, y))
@@ -258,6 +281,12 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     };
 
     return {
+        // the picture the host is sending, as the decoder reports it: what a
+        // pointer is mapped into, and the only thing that says where the
+        // letterbox around it is
+        "setPicture": function(size) {
+            picture = (typeof size === "undefined" || size === null ? null : {...size});
+        },
         "enable": enable,
         "release": release,
         "isEnabled": function() {
@@ -266,5 +295,5 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     };
 };
 
-export { createInput, BUTTONS, builtinShortcuts };
-export default { createInput, BUTTONS, builtinShortcuts };
+export { createInput, pictureBox, BUTTONS, builtinShortcuts };
+export default { createInput, pictureBox, BUTTONS, builtinShortcuts };

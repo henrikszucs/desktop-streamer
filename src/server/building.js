@@ -7,6 +7,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 
 // third-party dependencies
@@ -14,7 +15,10 @@ import UglifyJS from "uglify-js";
 
 // first-party dependencies
 import { serverScriptPath, getVersion } from "./common.js";
+import { getPublicAddress, getPublicWsAddress } from "./config.js";
 import { readZip, writeZip } from "./zip.js";
+import { pickName } from "../client/web/src/appname.js";
+import { DEFAULT_APPEARANCE, buildPalette } from "../client/web/src/appearance.js";
 
 //
 // Constants
@@ -33,6 +37,17 @@ const PART_SUFFIX = ".part";
 
 // the client configuration the server generates for the built clients
 const CONF_FILE = "index.json";
+
+// http.appearance as configured, over the defaults
+const getAppearance = function(conf) {
+    return {...DEFAULT_APPEARANCE, ...(conf["http"]?.["appearance"] ?? {})};
+};
+
+// the page the build writes the default palette into, and the palette
+// generator the client itself builds its theme with - the same one, so the
+// palette painted first is the one the client goes on to use
+const INDEX_FILE = "index.html";
+const PALETTE_SCRIPT = ["client", "web", "libs", "beercss", "material-dynamic-colors.min.js"];
 
 // written by the build, never copied from the sources
 const GENERATED_FILES = new Set([CONF_FILE]);
@@ -286,26 +301,76 @@ const buildConfFile = async function(conf, dists = []) {
         "version": await getVersion(),
         "http": {},
         "ws": {},
+        "appearance": getAppearance(conf),
         "clients": dists.map(function(dist) {
             return dist["os"] + "-" + dist["arch"] + ".zip";
         })
     };
-    if (typeof conf["http"] === "object") {
-        confData["http"]["domain"] = conf["http"]["domain"];
-        confData["http"]["port"] = conf["http"]["port"];
+    // the addresses a client is handed are the public ones: behind a proxy the
+    // domain and port a server listens on are not the ones a person reaches it at
+    const httpAddress = getPublicAddress(conf, "http");
+    if (httpAddress !== null) {
+        confData["http"]["domain"] = httpAddress["domain"];
+        confData["http"]["port"] = httpAddress["port"];
     }
-    if (typeof conf["http"] === "object" && typeof conf["http"]["remote"] === "object") {
-        confData["ws"]["domain"] = conf["http"]["remote"]["host"];
-        confData["ws"]["port"] = conf["http"]["remote"]["port"];
-    } else {
-        if (typeof conf["http"] === "object") {
-            confData["ws"]["domain"] = conf["http"]["domain"];
-        } else {
-            confData["ws"]["domain"] = conf["ws"]["domain"];
-        }
-        confData["ws"]["port"] = conf["ws"]["port"];
+    const wsAddress = getPublicWsAddress(conf);
+    if (wsAddress !== null) {
+        confData["ws"]["domain"] = wsAddress["domain"];
+        confData["ws"]["port"] = wsAddress["port"];
     }
     return JSON.stringify(confData);
+};
+
+// the palette the page is painted with before its first module runs: what
+// beercss would build for the configured colour, as the two style attributes it
+// puts on the body - {color, mode, light, dark}, and the configured name by
+// language where there is one - see the script in index.html
+const buildPaint = async function(conf) {
+    const appearance = getAppearance(conf);
+    await import(pathToFileURL(path.join(serverScriptPath, ...PALETTE_SCRIPT)).href);
+    const palette = await buildPalette(appearance["color"]);
+    const paint = {
+        "color": appearance["color"],
+        "mode": appearance["theme"],
+        "light": palette["light"],
+        "dark": palette["dark"]
+    };
+    if (typeof appearance["name"] === "object") {
+        paint["name"] = {...appearance["name"]};
+    }
+    return paint;
+};
+
+const escapeHTML = function(text) {
+    return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+};
+
+// the paint written into the built index.html, as the content of its
+// appearance meta - an attribute, since the minifier leaves those as they are.
+// A configured name is also the page's static title, in English where it is
+// given one, for whatever reads the page without running it; the script in the
+// page replaces it with the one in the client's language.
+const injectAppearance = function(webFiles, paint) {
+    const page = webFiles.find(function(file) {
+        return file["path"] === INDEX_FILE;
+    });
+    const tag = /<meta name="?appearance"?[^>]*>/;
+    if (typeof page === "undefined" || tag.test(page["data"].toString("utf8")) === false) {
+        throw new Error("No appearance meta in " + INDEX_FILE);
+    }
+    // a replacer function, so a "$&" in a configured name is not read as a pattern
+    const meta = "<meta name=\"appearance\" content=\"" + escapeHTML(JSON.stringify(paint)) + "\">";
+    let html = page["data"].toString("utf8").replace(tag, function() {
+        return meta;
+    });
+    // the English name by the client's own rule
+    const title = pickName(paint["name"], "en");
+    if (title !== null) {
+        html = html.replace(/<title>[^<]*<\/title>/, function() {
+            return "<title>" + escapeHTML(title) + "</title>";
+        });
+    }
+    page["data"] = Buffer.from(html, "utf8");
 };
 
 // write the built web client to <compilePath>/web
@@ -452,6 +517,13 @@ const compileClients = async function(conf) {
     const electronPath = path.join(serverScriptPath, "client", "electron");
     const webFiles = await buildFolder(webPath, true, GENERATED_FILES);
     const electronFiles = await buildFolder(electronPath, false);
+    // a page without its palette still works, it only switches colour once
+    // its first module runs, so a failure here is a warning
+    try {
+        injectAppearance(webFiles, await buildPaint(conf));
+    } catch (error) {
+        process.stdout.write("\n    Cannot paint the default theme (" + error.message + ")    ");
+    }
     await writeWeb(webDestPath, webFiles, confFile);
     process.stdout.write("done");
 
@@ -512,5 +584,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { compileClients, minifyScript, minifyStyle, minifyMarkup };
-export default { compileClients, minifyScript, minifyStyle, minifyMarkup };
+export { compileClients, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export default { compileClients, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };

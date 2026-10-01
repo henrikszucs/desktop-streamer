@@ -70,6 +70,16 @@ const FRAME_JSON = 2;
 const FRAME_KINDS = new Set([FRAME_DATA, FRAME_JSON]);
 const FRAME_HEADER = 1 + ROOM_KEY_LENGTH;
 
+// How much may wait in front of the receiving socket before a frame is dropped
+// rather than queued behind the rest. A frame that cannot go out now is late
+// for the picture, and nothing else would stop the queue: the sender hears the
+// server's acknowledgment, not the far end's, so a receiver on a slower line -
+// or one that stopped reading on purpose - would have the server hold whatever
+// the sender can push, for as long as the room stands. A dropped frame is a gap
+// the peer's reassembler asks a keyframe for, the same as one lost on the
+// direct leg.
+const RELAY_BACKLOG = 2 * 1024 * 1024;
+
 // one key, unique among every key of every room that stands - both sides of a
 // room live in the same table, so a key names a room and a side in one lookup
 const generateRoomKey = function(server, taken = "") {
@@ -185,6 +195,29 @@ const isRelayAllowed = function(server, sessionId) {
     return server.clients.get(sessionId)?.get("isRelayAllowed") === true;
 };
 
+// What one socket's unfinished messages may hold of the server at once. A
+// binary message is only ever a relay frame, and the communicator reassembles
+// one whole before roomFrame can look at it - so a socket that may not relay
+// has no use for a single byte of it, and anything it held would be held for
+// nothing. Its budget is none; one that may relay gets room for a frame of
+// the stream and more.
+const RELAY_RECEIVE_MAX = 32 * 1024 * 1024;
+const receiveLimitOf = function(isAllowed) {
+    return isAllowed === true ? RELAY_RECEIVE_MAX : 0;
+};
+
+// the permission and the budget that goes with it, written together: by
+// clientConnect in ws.js from the configuration, and by the sign-in from the
+// user's row (handlers/accounts.js)
+const setRelayAllowed = function(server, sessionId, isAllowed) {
+    const client = server.clients.get(sessionId);
+    if (client === undefined) {
+        return;
+    }
+    client.set("isRelayAllowed", isAllowed === true);
+    client.get("com")?.configure?.({"maxReceiveBytes": receiveLimitOf(isAllowed)});
+};
+
 // a room ends for both when it ends for one - there is no room with one side in
 // it - and whoever did not ask for the ending is told why
 const closeRoom = function(server, room, reason, exceptSessionId) {
@@ -222,6 +255,38 @@ const detachRooms = function(server, sessionId) {
             continue;
         }
         closeRoom(server, room, "gone", sessionId);
+    }
+};
+
+// every room standing on one join, both sides told. A room outlives nothing
+// it was made through: a device that is forgotten (dropJoin in joins.js) is not
+// one that stays connected, or deleting it would leave whoever is on it
+// driving the host. `server.rooms` may be missing on a server that never made
+// one.
+const closeJoinRooms = function(server, joinId, reason) {
+    if (typeof joinId !== "string" || joinId === "") {
+        return;
+    }
+    for (const room of new Set(server.rooms?.values() ?? [])) {
+        if (room.get("joinId") === joinId) {
+            closeRoom(server, room, reason);
+        }
+    }
+};
+
+// and the rooms one socket stands in on the joins named - the connections it
+// made through devices it holds no longer, which go with them. Both sides are
+// told, the socket's own client included: it did not leave by itself.
+const closeRoomsOf = function(server, sessionId, joinIds, reason) {
+    const roomKeys = server.clients.get(sessionId)?.get("roomKeys");
+    if (roomKeys === undefined) {
+        return;
+    }
+    for (const roomKey of new Set(roomKeys)) {
+        const room = server.rooms.get(roomKey);
+        if (room !== undefined && joinIds.has(room.get("joinId")) === true) {
+            closeRoom(server, room, reason);
+        }
     }
 };
 
@@ -387,12 +452,18 @@ const roomFrame = function(ctx) {
 
     // and the far end's key over the sender's, in place: it knows the room by
     // that one and by no other, and it must not be handed this one
+    const targetSessionId = otherSessionId(held["room"], held["isHost"]);
+    const backlog = server.clients.get(targetSessionId)?.get("ws")?.bufferedAmount ?? 0;
+    if (backlog > RELAY_BACKLOG) {
+        return;         // the far end is not keeping up, see RELAY_BACKLOG
+    }
+
     const targetKey = otherRoomKey(held["room"], held["isHost"]);
     for (let i = 0; i < ROOM_KEY_LENGTH; i++) {
         header[1 + i] = targetKey.charCodeAt(i);
     }
 
-    pushData(server, otherSessionId(held["room"], held["isHost"]), buffer);
+    pushData(server, targetSessionId, buffer);
 };
 
 // the types this group answers
@@ -402,5 +473,5 @@ const handlers = {
     "room-leave": roomLeave
 };
 
-export { handlers, createRoom, closeRoom, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH };
+export { handlers, createRoom, closeRoom, closeJoinRooms, closeRoomsOf, detachRooms, releaseRooms, heldRoom, otherSessionId, otherRoomKey, isRelayAllowed, receiveLimitOf, setRelayAllowed, roomSignal, roomData, roomFrame, roomLeave, SIGNAL_MAX, DATA_MAX, FRAME_DATA, FRAME_JSON, FRAME_HEADER, ROOM_KEY_LENGTH, RELAY_BACKLOG, RELAY_RECEIVE_MAX };
 export default handlers;

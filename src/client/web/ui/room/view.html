@@ -18,8 +18,15 @@
         while the exit shortcut is held, so a five second hold under the
         desktop shell reads as a wait and not as a key that does nothing.
     -->
+    <!--
+        It also carries the host's own mouse pointer: the picture arrives with
+        no cursor in it, and the one over the canvas here is an image the host
+        sent once and this machine moves - so it is drawn at this screen's rate
+        and not at the stream's. See ./index.js and src/room/cursor.js.
+    -->
     <div id="room-stage">
         <canvas id="room-canvas" tabindex="0"></canvas>
+        <img class="room-cursor hide" id="room-cursor" alt="" draggable="false">
         <div class="room-exit-ring hide" id="room-exit-ring"></div>
     </div>
 
@@ -62,6 +69,17 @@
                 <div class="tooltip" id="btn-room-control-tooltip" data-localization="room.control.take">Take the keyboard and the mouse</div>
             </a>
             <!--
+                Whether the two machines share one clipboard: what is copied
+                here goes over when the picture is clicked back into, and what
+                is copied there lands here - see ./index.js and
+                src/room/clipboard.js. Greyed when the host has no clipboard to
+                share, or this browser will not hand the page one.
+            -->
+            <a tabindex="0" id="btn-room-clipboard">
+                <i id="btn-room-clipboard-icon">content_paste_off</i>
+                <div class="tooltip" id="btn-room-clipboard-tooltip" data-localization="room.clipboard.share">Share the clipboard</div>
+            </a>
+            <!--
                 The line first and the picture after it: the bandwidth is what
                 the resolutions are priced against, so what it is set to is what
                 the menu below can offer at all - see the cap in ./index.js.
@@ -95,6 +113,21 @@
                 <i>animation</i>
                 <span id="room-framerate-label">30 fps</span>
                 <menu class="border top no-wrap" id="room-framerate-menu"></menu>
+            </a>
+            <!--
+                What this client does to the picture once it has arrived:
+                the enhancements the decoder's worker runs over it (upscale,
+                frame interpolation, frame extrapolation - src/room/
+                stream-enhance.js), any number of them at once. Its rows are
+                filled in ./index.js, and the last of them is a reading
+                rather than a choice: which GPU backend runs them and what a
+                frame costs. Greyed, with the reason in its rows, on a browser
+                with neither WebGPU nor WebGL.
+            -->
+            <a tabindex="0" id="btn-room-enhance">
+                <i>auto_awesome</i>
+                <span id="room-enhance-label">Off</span>
+                <menu class="border top no-wrap" id="room-enhance-menu"></menu>
             </a>
             <a tabindex="0" id="btn-room-fullscreen">
                 <i id="btn-room-fullscreen-icon">fullscreen</i>

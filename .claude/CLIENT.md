@@ -88,7 +88,11 @@ needs, since it can only hide chrome that is already in the document. A module
 that mounts into another's markup has to follow it, which is what the dot-depth
 ordering is for — `settings` carries the markup `settings.appearance` mounts
 into. A module that throws is logged and skipped rather than taking the boot
-down with it.
+down with it - and the failure is not kept: `registry.load` forgets a build that
+failed, takes back out whatever markup it had already mounted, and remembers no
+stylesheet that did not load, so the next time the module is asked for (the
+router opening it) it is built again rather than failing for the life of the
+page over one request that failed at boot.
 
 ## The snackbar
 
@@ -159,11 +163,26 @@ the administrator's decision and gets `main.authDisabled`, the same string as
 the bar's tooltip. A provider that *is* offered can still fail in the browser:
 Google's button is a script fetched from Google itself, and offline, behind a
 filter or with the script blocked by an extension there would be an empty
-screen and no error. `GoogleLogin.load()` resolves to whether that script is
-usable — its `load`/`error` events with `LOAD_TIMEOUT` behind them — and a
-failure shows `login.unavailable` with a retry instead of the button. A failed
-tag is removed so the retry fetches again rather than finding a dead element,
-and the button is rendered through `google.accounts.id.renderButton` rather
+screen and no error.
+
+**The Google button is framed, never loaded into the page.** The desktop
+shell's window runs with Node (`nodeIntegration`, no context isolation), so a
+script in it is a script with the whole machine - and Google's is a stranger's
+script. `login/google.js` puts an iframe of `login/google-frame.html` on the
+screen instead, served by the HTTP server (this page's own origin in a browser,
+`conf["http"]`'s under the desktop shell, which is on `local://`), and Google's
+script runs in there: a frame is a plain web page (`nodeIntegrationInSubFrames`
+is off, and `main.js` says so), and the server's origin is also the one Google
+has the client id for. The frame says `ready` or `error`, its `size` as the
+button lands, and the `credential`; the screen listens to its own frames on that
+origin alone, and the frame posts only to its own origin and `local://local.local`
+and renders nothing for any other parent - a credential is a sign-in to this
+server, so a page elsewhere that frames it hears nothing. `createButton()`
+resolves to whether the frame got a button, with `LOAD_TIMEOUT` behind it, and a
+failure shows `login.unavailable` with a retry instead of the button; the frame
+is drawn in the `normal` colour scheme, since a frame whose scheme differs from
+the page's is painted opaque. Inside, the button is rendered through
+`google.accounts.id.renderButton` rather
 than the declarative `g_id_onload` markup, which Google's script only parses
 once at its own load and so would never draw a button created after it. The
 button is rendered at `size: "medium"` on purpose: Google personalizes the
@@ -275,7 +294,7 @@ bar's sign out does after the call: `navTop.refresh()`, `closeDialogs()`,
 wrong code, another device's, one that ran out — is one notice, since the
 person's move is the same for all three: check the code or send a new one.
 
-The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
+The settings dialog's *About* window holds the reset of the local settings: `resetLocal()` in `src/conf.js` writes every `LOCAL_DEFAULTS` key back except `accounts`/`userId` (the `color` and `mode` among them are the server's `appearance` from `index.json` where it names them) — who this client is signed in as is not a setting — and the window then calls `ui.applyLocal()` — `applyLocal` in `ui/ui.js`, the one call boot applies the theme, the language and the desktop's tray and language with, so the defaults land in place the way any value does and nothing reloads; the other settings windows read their values on `open()` and so show the defaults the next time they are opened. Auto launch is a state of the system rather than a row, so it is switched off by name beside it. It is asked through the confirm dialog like every other thing that cannot be taken back.
 
 `OLD_GUEST_TABLE` is dropped on every open; a client that ran the two-table build
 still carries it. Dropping a table that is not there is free, so it costs a
@@ -530,7 +549,9 @@ is what this client knows the room by; there is no id behind it that both sides
 share.
 
 What crosses the server is SDP and ICE and nothing else, one message per call
-(`room-signal`), so the server holds nothing between two of them. Three details
+(`room-signal`), so the server holds nothing between two of them - that, and
+one `key` signal from each side, the public half of the key the relay is sealed
+with (see "The relay is sealed"). Three details
 are worth keeping, and two of them are the same mistake at different heights:
 
 - an ICE candidate that arrives **before the description it belongs to** is held
@@ -571,7 +592,12 @@ then what would have crossed between the two devices crosses the server instead
 - **a fallback that is not allowed is not waited for.** `guestAllowRelay` is
   answered to every client in `permissions` (it is off unless the configuration
   says otherwise, since it spends the server's own bandwidth), and where it is
-  off a failed direct attempt ends the room rather than hanging on one. It is
+  off a failed direct attempt ends the room rather than hanging on one - with
+  `leave()`, not a local teardown, and on the other end's `relay` signal as
+  much as on its own clock: the two ends' flags can differ (an account that
+  has the relay, a guest that has not), and a room only one side left would
+  keep the other on the relay "connected", a host sending its screen to
+  nobody. It is
   the *guest's* flag: an account's is its own users row, told in the profile
   as `isRelayAllowed` and kept on the account record - taken from every
   profile the server answers or pushes, not the sign-in alone, so a record
@@ -642,8 +668,11 @@ what the control protocol and the stream's settings go over (`send()`/`message`)
 side in the same offer, `ordered: false, maxRetransmits: 0`, wrapped in nothing:
 `sendFrame()` hands a chunk to it as it is and reports `false` rather than
 queueing when `bufferedAmount` is past `VIDEO_BACKLOG`, and whatever arrives on
-it is the `frame` event. On the relay the same chunk is the socket's binary frame
-(`roomDataSend`) and the relayed bytes come back as `frame` too, so the stream
+it is the `frame` event. On the relay the same chunk is sealed and sent as the
+socket's binary frame (`roomDataSend`), refused the same way once the socket's `bufferedAmount` is past
+`RELAY_BACKLOG` - the server acknowledges as fast as it reads, so without that
+line a relay slower than the encoder is a queue that only grows - and the
+relayed bytes come back as `frame` too, so the stream
 never asks which leg it is on - bytes are the stream and an object is a message,
 on both. Why the picture is not on the control channel is the section below.
 
@@ -651,9 +680,97 @@ The two ways out are not the same. `leave()` is this side deciding: it tears the
 connection down **and** tells the server, so the other end hears `room-close` and
 stops. A `room-close` that arrives from the server is the other end having gone,
 and only takes this side down. Either way the state ends at `closed` and the
-event says why. One room at a time on this client - a second `room-open` replaces
+event says why - and whose doing it was: `isRemote` marks a close the server
+reported, because the reason is then the other end's. A `left` from the server
+is the other end leaving (the host ending the connection from its share card),
+which the room screen shows as the connection lost; only a `left` of this
+side's own is the screen on its way out already. **A socket that drops is a
+room that ended**: the server ends every room of a closing socket and tells
+only the other side, since this one is not there to hear it, and the key it
+held was that socket's - no later socket can present it. So `offline` takes the
+room down here as `gone`, remote, exactly as a `room-close` would have. Left
+standing, the other end's teardown closed the channel, the fallback took the
+room onto a relay with a dead key, and it sat there "connected": the host
+capturing into nothing and still drawn as sharing, the peer on a frozen
+picture, and any key the peer held down left down on the host, since only the
+stream stopping lets go of it. One room at a time on this client - a second `room-open` replaces
 the first - which the server does not impose and a host with two peers will
 eventually need.
+
+## The relay is sealed
+
+A direct room is encrypted end to end by WebRTC itself: both channels are DTLS
+and nothing turns that off. **The relay is not WebRTC** - it is this project's
+own socket, and `wss` is TLS from each client to the server and no further, so
+without a layer of its own the server would hold the picture, every key the peer
+types on the host and the shared clipboard in plain bytes. `src/room/seal.js` is
+that layer, and `room.js` puts every relayed payload through it.
+
+- **Keys per room, made at `room-open`.** Each side makes an ephemeral ECDH
+  P-256 pair (the private half never leaves WebCrypto) and sends the public half
+  as a `key` signal at once, so both halves have crossed long before any
+  fallback is taken. The first `key` of a room is the one taken; a later one
+  cannot re-key it. HKDF-SHA-256 over the shared secret, salted with the two
+  public keys in host-then-peer order, gives **one AES-GCM key per direction** -
+  so a payload the server hands back to the side that sealed it does not open.
+- **One layout for everything relayed**: `[version][4 byte epoch][8 byte
+  counter][ciphertext + tag]`, the header as additional data and the counter as
+  the nonce - one counter per direction through every epoch, so a nonce never
+  repeats under any key. Bytes, JSON and the seal's own rekey messages are told
+  apart by a byte *inside* the seal, so the relay frame is always kind 1 and the
+  server does not even learn which a message is - only its size.
+  The server needed no change: it already forwards a binary frame without
+  reading it.
+- **A replay window, not a strict order.** Relayed messages finish out of order
+  (see above), so the receiver keeps the newest counter and a slot for each of
+  the `REPLAY_WINDOW` (1024) before it. A counter is asked about before it is
+  decrypted and marked only after it opened, so a forged one cannot move the
+  window.
+- **Order is kept on both sides of the crypto.** Sealing and opening are async,
+  so `room.js` chains them: payloads reach the socket in the order they were
+  given and reach the stream in the order they arrived, while the encryption
+  itself runs at once. `seal()` copies its input before it returns, so the
+  stream may reuse a buffer the moment `sendFrame()` does; bytes still being
+  sealed count against `RELAY_BACKLOG` like bytes the socket holds.
+- **An unsealed relay is not a fallback.** A room on the relay is `connected`
+  only once the seal is in; one still without it after `SEAL_TIMEOUT` (5 s) has
+  lost a signal and leaves with `failed` rather than waiting on nothing - and
+  rather than sending in the clear. Whatever arrives on the relay that is not
+  sealed bytes (the server's own JSON `room-data` path, a frame of kind 2) or
+  does not open is dropped and logged, and is never taken as the other end
+  giving up.
+- **The keys renew from inside the seal.** After `REKEY_BYTES` (1 GiB, sealed
+  and opened on its side) or `REKEY_INTERVAL` (an hour), whichever is first, the
+  host offers a fresh ECDH key and the peer answers with one - both as sealed
+  messages, so **the only public keys that ever cross in the clear are the two
+  of the first exchange**, and the server can neither see nor swap a later one.
+  The new epoch's keys are HKDF over the new shared secret, salted with the
+  previous epoch's root, the epoch number and the two new keys, so every epoch
+  hangs from the one before it and through them all from the first exchange; a
+  key that got out stops being worth anything at the next rekey. Only the host
+  offers, so the two ends never offer at once; the peer answers under the old
+  keys and moves its own sending across at the host's first message under the
+  new ones (the host sends a `confirm` straight away for that). An unanswered
+  offer is sent again after `REKEY_RETRY` (10 s) - a relayed frame can be dropped
+  at a full socket - and a repeated offer gets the same answer. Each side keeps
+  the previous epoch's receive key for `KEY_GRACE` (30 s) after the other end
+  has moved, for what is still on its way, and then deletes it; a new rekey
+  waits for the other end to be on the last one, so three epochs are never live.
+
+**The trust model: the server is trusted at `room-open`, and only then.** The
+first public keys cross the server, so a server that swaps both for its own at
+that moment sits in the middle of the relay - exactly as it could of a direct
+room by swapping the DTLS fingerprints in the SDP. That is accepted: the
+exchange happens at every `room-open`, and what a server compromised *after* it
+cannot do is decrypt the room, re-key it (the first `key` signal is the only one
+taken, and every later key is sealed), or decrypt anything recorded, since the
+private keys never leave WebCrypto and go with the room. A server, proxy or log
+that only reads what passes never sees plaintext at all. Moving the trust point
+from every `room-open` to the first pairing would mean pinning each side's
+long-term key on the join at `pair-accept` and signing each room's key with it -
+not built, and neither the six-digit code nor the room key could stand in for it,
+since the server issued both. Nor can any key exchange help against the server
+that serves the web client its JavaScript.
 
 ## The room
 
@@ -673,7 +790,8 @@ whole reading.
 
 **A tool the host has not got is greyed, not left to do nothing.** The
 `share` message says whether there is sound (`isAudio`, the encoder's
-`hasAudio()` - the desktop host has none yet) and a keyboard to take
+`hasAudio()` - a desktop host on a platform with a loopback device is believed
+until its capture fails, and the share is said again when it does) and a keyboard to take
 (`isControl`, easy-control being there), and the bar greys the two buttons
 (`room-tool-off`) until a share has said, with the reason in the tooltip; a
 keyboard already taken from a host that then says it has none is let go.
@@ -816,6 +934,17 @@ is `room.leave()`, because deleting a share that **is** only a connection is
 ending it. One dialog for both, since a host that has just let somebody in should
 not have to learn a second screen for the connection it did not tick a box for.
 
+**A live card also carries *disconnect*.** Where the live room stands on a
+remembered join, the card is that join's and its *delete* forgets the device -
+which the server answers by ending the room on it too (`removed`) - so ending
+the connection *without* forgetting the device needs an entry of its own.
+`setLive()` shows it on whichever card is live, the connection-only card
+included, and it is `room.leave()` behind `confirm.endRoom`, for the room the
+click was about and no other: one that replaced it while the question stood is
+left alone. It is the host's one way to put a connected device off its keyboard
+and keep it; an unsupervised device may walk straight back in, and forgetting it
+is what keeps it out.
+
 **Neither delete is taken without asking.** `ctx["ui"].confirm()` is the one
 question the shell puts before something is undone for good -
 `ui/management/confirm/`, opened *nested* so whatever asked it is still behind
@@ -825,8 +954,9 @@ the document from `data-localization`, so a line written in as text would go bac
 to whatever the markup was built with - which is the same reason
 `management/connection` writes the key of its hint onto the element before
 reading it. The two questions are not one question: forgetting a join is gone from
-both devices for good (`confirm.deleteJoin`), ending a live share only ends what
-is up (`confirm.endRoom`, and the button says *End* rather than *Delete*).
+both devices for good, a connection standing on it with it (`confirm.deleteJoin`),
+ending a live share only ends what is up (`confirm.endRoom`, and the button says
+*End* rather than *Delete*).
 
 **A rebuild the room asked for is not dropped.** The grid answers two sources and
 they need opposite guards: `joins` fires `change` *because* the build asked it
@@ -904,6 +1034,48 @@ hardware encoders; `h264_videotoolbox` then `libx264` on macOS - and the first
 to produce a frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every
 second, no B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows,
 at the frame rate the bar asked for.
+ffmpeg's video lines carry no sound: the desktop host's is `createSystemAudio`,
+the first of two sources that gives any. First a `getDisplayMedia` that
+`main.js` answers through `setDisplayMediaRequestHandler` with the first screen
+and the `loopback` audio device - Windows' own, and behind Chromium features
+`main.js` switches on, ScreenCaptureKit's on macOS 13+
+(`MacLoopbackAudioForScreenShare`, `MacSckSystemAudioLoopbackOverride`) and the
+PulseAudio monitor on Linux (`PulseaudioLoopbackForScreenShare`). Its picture
+is asked for at 4x4 and 1 fps and never read: a display capture cannot be had
+without one, and an empty one is a picture Electron on macOS cannot wrap, whose
+capture then hands back silence (electron/electron#49607). Its sound is asked
+for as `CAPTURE_AUDIO` - stereo, echo cancellation, noise suppression and gain
+control off - on both hosts, since Chromium otherwise treats a display
+capture's sound as a call's microphone and hands back one processed channel;
+measured on Windows, a 0.2 tone came back at 0.16 through it and at 0.1965
+without. The track is only adopted once its first frame is out
+(`createAudioReader`'s `start()` answers that), since Electron on macOS has
+handed back a track that was ended from the start (electron/electron#52738) and
+it would otherwise stand in front of the ffmpeg lines saying nothing; a
+loopback delivers frames of silence while nothing plays, so on Windows the first
+is there within a few milliseconds. Under a Wayland session `main.js` refuses the
+capture outright - its screens are listed through the desktop portal, which
+would ask the host on every unmute - and a refusal is a rejected
+`getDisplayMedia`, not a hang. Then ffmpeg on its own, from a
+device that carries what the system plays: `stream-ffmpeg.js` lists the
+platform's audio inputs (`listAudioParams`/`parseAudioDevices`, dshow and
+avfoundation) and `buildAudioLines` keeps only the loopback kind by name -
+"Stereo Mix" and its translations, virtual cables and virtual-audio-capturer
+on Windows, BlackHole and its kind on macOS, never a microphone - and on Linux
+it is the default sink's PulseAudio monitor (`@DEFAULT_MONITOR@`, which
+PipeWire's pulse server answers too), which needs no listing. Those lines write
+raw 48 kHz stereo float PCM rather than Opus: `createPcmReader` cuts it into
+`AudioData` at whole samples and the one `createAudioSink` encodes every source,
+so there is no Ogg to parse and the peer is handed one kind of sound. The
+Windows device name is quoted into the line by hand, since `FFmpegProcess`
+spawns with `windowsVerbatimArguments`. A source that ends on its own is let
+go, and the next unmute looks again; only when every source fails is the share
+said again without sound. It runs beside ffmpeg rather than in it, so a restart of the line
+leaves it alone, and only while the peer's sound button is on: the `isAudio`
+setting starts and stops the capture itself rather than only the sending, and
+the settings preview never starts it. The sound's configuration rides with
+every keyframe like the picture's, since it is sent once when the encoder
+starts and the peer's room may not have been up for it.
 A settings change is a restart behind `RESTART_DEBOUNCE`, since ffmpeg is told
 nothing over a pipe - which is also why the desktop host cannot answer a
 keyframe request, and the one second GOP is the whole answer to a gap. The
@@ -977,10 +1149,302 @@ the pointer, so its release is the canvas's wherever it happens - over the
 bar, outside the window - and a blur or a cancelled pointer lifts every button
 the way it lifts every key.
 
+**The pointer is the peer's to draw.** The desktop host tells its capture *not*
+to draw the cursor into the picture (`isCursor` in `stream-ffmpeg.js` -
+`capture_cursor`, `-capture_cursor`, `-draw_mouse`, off wherever the host can
+hand one over instead) and reads its own pointer with easy-control:
+`src/room/cursor.js` fingerprints the shape and packs it as a PNG data URL,
+and the watch in `stream.js` looks at the pointer `CURSOR_POLL` - thirty times
+a second, the rate the picture beside it moves at - sending `{"kind":
+"cursor"}` only when that fingerprint is one the peer has not been given and
+`{"kind": "cursor-move"}` only when the position has actually moved (0..1 in
+the shared display, `null` when the pointer has walked onto another one). **The
+deciding is local**: a pointer sitting still is looked at thirty times a second
+and mentioned none. The looking is the cost - reading the shape is ~1.5 ms
+inside the addon against ~1 us for the position, about a twentieth of a core at
+this rate - which is what the fingerprint in front of the packing is worth, and
+why the two halves share one tick with the cheap one first. That tick schedules
+itself against the clock the run started on rather than against the tick before
+it, so the read inside it is not added to the gap after it - an interval of the
+same length drifts to 25 a second on a read of a millisecond and a half. The
+window it runs in must not be throttled either: Chromium slows a hidden page's
+timers to one a second, and a sharing host is a window somebody switched away
+from, which is why `main.js` opens it with `backgroundThrottling: false`. A cursor inside the video is a cursor at the video's
+rate and a frame behind it - it lags the hand moving it and stutters at
+whatever the line is doing - and the pointer is the one thing a person watches
+continuously while they drag something. The PNG is written by hand over
+`CompressionStream` rather than through a canvas, which is what keeps the
+module pure enough to run under Node (`tests/cursor.test.js`); a cursor is a
+few kilobytes of mostly nothing, so it packs to a fraction of its pixels and
+the shape only crosses the line when it changes at all.
+
+**Sizes are fractions, never pixels.** The shape is measured against the
+display being shared and its hotspot against the shape, because the peer knows
+that display only as the rectangle it drew it in - so a pointer covering a
+button on the host covers the same button on the peer, at any window size.
+Windows is the one platform whose scaling has to be divided out (`cursorScale`):
+it hands the cursor over at the size it is drawn on screen while
+`Screen.list()` reports that display in logical pixels, where a macOS `NSImage`
+is in points already and the X11 figure is read off the monitor's millimetres
+rather than off any scaling the desktop applies.
+
+**Two layouts, because the client is not what builds the addon.**
+`Mouse.getIcon()` hands over `width * height * 4` bytes of RGBA where
+`dev/control/src/mouse.cpp` stands today, and `width * height` packed
+`0xAARRGGBB` pixels from the build vendored under `src/client/native/`, which
+predates that source. `iconStride` is what tells them apart and `readIcon`
+reads either. The vendored one fills no alpha at all, so what it reports is a
+silhouette - the Windows arrow arrives as one white shape where it is really
+white inside a black edge - and a white pointer on a white document is a
+pointer nobody can see: `outlineSilhouette` gives the empty pixels touching the
+shape its contrast, black around a light pointer and white around a dark one.
+Nothing is invented about the shape, only about the edge it lost, and a picture
+that came with an alpha channel never goes through there. Rebuilding the addon
+from `dev/control/` is what replaces the guess with the real thing.
+
+**A shape is encoded once.** The fingerprint - FNV-1a over the pixels with the
+size and the hotspot in front of it - is what says the peer already has this
+one, and `CURSOR_SHAPES` of them are kept packed, since a session crosses the
+same handful over and over. The memo is dropped when the share moves to another
+display, because the fractions in it are of that display.
+
+**The browser draws it while the peer is driving.** The pointer over the
+picture *is* the host's pointer then, so the shape is handed to the canvas as
+its own `cursor: url(<the shape>) <hotspot>, auto` and the browser draws it -
+no image of ours to place, no position to wait for, and nothing between the
+hand and what it sees. The host stops sending positions the moment the peer
+takes the keyboard and the mouse (`setControlled`), since what it would say is
+a round trip behind that hand, and sends again the moment it is let go. The
+hotspot is in the shape's own pixels, which is why those go over beside the
+fractions. Chromium ignores a cursor image over 128 pixels, so the `auto`
+behind it is what a pointer that large falls through to; and the `cursor: none`
+still in the stylesheet is what is left for a host that sends no shape at all -
+a browser sharing through `getDisplayMedia` draws its own into the picture, and
+a second one over it would be two pointers. Because the shape lands in a CSS
+`url()` and an `img src`, the peer takes one only as the PNG data URL
+`cursor.js` packs (`CURSOR_IMAGE` in `stream.js`); a string that is anything
+else - a quote closing the `url()`, an address to fetch - is read as no pointer.
+
+**Where it is drawn is where a click lands.** `#room-cursor` sits over
+`#room-stage` and is placed by `pictureBox()` in `stream-input.js` - the same
+letterbox mapping the peer's own clicks travel through, so a pointer drawn in
+the wrong place and a click landing in the wrong place are one defect rather
+than two. That mapping is against the *picture's* size, which the element
+cannot be asked for: its surface belongs to the worker from the moment it is
+transferred and the width it still reports is the one it was born with, so the
+size comes from the stream's `size` event and the stage is measured again
+(a `ResizeObserver`) whenever the window or the fullscreen changes its shape.
+A host that cannot hand its cursor over - a browser sharing through
+`getDisplayMedia` - sends none of these messages, keeps the cursor in the
+capture, and the peer draws nothing over the picture.
+
 **The settings preview is the same pipeline with no line in it**: `preview()`
 runs the host's encoder into a viewer on the settings window's own canvas, so
 the one ffmpeg line in the tree is the one a room runs, and it refuses while a
 share stands - one encoder per client.
+
+## The clipboard
+
+The bar's *clipboard* button is one switch over one idea: while it is on, the
+two machines have the same clipboard, and while it is off neither of them reads
+or writes the other's. `src/room/clipboard.js` is this machine's clipboard
+behind one interface - the Electron one under the desktop shell, and
+`navigator.clipboard` in a browser - and `stream.js` is what carries it, as two
+messages on the control channel beside the input: `{"kind": "clipboard",
+"isClipboard"}` for the switch and `{"kind": "clipboard-text", "text"}` for
+what was copied, which travels in both directions.
+
+**The switch is the peer's.** A host is a machine somebody else is driving, so
+the side that asked for the connection is the side that decides whether its
+clipboard goes over; the host has no button for it and is simply told. It
+outlives a room the way the peer's other settings do - a new host is told it in
+`startPeer` - and a host that says it has no clipboard in its `share` message,
+or a browser that hands the page none, greys the button rather than flipping
+the switch: it is a setting, not something taken, and the sound beside it
+behaves the same way.
+
+**One side watches, the other waits for a gesture.** Neither shell reports a
+copy, so a clipboard is only ever read by looking at it. The host looks every
+`CLIPBOARD_POLL`, which is what makes a copy on the shared machine land on the
+peer's clipboard a moment later. The peer does not poll at all, because
+something better says when to look: *it came back to the picture*. A
+`pointerdown` or a `focus` on the canvas, and a `focus` on the window for the
+peer that never left the canvas at all, is both the moment its clipboard could
+have changed and - in a browser - the user gesture that a first
+`readText()` has to be asked inside. So the flow the button promises is the one
+that happens: copy on this machine, click back onto the remote picture, paste
+there.
+
+**Nothing echoes.** Two watches over one text would send it back and forth for
+ever, so `clipboard.js` keeps what both ends are known to hold: a text read
+that is what was last read or last written is not news, and `put()` records the
+text *before* writing it. That one rule is also why `onCanvasActive` flushes
+before it reads - a write still in flight would otherwise be read back as
+something this machine had just copied.
+
+**Turning it on has a direction.** The host primes - it reads its clipboard and
+remembers it without sending it - and the peer sends its own straight over, so
+switching on means "this machine's clipboard, onto that one" rather than a race
+between two machines to overwrite each other with something copied hours ago.
+
+**What it will not do is said.** A text longer than `MAX_LENGTH` is not sent:
+the relay answers a `room-data` call of at most 64 KB and JSON escaping grows a
+string on the way, so the cap is on the text with room to spare, and the bar
+says so in the snackbar rather than truncating what somebody copied. A browser
+that refuses to be read is said once per switch, not once per click. A write
+the browser refuses for want of focus is not lost either - it is kept and
+written at the next gesture.
+
+## The enhancer
+
+`src/room/stream-enhance.js` is the stage between the decoder and the drawer
+in the stream worker, and the bar's *enhance* entry is its whole UI: three
+switches - upscale, frame interpolation, frame extrapolation - that may be on
+in any combination, since a switch that excluded the others would be a choice
+between three things a person wants all of. What is on is this client's and
+not the host's: it never travels in `settings`, it outlives a room, and the
+room screen keeps it beside `settings` rather than in it.
+
+**The models are mocks, and the pipeline is real.** Each enhancement is one
+ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
+a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
+convolution before the resize, at the input resolution, the way a real
+upscaler computes low and upsamples last), and the two blends as the
+elementwise arithmetic they are. **A two-frame model takes two inputs**,
+`previous` and `current`, never one stacked six channel tensor: stacked, the
+enhancer paid a copy to stack them and the graph a `Slice` to take them apart
+again - 11 of the 17 ms an interpolated 1080p frame cost - where two inputs
+are two buffers handed over as the tensors they already are. The shapes were chosen by what the runtime's
+WebGPU provider runs well, and the measurements are in the generator's
+docstring: its generic `Conv` has no vectorised path for a channel count that
+is not a multiple of four and took 25 ms on a 1080p frame where the depthwise
+kernel takes 1.4 ms; a 1×1 convolution cost 17 ms where `Add`/`Mul` cost
+1-2; `Resize` at 11 ms is the floor and what a real upscaler pays, and the
+NCHW↔NHWC `Transpose` pair the provider puts around a graph's convolutions is
+4.3 ms once per graph; float16 and graph capture changed nothing - the kernels
+are index-bound, not bandwidth- or arithmetic-bound. A trained model will pay
+those prices for whatever it is built from. Where a 1080p frame's ~26 ms go
+with the upscaler on: `Resize` 11, the transposes 4, the draw onto the canvas
+~4, the frame into planes ~2.5, the convolution 1.4. They are the
+*shape* of the real thing - the same input and output, real GPU work in
+between, a picture that stays right - so the whole path from decoded frame to
+drawn picture can be built and timed before a trained model exists, and a
+trained one replaces a mock by being exported under the same name. `model/`
+is where those are trained; nothing there runs in the client.
+
+**The runtime is fetched when the first switch is turned on, not at boot.**
+ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
+draws the picture as it comes never needs it. What the worker does at boot is
+the *probe*: which backend this browser could run one on. `probeBackend()`
+asks for a WebGPU adapter, then for a WebGL context, and the answer is posted
+to the bar before anything is asked for, so the entry is greyed with the reason
+in its menu rather than left to fail on the click. There is no third backend
+on purpose: the runtime has a CPU one, and a CPU cannot keep up with a stream,
+so a browser with neither GPU path is told it needs one instead of being given
+a picture that arrives a second late.
+
+**A model never sees a whole frame, and every tile of a frame is one run.**
+Every picture is cut into tiles of one size, the tiles go through the model as
+one batch (`[N, C, h, w]`, the graphs carry a symbolic `N`), and the kept
+centres are merged back. Three reasons, and the first was a bug: the runtime's
+convolution is only right up to a size *per image* - a whole 1080p frame
+through the upscaler came back as the same 640 pixels repeated across the
+picture, silently, and 1440p is where the kernel breaks - while a batch is a
+dimension of its own and thirty-six tiles of 328×188 come back right; one run
+of every tile costs a frame far less than thirty-six runs of one (56 → 41 ms
+measured, the rest being the runtime's per-run overhead); and a session is
+then one shape whatever the stream's resolution, which is what the WebGL
+provider wants anyway. `planTiles()` is pure and tested: a 320×180 step, which
+divides every 16:9 resolution exactly (720p is 4×4 of it, 1080p 6×6, 4K
+12×12), and a halo of 4 pixels every model is given beyond it - the geometry
+`model/upscale/webexport.py` measured as the cheapest, and one halo for the
+whole chain, so a tile out of one model is a tile into the next. A tile near
+an edge is not cut short: its input window is slid back into the frame, so
+every tile of a frame has the same input size and the kept region moves
+inside the window instead; a frame smaller than a tile is one tile of its own
+size. A model exported for the client has to be right on a 328×188 tile and
+read no further than the halo.
+
+**The picture stays on the GPU on WebGPU, and goes through a pixel array on
+WebGL.** On WebGPU a decoded frame is imported as an external texture and one
+compute dispatch - a workgroup per 8×8 of a tile, the tile index on the third
+axis, each tile's window origin in a small table - writes the whole batch as
+float32 NCHW into one storage buffer the runtime takes as a tensor
+(`Tensor.fromGpuBuffer`, one tensor per graph input - a two-frame model is
+handed the previous picture's buffer and this one's, nothing stacked); the
+runtime answers in another (`preferredOutputLocation: "gpu-buffer"`); and
+one draw of a full-screen
+triangle finds, for every canvas pixel, the tile it is kept from by dividing
+by the step (the tiles are batched in row-major order for exactly that) and
+reads it there, onto a canvas of the enhancer's own, which is wrapped as a
+`VideoFrame` - so the drawer draws it exactly the way it draws a decoded
+frame, whichever of its three contexts it holds, and does not know the
+difference. A frame is one dispatch, one run per model, one draw. On WebGL
+the provider takes and returns CPU tensors and nothing else, so a frame is
+read off a 2D canvas and cut into one `Float32Array` batch, and the answer
+put back through an `ImageData`; it is a fallback, it costs seconds a frame,
+and the reading in the menu says so. Two things about the
+WebGPU path were found rather than designed. The runtime's
+buffers are only tensors on the device that made them, and this build of the
+runtime makes its own device from the adapter and takes none it is handed -
+`env.webgpu.device` is written by it, never read - so the enhancer's passes are
+built on the *runtime's* device once the first session exists, and the
+drawer keeps its own; the `VideoFrame` between them is what crosses. And the
+WebGL provider runs static shapes only: a dimension the graph leaves symbolic
+(`H`, `W`, so one file serves every resolution) is read as nothing and refused,
+so for WebGL the graph's bytes are patched - the symbolic input dimensions
+written as the frame's, a small protobuf rewrite of the fields on that path
+alone - and a session made per resolution. `tests/enhance.test.js` proves the
+patch against the mock files.
+
+**A generated frame has a place in the interval, and the real one moves to
+make room.** `schedule()` is pure: for one arriving frame it says which
+pictures are drawn and where each sits in the frame interval, as fractions.
+The interpolated frame stands in *before* the real one (it is the picture
+between this frame and the last) and the extrapolated one *after* it, so with
+interpolation on the real frame is drawn at half the interval, with
+extrapolation on the predicted frame is, and with both on the three are spaced
+by thirds. Upscaling is not a step - it runs over every picture the steps
+produce. The interval is measured from the stream's own timestamps rather than
+assumed. Whatever is still held when the next real frame arrives is drawn
+ahead of it, in order, rather than dropped: a generated frame never covers a
+real one, and none is lost.
+
+**One frame at a time, and the newest waits - and a frame is not done until
+the GPU is.** A frame that arrives while one is being enhanced waits, and a
+second one replaces it and is counted dropped: an enhancer that is behind
+should not fall further behind by working through what it missed. That only
+holds because a frame ends with `queue.onSubmittedWorkDone()`: a run resolves
+at *submit*, so without the wait a frame whose GPU work costs more than the
+interval queued behind the last one for ever - the CPU clock said a few
+milliseconds while the picture fell seconds behind and nothing was ever
+dropped, which is the freeze the tiling was first blamed for. With it the
+reading is the GPU's own time per frame (~26 ms for a 1080p→4K mock upscale
+on an 8-core Apple GPU, which keeps 30 fps; ~10 ms for interpolation; ~75 ms
+with all three on), the
+queue is bounded, and the drop count says what the GPU could not keep up
+with. A `reset` (the stream over, or restarted) bumps a generation,
+and a frame still in flight across it is let go rather than becoming the first
+frame of the next stream's pair. A change of size is not a reset - the host
+restarts its encoder at a new resolution inside the same stream, which the
+peer's `auto` resolution does on every bandwidth step - so the previous picture
+is dropped when the new one is not the same frame size (`isSameShape`, tested):
+a two-frame graph handed two sizes throws, and the enhancer would switch itself
+off for a bandwidth click. The picture a frame is made into is given back on
+every way out of `process` but the one that keeps it as the next previous.
+
+**What the bar shows is what the worker said, not what was clicked.** A click
+draws the wish at once and greys the rows until the worker answers; the
+`enhance` event carries the options actually in force, and an option the
+runtime refused - a graph that will not load, a run that threw - comes back
+off, with the reason in the snackbar. The label is the short names of what is
+on, joined; the last row of the menu is a status rather than a choice - the
+probe, its refusal, a load in progress, and otherwise the reading: the backend
+and what a frame costs from arriving to its last drawn picture, fed from the
+stream's `stats` while a picture is being received, or the backend alone until
+there has been one. It is **one row that is always there** and only ever
+changes its text: a row that appears or goes moves the rows under the pointer
+of an open menu, which is what it did first.
 
 ## The registry
 
@@ -993,19 +1457,157 @@ none. **A registry id is not its path** — `room-create` lives at
 `ui/room/create/` and the id is what the shell, the markup and the router know it
 by.
 
-The localization dictionary grows with the UI: `src/localization.js` holds only
-the shell slice (the loading layer of `index.html`, and the strings the two bars
-share with the menu dialog), and the registry hands each module's
-`localization.json` to `add()` while the module loads.
+The localization dictionary grows with the UI, and none of it is code:
+`src/localization.js` is the lookup alone, starts empty and knows no file. A
+`localization.json` sits at the level that uses it. The shell's own levels
+carry one each that no module brings, and boot `load()`s the three
+(`LEVEL_DICTIONARIES` in `ui/ui.js`) before anything asks for a line — a
+slice that fails is logged and skipped like a module, and the markup keeps its
+own English text where its lines would have gone:
+`ui/localization.json` is what every level shares — `main.name`, the
+application's own name where the configuration gives it none, which the desktop
+shell names its auto-launch entry from in `initDesktop` — while
+`ui/loading/localization.json` is the loading layer of `index.html` and
+`ui/management/localization.json` the `main.*` chrome the two bars, the menu and
+the management screens share. The registry then hands each module's
+`localization.json` to `add()` while the module loads; the room segment's
+shared lines (`room.share.failed`, which `src/room/stream.js` shows) are in the
+room module's own, since that module is the level. `tests/localization.test.js`
+holds a module to the slices of its own folder and the folders above it, and
+checks every literal key a script hands to `get()` as well as the markup's. `supportedLanguages` is a getter for the same
+reason: the languages arrive with the slices, so they are read off the
+dictionary when asked rather than when the module is imported.
 
 ## Odds and ends worth keeping
 
 - **beercss nav badges** are read as `nav.left > a > .badge`, so the narrow rail
   wants the badge as a direct child of the entry and the wide one wants it inside
   the wrapper beside the icon. `nav-left` re-parents it when the width changes.
-- **The theme is applied in two goes.** beercss derives the mode from the theme
-  it just built, so `ui("theme", …)` and `ui("mode", …)` cannot be set in one
-  tick — hence the `setTimeout(…, 1)` in `applyTheme`.
+- **The theme is painted before any module runs.** A person should meet the
+  colour and the mode on the loading layer rather than watch them switch once
+  the modules arrive, so the first thing in the body of `index.html` is a plain
+  script — a module would run after the first paint — that puts the palette on
+  the body as beercss would: the class of the mode and the palette as the
+  body's `style`. It paints the palette this client last drew with (`appearance`
+  in `localStorage`, `{color, mode, light, dark}` — a cache for the paint, the
+  setting itself stays in IndexedDB, which cannot be read synchronously) and,
+  on a first visit, the server's default, which the build computes for
+  `http.appearance` with the same `material-dynamic-colors` the client uses
+  (`buildPaint` in `building.js`) and writes into `<meta name="appearance">` —
+  an attribute, because the minifier routes inline script through UglifyJS and
+  leaves attributes alone. `applyTheme` in `ui/ui.js` then hands beercss a
+  palette it already has as `{light, dark}`, which is synchronous and draws
+  nothing new, builds one only for a colour never drawn, and caches whatever
+  it drew; the appearance window goes through it as `ctx["ui"].applyTheme()`
+  so a change is painted at the next load too. **The palette is built beside
+  beercss, never by it**: `ui("theme", color)` applies its result whenever it
+  resolves, so a slow colour would land over one picked after it and nothing
+  could call it off. `buildPalette` in `src/appearance.js` calls
+  `materialDynamicColors` itself and writes the style strings the way beercss
+  does — the build's `buildPaint` imports the same module, so the palette
+  painted first and the one drawn after cannot drift apart — and only the
+  latest call draws what it built; an earlier one that resolves late is
+  dropped. One build per colour is in flight at a time, however many calls wait
+  on it. Nothing waits in line behind a build, so a cached colour or a mode
+  switch is drawn at once; while a new colour builds — and if the build fails
+  — the mode is switched on the palette already on screen. Before the first
+  draw beercss holds no palette and setting a mode alone would wipe the one
+  `index.html` painted, so that palette (the cache's, else the meta's) is
+  handed to beercss with the mode instead. The meta is read
+  once — the build's never changes — but the cache is read on every write,
+  since another tab or window writes it too and a copy in memory would put its
+  stale colour or language back. `ui.js`
+  imports the two beercss modules itself so `ui()` is there when it is called.
+  Under the desktop shell the window starts hidden and is shown on
+  `ready-to-show`, so it never appears as a blank frame before that paint — or
+  on a `did-fail-load` of the main frame (not an aborted navigation, `-3`, and
+  not a frame inside the page such as the Google button) or after
+  `SHOW_TIMEOUT`, so a page that never paints does not leave the application
+  running with no window. Any show counts, the tray's or a second launch's
+  too (the window's own `show` event), so a window hidden to the tray before
+  its first paint is not brought back by it.
+  The same script sets the **title** from the configured `name` in the meta —
+  in the language this client last showed (`lang` in the same cache, written by
+  `applyLanguage`), else the browser's — and `applyLanguage` sets it again on
+  every language change; the name itself is never cached, so a renamed server
+  is renamed at the next load. Electron's window takes the page title on its
+  own, and `main.js` hands it to the tray's tooltip on `page-title-updated`.
+  The build also writes the English name (`pickName(names, "en")`, the same
+  rule) as the static `<title>` for anything that reads the page without running it. Where no name
+  is configured, the title is the dictionary's `main.name` in the client's
+  language. The rules are `pickName`/`pickSystemName` in `src/appname.js`
+  (pure, `tests/appname.test.js`).
+  **What the system is told is in English.** The auto-launch entry
+  (`openAutoLaunch` in `src/desktop.js`) is named with the configured English
+  name (by `pickName`'s rule, so an `en-US` counts, as it does for the static
+  `<title>`), else the first configured, else "Desktop Streamer" — the
+  product's own name, a constant rather than the dictionary's `main.name`,
+  since a slice that failed to load on one start and not the next would move
+  the entry back and forth — stripped of what a registry value, a file name or
+  an AppleScript string cannot hold — the name *is* the entry on Windows and
+  Linux (a `Run` value, an autostart `.desktop` file). The vendored
+  `auto-launch` does not honour it: its `fixOpts` replaces the name it is given
+  with the executable's basename whenever the path holds a separator, which an
+  absolute path always does, so every entry would be one entry. `createEntry`
+  puts the name back over the library's — except on **macOS**, where the entry
+  is a login item and System Events names a login item after its bundle
+  whatever it is told (a login item's `name` is read only), so there the
+  library's name is the only one that can be found again, nothing is ever
+  moved, and no AppleScript runs until the setting is touched. Elsewhere the
+  name the library picks (`readExeName` — what every build before that fix
+  actually registered under) is added to the names to move the first time an
+  executable is seen (`autoLaunchExeName` records it). For a plain dist that
+  name is `electron`, which any other Electron app may have registered, so an
+  entry under it is taken as ours only if it starts this executable
+  (`startsExe`, which reads the `Run` value through `reg.exe` or the `Exec=`
+  line of the autostart file, around the library that only says whether there
+  is one): anybody else's is never read as on, moved or removed. A read that
+  fails (a `reg.exe` past `REG_QUERY_TIMEOUT`, an unreadable file) throws
+  rather than answering "not ours" — it is only asked once an entry was found
+  under the name, so a "no" would drop that name from the list while its
+  entry went on starting the application. Because the
+  entry is found by its name, a renamed one would leave the old entry starting
+  the application beside it and the setting reading as off, so every name an
+  entry may still be under is kept in `localStorage` (`autoLaunchNames`,
+  seeded from the single `autoLaunchName` of the build before it, else
+  "Desktop Streamer"). The current name is written into that list *before*
+  anything is registered under it, so a name renamed again before its move
+  finished is still known and still moved; a name leaves the list only once
+  nothing of ours is enabled under it. At start each enabled entry under
+  another name is moved — the new one enabled first, the old one disabled
+  after — in the background, not on the boot path. The calls of
+  `desktop["autoLaunch"]` run one at a time behind that move, since each one
+  rewrites the list of names left and two overlapping would drop a name the
+  other still had an entry under; one that has not settled
+  `AUTO_LAUNCH_QUEUE_TIMEOUT` after it started (a `reg.exe` that hangs, an
+  AppleScript prompt nobody answers) fails its caller — so the checkbox it
+  locked comes back — and frees the ones behind it, so a settings reset is
+  never stuck behind it. The task itself cannot be stopped, so it runs on
+  under a lease that has expired and writes nothing more: no entry enabled
+  or disabled, no list of names saved over the one the next call is using. It answers for every name still left: it reads as on while any
+  is, its `enable` retries the moves, and its `disable` (the settings reset's
+  included — a `disable` that has no entry of its own to remove still removes
+  the others) removes every one it can, so a failed move never leaves an
+  entry the setting cannot see. A failure to move or remove an *old* entry is
+  logged and kept for the next try, never thrown: the appearance window
+  re-reads `isEnabled()` after every switch — a failed one too — and on every
+  `open()`, since a settings reset disables it from another window, so the
+  checkbox says what the system holds, the only record of the setting there
+  is. The checkbox is disabled while a read or a switch is out and only the
+  latest of them writes it, so a late answer never lands over a click; a read
+  that fails after a failed switch puts it back rather than leaving it as
+  clicked. **Every enable goes through `enableEntry`**: a `Run` value or an
+  autostart file is rewritten in place, so enabling again is how an entry left
+  pointing at an old executable (a build unzipped somewhere else) is pointed
+  at this one; a macOS login item is *added* by every enable, so there one
+  that exists is left as it is — removing it to make it again would lose it
+  whenever the make failed — and switching the setting off and on is what
+  points it at a moved build. A name that changes only in **case** is moved
+  the other way round — the old entry disabled first, then the new one
+  enabled — since the `Run` key ignores case, and there enabling the new name
+  rewrites the old entry, which disabling the old name would then remove; if
+  the new one cannot be made, the old one is enabled again, so a failed move
+  never leaves no entry at all.
 - **Media device lists** come back unnamed and id-less until the page has been
   granted access once, so `media-devices.js` asks again after a `getUserMedia`
   call.
@@ -1041,12 +1643,14 @@ share with the menu dialog), and the registry hands each module's
 
 The pairing, join, room, account and stream flows are live: the picture, the
 sound of a web host, and the peer's keyboard and mouse cross the room on both
-legs (see The stream). What `dev/plans/room-media.md` still lists as open:
-the desktop host captures no sound (ffmpeg has no system audio input that is
-the same on both platforms), a desktop host cannot answer a keyframe request
+legs (see The stream), and the desktop host's sound beside ffmpeg (a loopback
+display capture, then ffmpeg from a loopback device or Linux's PulseAudio
+monitor - both paths run on Windows in Electron 42; macOS and Linux are built
+to what Electron and Chromium document and are untested). What `dev/plans/room-media.md` still lists as open: a desktop host cannot answer a keyframe request
 over a pipe, the access unit splitter is one frame behind the encoder (a unit is
-only known whole when the next delimiter arrives), and the upscaler is a later
-plan. The previous client implementation is at commit `da3921d`, and it read
+only known whole when the next delimiter arrives), and the enhancer runs mock
+graphs - the pipeline is there, the trained models are not (see The
+enhancer). The previous client implementation is at commit `da3921d`, and it read
 message types the server no longer serves — do not paste it back untouched.
 
 Two modules are markup with nothing behind them. `management/search`: the field

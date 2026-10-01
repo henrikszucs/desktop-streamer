@@ -28,6 +28,32 @@
                 "hu": "A másik eszköz nem engedi átvenni a billentyűzetét és az egerét"
             }
         },
+        "clipboard": {
+            "share": {
+                "en": "Share the clipboard with the other device",
+                "hu": "Vágólap megosztása a másik eszközzel"
+            },
+            "stop": {
+                "en": "Stop sharing the clipboard",
+                "hu": "Vágólap megosztásának leállítása"
+            },
+            "none": {
+                "en": "The other device does not share its clipboard",
+                "hu": "A másik eszköz nem osztja meg a vágólapját"
+            },
+            "unsupported": {
+                "en": "This browser does not let the page use the clipboard",
+                "hu": "Ez a böngésző nem engedi az oldalnak a vágólap használatát"
+            },
+            "refused": {
+                "en": "The browser refused to read the clipboard, so nothing copied here is shared.",
+                "hu": "A böngésző nem engedte kiolvasni a vágólapot, így az itt másolt tartalom nem kerül át."
+            },
+            "large": {
+                "en": "What was copied is too large to share.",
+                "hu": "A másolt tartalom túl nagy a megosztáshoz."
+            }
+        },
         "bandwidth": {
             "value": {
                 "en": "{value} Mbps",
@@ -120,6 +146,10 @@
             "ended": {
                 "en": "The other device stopped sharing its screen.",
                 "hu": "A másik eszköz befejezte a képernyője megosztását."
+            },
+            "failed": {
+                "en": "The screen could not be shared, so the connection was ended.",
+                "hu": "A képernyőt nem sikerült megosztani, ezért a kapcsolat megszakadt."
             }
         },
         "leave": {
@@ -144,6 +174,60 @@
             "cancel": {
                 "en": "Stay",
                 "hu": "Maradok"
+            }
+        },
+        "enhance": {
+            "off": {
+                "en": "Off",
+                "hu": "Ki"
+            },
+            "upscale": {
+                "en": "Upscale (2×)",
+                "hu": "Felskálázás (2×)"
+            },
+            "upscaleShort": {
+                "en": "2×",
+                "hu": "2×"
+            },
+            "interpolate": {
+                "en": "Frame interpolation",
+                "hu": "Képkocka-interpoláció"
+            },
+            "interpolateShort": {
+                "en": "Interp.",
+                "hu": "Interp."
+            },
+            "extrapolate": {
+                "en": "Frame extrapolation",
+                "hu": "Képkocka-extrapoláció"
+            },
+            "extrapolateShort": {
+                "en": "Extrap.",
+                "hu": "Extrap."
+            },
+            "unsupported": {
+                "en": "Needs a GPU the browser can use (WebGPU or WebGL)",
+                "hu": "A böngésző által használható GPU kell hozzá (WebGPU vagy WebGL)"
+            },
+            "checking": {
+                "en": "Checking what this browser can run...",
+                "hu": "Ellenőrzés, hogy mit tud futtatni ez a böngésző..."
+            },
+            "loading": {
+                "en": "Loading the models...",
+                "hu": "A modellek betöltése..."
+            },
+            "reading": {
+                "en": "{backend} · {ms} ms per frame",
+                "hu": "{backend} · {ms} ms képkockánként"
+            },
+            "idle": {
+                "en": "{backend} · ready",
+                "hu": "{backend} · készen áll"
+            },
+            "failed": {
+                "en": "The enhancement could not run: {reason}",
+                "hu": "A javítás nem futtatható: {reason}"
             }
         }
     }

@@ -1,0 +1,12 @@
+{
+    "loading": {
+        "title": {
+            "en": "Loading...",
+            "hu": "Betöltés..."
+        },
+        "subtitle": {
+            "en": "The application is loading please wait...",
+            "hu": "Az alkalmazás betöltése folyamatban, kérlek várj..."
+        }
+    }
+}

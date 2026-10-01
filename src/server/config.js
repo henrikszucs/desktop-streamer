@@ -9,6 +9,7 @@ import Ajv from "ajv"
 
 // first-party dependencies
 import { setAbsolute } from "./common.js";
+import { parseTrustEntry } from "./ws/address.js";
 
 const definitions = {
     "port": {
@@ -23,6 +24,16 @@ const definitions = {
     "bytes": {
         "type": "integer",
         "minimum": 0
+    },
+    // where a proxy connects from - addresses and address/prefix ranges - so
+    // the client address it forwards is believed from it and from nobody else;
+    // each entry is checked in checkConstraints
+    "trust": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+            "$ref": "#/definitions/text"
+        }
     }
 };
 
@@ -31,15 +42,32 @@ const httpSchema = {
     "required": ["domain", "port", "key", "cert"],
     "additionalProperties": false,
     "properties": {
-        // (optional) customized name of the application, keyed by language code
-        "name": {
+        // (optional) how the client looks - handed to it in index.json, and
+        // the colour and theme are what a client starts with and resets to
+        "appearance": {
             "type": "object",
-            "minProperties": 1,
-            "propertyNames": {
-                "pattern": "^[a-z]{2}(-[A-Za-z0-9]+)*$"
-            },
-            "additionalProperties": {
-                "$ref": "#/definitions/text"
+            "additionalProperties": false,
+            "properties": {
+                // (optional) customized name of the application, keyed by language code
+                "name": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "propertyNames": {
+                        "pattern": "^[a-z]{2}(-[A-Za-z0-9]+)*$"
+                    },
+                    "additionalProperties": {
+                        "$ref": "#/definitions/text"
+                    }
+                },
+                // (optional) the default theme colour, a hex RGB colour
+                "color": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                },
+                // (optional) the default theme, "auto" follows the system
+                "theme": {
+                    "enum": ["dark", "light", "auto"]
+                }
             }
         },
         // access domain
@@ -57,6 +85,33 @@ const httpSchema = {
         // private cert path
         "cert": {
             "$ref": "#/definitions/text"
+        },
+        // (optional) the address this server is reached at from outside when a
+        // proxy stands in front of it - what a client is told, and what a
+        // redirect points at, instead of the domain and port it listens on
+        "proxy": {
+            "type": "object",
+            "required": ["domain", "port"],
+            "additionalProperties": false,
+            "properties": {
+                "domain": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                },
+                // (optional) the plaintext port of the proxy, the one in front
+                // of "redirect" below - it only says where that redirect is
+                // reached, so it needs a "redirect" to stand in front of
+                "redirect": {
+                    "$ref": "#/definitions/port"
+                },
+                // (optional) where the proxy connects from, this machine when
+                // left out - read by the WS server when it shares this port
+                "trust": {
+                    "$ref": "#/definitions/trust"
+                }
+            }
         },
         // (optional) HTTP port that redirects to HTTPS
         "redirect": {
@@ -119,6 +174,27 @@ const wsSchema = {
         // private cert path
         "cert": {
             "$ref": "#/definitions/text"
+        },
+        // (optional) the address this server is reached at from outside when a
+        // proxy stands in front of it - what a client opens its socket on,
+        // instead of the domain and port it listens on
+        "proxy": {
+            "type": "object",
+            "required": ["domain", "port"],
+            "additionalProperties": false,
+            "properties": {
+                "domain": {
+                    "$ref": "#/definitions/text"
+                },
+                "port": {
+                    "$ref": "#/definitions/port"
+                },
+                // (optional) where the proxy connects from, this machine when
+                // left out
+                "trust": {
+                    "$ref": "#/definitions/trust"
+                }
+            }
         },
         // database connection, a MySQL server or a local SQLite file
         "database": {
@@ -330,6 +406,81 @@ const checkConfig = (config) => {
     };
 };
 
+// the address a client reaches a server at: a server behind a proxy does not
+// listen where the person types, so what it is told is the proxy's domain and
+// port and never the ones the socket is bound to
+const getPublicAddress = (config, section) => {
+    const server = config[section];
+    if (typeof server !== "object" || server === null) {
+        return null;
+    }
+    const proxy = server["proxy"];
+    if (typeof proxy === "object") {
+        return {
+            "domain": proxy["domain"],
+            "port": proxy["port"]
+        };
+    }
+    return {
+        "domain": server["domain"],
+        "port": server["port"]
+    };
+};
+
+// the address a client opens its socket on, which is not always the WS
+// section's own: a remote WS server is a client-facing address already, and a
+// WS server that has no proxy of its own is reached where the HTTP one is
+const getPublicWsAddress = (config) => {
+    const http = config["http"];
+    if (typeof http === "object" && typeof http["remote"] === "object") {
+        return {
+            "domain": http["remote"]["host"],
+            "port": http["remote"]["port"]
+        };
+    }
+    const ws = getPublicAddress(config, "ws");
+    if (ws === null || typeof config["ws"]["proxy"] === "object") {
+        return ws;
+    }
+    const httpPublic = getPublicAddress(config, "http");
+    if (httpPublic === null) {
+        return ws;
+    }
+    // sharing the HTTPS port means sharing the listener, so the two are the
+    // same address from outside - otherwise only the host is shared
+    if (http["port"] === config["ws"]["port"]) {
+        return httpPublic;
+    }
+    return {
+        "domain": httpPublic["domain"],
+        "port": ws["port"]
+    };
+};
+
+// where the HTTP redirect is reached from outside, null when nothing says: a
+// proxy hides the port the redirect listens on, and a port it was not given is
+// not one to guess
+const getPublicRedirect = (config) => {
+    const http = config["http"];
+    if (typeof http !== "object" || http === null || typeof http["redirect"] !== "number") {
+        return null;
+    }
+    const proxy = http["proxy"];
+    if (typeof proxy === "object") {
+        if (typeof proxy["redirect"] !== "number") {
+            return null;
+        }
+        return {
+            "domain": proxy["domain"],
+            "port": proxy["redirect"]
+        };
+    }
+    return {
+        "domain": http["domain"],
+        "port": http["redirect"]
+    };
+};
+
 // check the constraints that the schema cannot express
 const checkConstraints = (config) => {
     const http = config["http"];
@@ -351,6 +502,24 @@ const checkConstraints = (config) => {
         for (let j = i + 1; j < length; j++) {
             if (ports[i][1] === ports[j][1]) {
                 return ports[j][0] + " cannot be the same as the " + ports[i][0] + ": " + ports[i][1];
+            }
+        }
+    }
+
+    // the proxy redirect port is the address of the redirect server, so it
+    // says nothing on its own - a configuration carrying one without the
+    // redirect it names is a mistake rather than a port to open
+    if (typeof http === "object" && typeof http["proxy"] === "object"
+        && typeof http["proxy"]["redirect"] === "number" && typeof http["redirect"] !== "number") {
+        return "HTTP proxy redirect port is configured without an HTTP redirect port!";
+    }
+
+    // a trust entry the schema only knows as text has to be an address or a
+    // range, or the WS server would fail on it at boot rather than here
+    for (const [label, proxy] of [["HTTP", http?.["proxy"]], ["WS", ws?.["proxy"]]]) {
+        for (const entry of proxy?.["trust"] ?? []) {
+            if (parseTrustEntry(entry) === undefined) {
+                return label + " proxy trust is not an address or an address/prefix range: " + entry;
             }
         }
     }
@@ -392,6 +561,11 @@ const loadCertificates = async (config, confDir) => {
     }
 };
 
+// fields an earlier build accepted somewhere else, named in the error
+const MOVED_FIELDS = {
+    "/http/name": "/http/appearance/name"
+};
+
 // load the conf file and check its contents, it returns the config or throws an error
 const loadConfig = async (confPath) => {
     // load conf file (required)
@@ -419,7 +593,13 @@ const loadConfig = async (confPath) => {
     const result = checkConfig(config);
     if (result["valid"] === false) {
         const details = result["errors"].map((error) => {
-            return "  " + (error["instancePath"] || "/") + " " + error["message"];
+            let line = "  " + (error["instancePath"] || "/") + " " + error["message"];
+            const extra = error["params"]?.["additionalProperty"];
+            if (typeof extra === "string") {
+                const extraPath = error["instancePath"] + "/" + extra;
+                line += ": \"" + extra + "\"" + (extraPath in MOVED_FIELDS ? " (moved to " + MOVED_FIELDS[extraPath] + ")" : "");
+            }
+            return line;
         }).join("\n");
         throw new Error("Invalid configuration file: " + confPath + "\n" + details);
     }
@@ -440,5 +620,5 @@ const loadConfig = async (confPath) => {
     return config;
 };
 
-export { schema, checkConfig, loadConfig };
-export default { schema, checkConfig, loadConfig };
+export { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress, getPublicRedirect };
+export default { schema, checkConfig, loadConfig, getPublicAddress, getPublicWsAddress, getPublicRedirect };

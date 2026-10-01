@@ -14,13 +14,17 @@ import { createRoom } from "./src/room/room.js";
 import { createStream } from "./src/room/stream.js";
 import localization from "./src/localization.js";
 import Router from "./src/router.js";
-import { applyScale, applyLocal, createUI, buildUI } from "./ui/ui.js";
+import { loadDictionaries, applyScale, applyLocal, createUI, buildUI } from "./ui/ui.js";
 
 const main = async function() {
     // the environment - the size of the UI first, before anything is drawn at
     // the wrong one
     applyScale();
     window.addEventListener("resize", applyScale);
+
+    // the shell's dictionary slices, before anything asks for a line of them -
+    // the desktop shell names its auto-launch entry from one
+    await loadDictionaries();
 
     // the Electron modules, if this is running under the desktop shell
     await initDesktop();

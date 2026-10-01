@@ -16,7 +16,9 @@
 // first-party dependencies
 import { generateId, httpsGetText, httpsGetImage } from "../../common.js";
 import { notify } from "../notify.js";
-import { removeUserJoins } from "./joins.js";
+import { addressOf } from "../address.js";
+import { removeUserJoins, detachUserJoins } from "./joins.js";
+import { setRelayAllowed } from "./rooms.js";
 
 // how long a session stands without being presented; every login-session pushes
 // it out again, so a device that comes back within the week never signs in twice
@@ -30,6 +32,12 @@ const DELETE_COOLDOWN = 60 * 1000;
 
 // the id and key searches give up rather than spinning, as the join codes do
 const ID_ATTEMPTS = 100;
+
+// the session key is the credential a device signs in again with and nobody
+// ever types it, so it is long; the delete key is typed off a mail, and is
+// only good for a day, on the session that asked for it
+const SESSION_KEY_LENGTH = 32;
+const ID_LENGTH = 10;
 
 // a name is a label, and the field that writes one is capped at the same length
 const NAME_MAX = 64;
@@ -103,9 +111,9 @@ const createAuth = function(conf) {
 // the rows
 //
 // a value no row of the column holds, or undefined when the search gives up
-const generateUnique = async function(db, table, column) {
+const generateUnique = async function(db, table, column, length=ID_LENGTH) {
     for (let i = 0; i < ID_ATTEMPTS; i++) {
-        const value = generateId(10);
+        const value = generateId(length);
         const taken = await db(table).where(column, value).first();
         if (typeof taken === "undefined") {
             return value;
@@ -121,7 +129,7 @@ const generateUnique = async function(db, table, column) {
 const profileOf = function(row, picture) {
     return {
         "userId": row["user_id"],
-        "email": row["email"],
+        "email": row["email"] ?? "",
         "firstName": row["first_name"] ?? "",
         "lastName": row["last_name"] ?? "",
         "picture": picture ?? "",
@@ -144,9 +152,52 @@ const findSession = async function(db, sessionKey) {
     return await db("sessions").where("session_key", sessionKey).first();
 };
 
-// the account behind a Google credential: the existing row, or a new one when
-// the server allows that. Returns the users row, or the error name.
-const findOrCreateGoogleUser = async function(server, info) {
+// what a credential says that a row does not. The names are the user's own
+// once they were edited here, so only an empty one is filled in - which is
+// also what makes a row seeded with an e-mail and nothing else a whole
+// account the moment somebody signs in on it.
+const fillFromGoogle = function(user, info) {
+    const change = {};
+    if ((user["first_name"] ?? "") === "" && typeof info["given_name"] === "string") {
+        change["first_name"] = info["given_name"].substring(0, NAME_MAX);
+    }
+    if ((user["last_name"] ?? "") === "" && typeof info["family_name"] === "string") {
+        change["last_name"] = info["family_name"].substring(0, NAME_MAX);
+    }
+    return change;
+};
+
+// The address a credential carries, onto the account it signed in. Google's
+// `sub` is who a person is - it never changes and is never handed to anybody
+// else - while the address is only the latest one Google verified for them,
+// and it moves. So a row still holding this address belongs to somebody whose
+// Google account has moved on from it: that user is signed out everywhere
+// and left with no address (null, which a unique column holds any number
+// of) until their own next sign-in brings the one Google has for them now.
+// The two rows change together, so the address is never on both, or on none.
+const takeEmail = async function(server, userId, email, exceptSessionId) {
+    let previous = undefined;
+    await server.db.transaction(async function(trx) {
+        previous = await trx("users")
+            .where("email", email)
+            .whereNot("user_id", userId)
+            .first();
+        if (typeof previous !== "undefined") {
+            await trx("users").where("user_id", previous["user_id"]).update({"email": null});
+            await trx("sessions").where("user_id", previous["user_id"]).del();
+        }
+        await trx("users").where("user_id", userId).update({"email": email});
+    });
+    if (typeof previous !== "undefined") {
+        console.log("The address of " + previous["user_id"] + " moved to " + userId + ", signed out");
+        signOutUser(server, previous["user_id"], exceptSessionId);
+    }
+};
+
+// the account behind a Google credential: the existing row, the row that was
+// already waiting under that address, or a new one when the server allows
+// that. Returns the users row, or the error name.
+const findOrCreateGoogleUser = async function(server, info, sessionId) {
     const db = server.db;
     const link = await db("users_google").where("sub", info["sub"]).first();
     if (typeof link !== "undefined") {
@@ -155,21 +206,16 @@ const findOrCreateGoogleUser = async function(server, info) {
             return {"error": "unknown-user"};      // a link with no row behind it
         }
 
-        // what Google says about the person is what the row was made from, and
-        // the picture follows it; the names are the user's own once they edited
-        // them here, so only an empty one is filled in
-        const change = {};
-        if (user["email"] !== info["email"]) {
-            change["email"] = info["email"];
-        }
-        if ((user["first_name"] ?? "") === "" && typeof info["given_name"] === "string") {
-            change["first_name"] = info["given_name"].substring(0, NAME_MAX);
-        }
-        if ((user["last_name"] ?? "") === "" && typeof info["family_name"] === "string") {
-            change["last_name"] = info["family_name"].substring(0, NAME_MAX);
-        }
+        // the person is the `sub`, and what Google says about them now is
+        // what the row follows: the names it left empty, the address - the
+        // latest verified one, wherever it was before - and the picture
+        const change = fillFromGoogle(user, info);
         if (Object.keys(change).length > 0) {
             await db("users").where("user_id", user["user_id"]).update(change);
+        }
+        if (user["email"] !== info["email"]) {
+            await takeEmail(server, user["user_id"], info["email"], sessionId);
+            change["email"] = info["email"];
         }
         if ((link["picture"] ?? "") !== (info["picture"] ?? "")) {
             await db("users_google").where("sub", info["sub"]).update({"picture": info["picture"] ?? ""});
@@ -177,15 +223,38 @@ const findOrCreateGoogleUser = async function(server, info) {
         return {"user": {...user, ...change}, "pictureUrl": info["picture"] ?? ""};
     }
 
-    if (server.auth["isRegisterAllowed"] !== true) {
-        return {"error": "register-disabled"};
-    }
-
-    // an address already on a row that another provider made would be a second
-    // account for one person; there is one provider today, so it is refused
+    // an address that is already a row is the person that row is for, as long
+    // as nothing has claimed it yet: the credential is what proves them, and
+    // the row is filled in rather than made. That is what a list of addresses
+    // put in by hand is - an account each, waiting to be signed in on - and it
+    // is how an organization opens a public domain to its own people alone,
+    // with `userRegister` off so that nobody else is made a row by arriving.
+    // Registering is not what happens here, so neither rule of it applies: the
+    // relay permission answered is the one the row carries.
     const byEmail = await db("users").where("email", info["email"]).first();
     if (typeof byEmail !== "undefined") {
-        return {"error": "email-taken"};
+        // a row somebody is already signed in on is theirs, and a second
+        // credential under the same address is a second account for one person
+        const claimed = await db("users_google").where("user_id", byEmail["user_id"]).first();
+        if (typeof claimed !== "undefined") {
+            return {"error": "email-taken"};
+        }
+        const change = fillFromGoogle(byEmail, info);
+        if (Object.keys(change).length > 0) {
+            await db("users").where("user_id", byEmail["user_id"]).update(change);
+        }
+        await db("users_google").insert({
+            "sub": info["sub"],
+            "user_id": byEmail["user_id"],
+            "picture": info["picture"] ?? ""
+        });
+        return {"user": {...byEmail, ...change}, "pictureUrl": info["picture"] ?? ""};
+    }
+
+    // nobody this server knows, under any address: only registering can make
+    // one, and it is the permission that says whether it may
+    if (server.auth["isRegisterAllowed"] !== true) {
+        return {"error": "register-disabled"};
     }
 
     const userId = await generateUnique(db, "users", "user_id");
@@ -255,7 +324,12 @@ const attachAccount = function(server, sessionId, user, session) {
     if (client === undefined) {
         return;         // the socket went while the row was being read
     }
-    detachAccount(server, sessionId);
+    // a socket that was somebody else gives that account up first, and its
+    // devices with it (detachAccount); the same person signing in again keeps
+    // what this socket already holds of theirs
+    if (client.get("userId") !== user["user_id"]) {
+        detachAccount(server, sessionId);
+    }
 
     let account = server.accounts.get(user["user_id"]);
     if (account === undefined) {
@@ -273,7 +347,7 @@ const attachAccount = function(server, sessionId, user, session) {
     // once, here, because the relay checks it per message (see rooms.js)
     client.set("userId", user["user_id"]);
     client.set("accountSessionId", session["session_id"]);
-    client.set("isRelayAllowed", isTrue(user["is_relay_allowed"]));
+    setRelayAllowed(server, sessionId, isTrue(user["is_relay_allowed"]));
 };
 
 // the connection is a guest again. The row stays - ending it is logout's - and
@@ -284,9 +358,13 @@ const detachAccount = function(server, sessionId) {
     if (typeof userId !== "string") {
         return;
     }
+    // the account's devices are not this socket's once it is not the account,
+    // nor the connections it made through them - a sign out, a recovery or a
+    // deletion would otherwise leave a hijacked socket driving its devices
+    detachUserJoins(server, sessionId, userId);
     client.delete("userId");
     client.delete("accountSessionId");
-    client.set("isRelayAllowed", server.confPublic?.["permissions"]?.["guestAllowRelay"] === true);
+    setRelayAllowed(server, sessionId, server.confPublic?.["permissions"]?.["guestAllowRelay"] === true);
 
     const account = server.accounts.get(userId);
     if (account === undefined) {
@@ -301,6 +379,19 @@ const detachAccount = function(server, sessionId) {
 // the whole table, for a server that is stopping
 const releaseAccounts = function(server) {
     server.accounts.clear();
+};
+
+// every socket that is this user is a guest again, each told which of its
+// sessions ended - except the one that asked, which is answered instead
+const signOutUser = function(server, userId, exceptSessionId) {
+    const account = server.accounts.get(userId);
+    for (const otherId of [...(account?.["sessionIds"] ?? [])]) {
+        const ended = server.clients.get(otherId)?.get("accountSessionId");
+        detachAccount(server, otherId);
+        if (otherId !== exceptSessionId) {
+            notify(server, otherId, {"type": "logout", "sessionId": ended});
+        }
+    }
 };
 
 // the user a connection is, or undefined for a guest
@@ -321,10 +412,6 @@ const userAgentOf = function(message) {
     }
     const text = JSON.stringify(userAgent);
     return text.length > USER_AGENT_MAX ? "" : text;
-};
-
-const addressOf = function(server, sessionId) {
-    return server.clients.get(sessionId)?.get("ws")?._socket?.remoteAddress ?? "";
 };
 
 // a sessions row in the words the client reads - the key never among them,
@@ -404,7 +491,7 @@ const loginGoogle = async function(ctx) {
         return;
     }
 
-    const found = await findOrCreateGoogleUser(server, info);
+    const found = await findOrCreateGoogleUser(server, info, sessionId);
     if (typeof found["user"] === "undefined") {
         messageObj.send({"success": false, "error": found["error"]});
         return;
@@ -420,14 +507,16 @@ const loginGoogle = async function(ctx) {
     };
 
     // the same person again: the session they have, pushed out and brought up
-    // to date, is the one answered
+    // to date, is the one answered - unless it ended since it was found, in
+    // which case the fresh credential starts a new one
     let session = await findOwnSession(server, sessionId, user["user_id"], ctx["message"]["sessionKey"]);
     if (typeof session !== "undefined") {
-        await db("sessions").where("session_id", session["session_id"]).update(change);
-        session = {...session, ...change};
-    } else {
+        const updated = await db("sessions").where("session_id", session["session_id"]).update(change);
+        session = (updated === 0 ? undefined : {...session, ...change});
+    }
+    if (typeof session === "undefined") {
         const newSessionId = await generateUnique(db, "sessions", "session_id");
-        const sessionKey = await generateUnique(db, "sessions", "session_key");
+        const sessionKey = await generateUnique(db, "sessions", "session_key", SESSION_KEY_LENGTH);
         if (newSessionId === undefined || sessionKey === undefined) {
             messageObj.send({"success": false, "error": "failed"});
             return;
@@ -485,11 +574,19 @@ const loginSession = async function(ctx) {
         return;
     }
 
-    await db("sessions").where("session_id", session["session_id"]).update({
+    // the row may have gone since it was read - a logout, a sessions-revoke or
+    // the account deleted meanwhile - and whatever ended it has signed out
+    // every socket it could see, which this one is not yet. The update is the
+    // last wait before the socket is signed in, so it is the question asked.
+    const updated = await db("sessions").where("session_id", session["session_id"]).update({
         "expire": Date.now() + SESSION_LIFETIME,
         "last_used": Date.now(),
         "ip_address": addressOf(server, sessionId)
     });
+    if (updated === 0) {
+        messageObj.send({"success": false, "error": "unknown-session"});
+        return;
+    }
 
     attachAccount(server, sessionId, user, session);
     const picture = await pictureOf(server, user["user_id"]);
@@ -651,14 +748,7 @@ const sessionsRevoke = async function(ctx) {
 
     // every socket that was this person is a guest again - the caller among
     // them, if it was one, and answered rather than told
-    const account = server.accounts.get(userId);
-    for (const otherId of [...(account?.["sessionIds"] ?? [])]) {
-        const ended = server.clients.get(otherId)?.get("accountSessionId");
-        detachAccount(server, otherId);
-        if (otherId !== sessionId) {
-            notify(server, otherId, {"type": "logout", "sessionId": ended});
-        }
-    }
+    signOutUser(server, userId, sessionId);
     messageObj.send({"success": true, "userId": userId, "count": count});
 };
 
@@ -721,6 +811,12 @@ const deleteEmail = async function(ctx) {
     const user = await db("users").where("user_id", held["userId"]).first();
     if (typeof user === "undefined") {
         messageObj.send({"success": false, "error": "unknown-user"});
+        return;
+    }
+    // an address that moved to another account (see takeEmail) is nowhere
+    // to mail a key to until the next sign-in brings the current one
+    if (typeof user["email"] !== "string" || user["email"] === "") {
+        messageObj.send({"success": false, "error": "no-email"});
         return;
     }
 
@@ -815,14 +911,7 @@ const deleteAccount = async function(ctx) {
     await removeUserJoins(server, held["userId"]);
     await db("users").where("user_id", held["userId"]).del();
 
-    const account = server.accounts.get(held["userId"]);
-    for (const otherId of [...(account?.["sessionIds"] ?? [])]) {
-        const ended = server.clients.get(otherId)?.get("accountSessionId");
-        detachAccount(server, otherId);
-        if (otherId !== sessionId) {
-            notify(server, otherId, {"type": "logout", "sessionId": ended});
-        }
-    }
+    signOutUser(server, held["userId"], sessionId);
     messageObj.send({"success": true});
 };
 
@@ -839,5 +928,5 @@ const handlers = {
     "delete": deleteAccount
 };
 
-export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, SESSION_LIFETIME, DELETE_LIFETIME, DELETE_COOLDOWN, NAME_MAX, USER_AGENT_MAX };
+export { handlers, createAuth, attachAccount, detachAccount, releaseAccounts, heldUser, profileOf, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, SESSION_LIFETIME, SESSION_KEY_LENGTH, DELETE_LIFETIME, DELETE_COOLDOWN, NAME_MAX, USER_AGENT_MAX };
 export default handlers;

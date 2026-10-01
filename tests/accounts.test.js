@@ -12,8 +12,9 @@ import fs from "node:fs/promises";
 
 // first-party dependencies
 import { startDatabase, stopDatabase } from "../src/server/ws/database.js";
-import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME } from "../src/server/ws/handlers/accounts.js";
-import { createJoin } from "../src/server/ws/handlers/joins.js";
+import { createAuth, detachAccount, heldUser, loginGoogle, loginSession, loginGuest, logout, userUpdate, sessionList, sessionsRevoke, deleteEmail, deleteAccount, NAME_MAX, DELETE_LIFETIME, SESSION_KEY_LENGTH } from "../src/server/ws/handlers/accounts.js";
+import { createJoin, attachJoin, heldJoin, joinConnect } from "../src/server/ws/handlers/joins.js";
+import { createRoom } from "../src/server/ws/handlers/rooms.js";
 
 // an account is a row, so these run against a real SQLite file, the same way
 // the joins tests do
@@ -120,6 +121,23 @@ const pushesOf = function(server, sessionId, type) {
     });
 };
 
+// an account put in by hand: what an organization's address list is once it is
+// in the table - a row per person, an e-mail and whatever else was known, and
+// no provider behind any of them until somebody signs in
+const seedUser = async function(db, email, fields = {}) {
+    const user = {
+        "user_id": "seed-" + email,
+        "email": email,
+        "first_name": "",
+        "last_name": "",
+        "is_relay_allowed": false,
+        "created": Date.now(),
+        ...fields
+    };
+    await db("users").insert(user);
+    return user;
+};
+
 const signIn = async function(server, sessionId, who, sessionKey) {
     const message = {"credential": who, "userAgent": {"os": "darwin"}};
     if (typeof sessionKey !== "undefined") {
@@ -156,6 +174,7 @@ test("login-google makes the account, the session and the signed-in connection",
         const answer = await signIn(server, "one", "alice");
         assert.equal(answer["success"], true);
         assert.equal(typeof answer["sessionKey"], "string");
+        assert.equal(answer["sessionKey"].length, SESSION_KEY_LENGTH);
         assert.deepEqual(answer["user"], {
             "userId": answer["user"]["userId"],
             "email": "alice@example.com",
@@ -273,6 +292,196 @@ test("an unknown account is refused when registering is off", async () => {
         const answer = await signIn(server, "one", "alice");
         assert.equal(answer["success"], false);
         assert.equal(answer["error"], "register-disabled");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+//
+// the addresses put in by hand
+//
+// an organization that knows who its people are seeds the table with their
+// addresses and turns registering off: the domain is public, the accounts are
+// the list, and a credential is what proves somebody is on it.
+test("an address that is already a row signs in with registering off, and the row is filled in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        const seeded = await seedUser(db, "alice@example.com");
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["success"], true);
+        assert.equal(answer["user"]["userId"], seeded["user_id"]);
+        assert.equal(answer["user"]["email"], "alice@example.com");
+
+        // what the row did not say, the credential did
+        assert.equal(answer["user"]["firstName"], "Alice");
+        assert.equal(answer["user"]["lastName"], "Liddell");
+        const row = await db("users").where("user_id", seeded["user_id"]).first();
+        assert.equal(row["first_name"], "Alice");
+        assert.equal(row["last_name"], "Liddell");
+
+        // the row was claimed rather than copied: one account, one link, and
+        // the connection is that person
+        assert.equal((await db("users")).length, 1);
+        const link = await db("users_google").where("sub", "sub-alice").first();
+        assert.equal(link["user_id"], seeded["user_id"]);
+        assert.equal(heldUser(server, "one")["userId"], seeded["user_id"]);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a name already on the seeded row is the row's, not Google's", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        await seedUser(db, "alice@example.com", {"first_name": "Ada", "last_name": ""});
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["user"]["firstName"], "Ada");
+        assert.equal(answer["user"]["lastName"], "Liddell");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("the claimed row is found by its Google id the next time, and no second row is made", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        const seeded = await seedUser(db, "alice@example.com");
+        await signIn(server, "one", "alice");
+        const again = await signIn(server, "two", "alice");
+        assert.equal(again["success"], true);
+        assert.equal(again["user"]["userId"], seeded["user_id"]);
+        assert.equal((await db("users")).length, 1);
+        assert.equal((await db("users_google")).length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("the relay permission of a claimed row is the row's, not the register rule", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false, "userRegisterRelay": false});
+        await seedUser(db, "alice@example.com", {"is_relay_allowed": true});
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["user"]["isRelayAllowed"], true);
+        assert.equal(server.clients.get("one").get("isRelayAllowed"), true);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an address nobody put in is still refused when registering is off", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db, {"userRegister": false});
+        await seedUser(db, "bob@example.com");
+        const answer = await signIn(server, "one", "alice");
+        assert.equal(answer["success"], false);
+        assert.equal(answer["error"], "register-disabled");
+        assert.equal((await db("users_google")).length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an address that is already somebody's account is refused, whatever the register rule says", async () => {
+    for (const permissions of [{"userRegister": false}, {"userRegister": true}]) {
+        const {db, file} = await buildDatabase();
+        try {
+            const server = buildServer(db, permissions);
+            await seedUser(db, "alice@example.com");
+            await signIn(server, "one", "alice");
+
+            // the same address, another Google person: one account for one
+            // person is what the row is, so the second one is nobody here
+            server.auth["verifyGoogle"] = async function() {
+                return {"sub": "sub-mallory", "email": "alice@example.com", "given_name": "M", "family_name": "", "picture": ""};
+            };
+            const answer = await signIn(server, "two", "mallory");
+            assert.equal(answer["success"], false);
+            assert.equal(answer["error"], "email-taken");
+            assert.equal((await db("users")).length, 1);
+            assert.equal((await db("users_google")).length, 1);
+            assert.equal(heldUser(server, "two"), undefined);
+        } finally {
+            await dropDatabase(db, file);
+        }
+    }
+});
+
+test("an account is found by its Google id when the address changed, and the row follows the new one", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const first = await signIn(server, "one", "alice");
+
+        server.auth["verifyGoogle"] = async function() {
+            return {...GOOGLE_USERS["alice"], "email": "alice@elsewhere.example"};
+        };
+        const second = await signIn(server, "two", "alice");
+        assert.equal(second["success"], true);
+        assert.equal(second["user"]["userId"], first["user"]["userId"]);
+        assert.equal(second["user"]["email"], "alice@elsewhere.example");
+        assert.equal((await db("users")).length, 1);
+        assert.equal((await db("users").first())["email"], "alice@elsewhere.example");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an address that moved to another Google account signs its old holder out and leaves it with none", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice = await signIn(server, "one", "alice");
+        const bob = await signIn(server, "two", "bob");
+
+        // Google now says bob's old address is alice's: the id is who she is,
+        // the address is only the latest one verified for her
+        server.auth["verifyGoogle"] = async function(credential) {
+            if (credential === "alice") {
+                return {...GOOGLE_USERS["alice"], "email": "bob@example.com"};
+            }
+            return {...GOOGLE_USERS["bob"], "email": "robert@example.com"};
+        };
+        const moved = await signIn(server, "three", "alice");
+        assert.equal(moved["success"], true);
+        assert.equal(moved["user"]["userId"], alice["user"]["userId"]);
+        assert.equal(moved["user"]["email"], "bob@example.com");
+
+        // bob is out everywhere, and holds no address at all
+        const bobRow = await db("users").where("user_id", bob["user"]["userId"]).first();
+        assert.equal(bobRow["email"], null);
+        assert.equal((await db("sessions").where("user_id", bob["user"]["userId"])).length, 0);
+        assert.equal(heldUser(server, "two"), undefined);
+        assert.equal(pushesOf(server, "two", "logout")[0]["sessionId"], bob["sessionId"]);
+        assert.equal(pushesOf(server, "one", "logout").length, 0, "alice's other socket is untouched");
+
+        // and his own next sign-in is his account again, under his address now
+        const back = await signIn(server, "two", "bob");
+        assert.equal(back["success"], true);
+        assert.equal(back["user"]["userId"], bob["user"]["userId"]);
+        assert.equal(back["user"]["email"], "robert@example.com");
+        assert.equal((await db("users")).length, 2);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("an account left with no address cannot be mailed a delete key", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+        await db("users").where("user_id", alice["user"]["userId"]).update({"email": null});
+        const answer = await requestDelete(server, "one");
+        assert.equal(answer["success"], false);
+        assert.equal(answer["error"], "no-email");
+        assert.equal(server.mailer.sent.length, 0);
     } finally {
         await dropDatabase(db, file);
     }
@@ -606,6 +815,125 @@ test("sessions-revoke refuses a bad credential and an account it has never seen,
         await sessionsRevoke(unknown);
         assert.equal(unknown["answers"][0]["error"], "unknown-user");
         assert.equal((await db("users")).length, 0);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+// whatever a sign-in finds, a socket it leaves signed in stands on a row that
+// still exists - or a revoke would have nothing to end it by
+const assertSessionStands = async function(server, db, sessionId) {
+    const held = heldUser(server, sessionId);
+    if (held === undefined) {
+        return;
+    }
+    const row = await db("sessions").where("session_id", held["accountSessionId"]).first();
+    assert.notEqual(row, undefined, "the socket is signed in on a session that is gone");
+};
+
+test("a login-session in flight when the sessions are revoked signs nobody in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice = await signIn(server, "one", "alice");
+        detachAccount(server, "one");
+
+        const presenting = buildCtx(server, "two", {"sessionKey": alice["sessionKey"]});
+        const revoking = buildCtx(server, "three", {"credential": "alice"});
+        await Promise.all([loginSession(presenting), sessionsRevoke(revoking)]);
+
+        assert.equal(revoking["answers"][0]["success"], true);
+        assert.equal(presenting["answers"][0]["error"], "unknown-session");
+        assert.equal(heldUser(server, "two"), undefined);
+        await assertSessionStands(server, db, "two");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a login-session in flight when the account is deleted signs nobody in", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server.mailer = buildMailer();
+        const alice = await signIn(server, "one", "alice");
+        await requestDelete(server, "one");
+        const deleteKey = server.mailer.sent[0]["key"];
+
+        const presenting = buildCtx(server, "two", {"sessionKey": alice["sessionKey"]});
+        const deleting = buildCtx(server, "one", {"deleteKey": deleteKey});
+        await Promise.all([loginSession(presenting), deleteAccount(deleting)]);
+
+        assert.equal(deleting["answers"][0]["success"], true);
+        assert.equal(heldUser(server, "two"), undefined);
+        await assertSessionStands(server, db, "two");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a login-google holding a key that is revoked meanwhile stands on a session that exists", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        const alice = await signIn(server, "one", "alice");
+
+        const signing = buildCtx(server, "one", {"credential": "alice", "userAgent": {}, "sessionKey": alice["sessionKey"]});
+        const revoking = buildCtx(server, "three", {"credential": "alice"});
+        await Promise.all([loginGoogle(signing), sessionsRevoke(revoking)]);
+
+        assert.equal(signing["answers"][0]["success"], true);
+        await assertSessionStands(server, db, "one");
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+//
+// the devices of an account, and a socket that stops being it
+//
+test("signing out takes the socket off the account's devices and out of their rooms", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server["rooms"] = new Map();
+        const made = await signIn(server, "one", "alice");
+        const device = await createJoin(server, true, made["user"]["userId"]);
+        attachJoin(server, "two", device, true);        // the host, a machine nobody is signed in on
+        attachJoin(server, "one", device, false);
+        createRoom(server, "two", "one", device["joinId"]);
+
+        // the same person signing in again keeps what the socket holds
+        await signIn(server, "one", "alice", made["sessionKey"]);
+        assert.notEqual(heldJoin(server, "one", device["joinId"]), undefined);
+        assert.equal(server.rooms.size, 2);             // one room, under both of its keys
+
+        await logout(buildCtx(server, "one"));
+        assert.equal(heldJoin(server, "one", device["joinId"]), undefined);
+        assert.equal(server.rooms.size, 0);
+        assert.equal(pushesOf(server, "two", "room-close").length, 1);
+    } finally {
+        await dropDatabase(db, file);
+    }
+});
+
+test("a recovered account's devices are not left with the socket it was taken back from", async () => {
+    const {db, file} = await buildDatabase();
+    try {
+        const server = buildServer(db);
+        server["rooms"] = new Map();
+        const made = await signIn(server, "one", "alice");
+        const device = await createJoin(server, true, made["user"]["userId"]);
+        attachJoin(server, "two", device, true);
+        attachJoin(server, "one", device, false);
+
+        await sessionsRevoke(buildCtx(server, "three", {"credential": "alice"}));
+        assert.equal(heldJoin(server, "one", device["joinId"]), undefined);
+
+        // and the code it kept opens nothing on a socket that is not alice
+        const back = buildCtx(server, "one", {"joinCode": device["peerCode"]});
+        await joinConnect(back);
+        assert.equal(back["answers"][0]["error"], "not-allowed");
     } finally {
         await dropDatabase(db, file);
     }

@@ -17,8 +17,8 @@
             "hu": "Lezárás"
         },
         "deleteJoin": {
-            "en": "This connection is forgotten on both devices, and neither code opens anything again.",
-            "hu": "Ez a kapcsolat mindkét eszközön törlődik, és egyik kód sem nyit meg többé semmit."
+            "en": "This connection is forgotten on both devices, neither code opens anything again, and a device connected through it right now is disconnected.",
+            "hu": "Ez a kapcsolat mindkét eszközön törlődik, egyik kód sem nyit meg többé semmit, és a rajta keresztül éppen csatlakozó eszköz lecsatlakozik."
         },
         "endRoom": {
             "en": "The connection standing right now is ended, and the other device is disconnected.",

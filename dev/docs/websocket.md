@@ -80,6 +80,15 @@ client                                                    server
   | dispatch "offline", retry after 2000 ms                  |  communicator, drop the client
 ```
 
+Before any of that, the server counts the socket against its address
+(`holdAddress` in `ws/address.js`, under the same keys the pairing budget uses):
+one IPv4 address or IPv6 /64 may hold `CONNECTION_MAX` (32) sockets and one /48
+`CONNECTION_MAX_WIDE` (256). A socket past that is closed at once with `1008`
+`too-many-connections`, and the client's retry loop below simply tries again
+later. The close handler gives the count back. Behind a proxy the address is
+the one it forwarded, so a proxy the configuration does not name puts every
+client behind one address and one cap.
+
 Both sides run `sideSync()` and `timeSync()` themselves as soon as the socket is
 open - the server in `clientConnect`, the client in its `open` listener. Each
 side answers the other's request, so the two runs interleave harmlessly.
@@ -178,7 +187,13 @@ them.
 
 The packet count is only written on the first packet of a message
 (`packetId === 0`), and the reader only looks for it on a packet the peer
-originated.
+originated. A message is its packets `0` to `count - 1` and nothing else: a
+packet whose id is at or past the count - or a first packet naming a count of
+none, or one that arrives after a packet past the count it names - gets the whole
+message refused (`receiveRefuse`, the sender told with an abort) rather than
+assembled around a gap. `receive()` returns what handling the packet did, so a
+failure in it reaches the caller - `ws.js` closes the socket over it - instead
+of being an unhandled rejection, which ends a Node process.
 
 ### Side sync - who owns which message ids
 
@@ -250,12 +265,15 @@ Both sides are configured identically (`ws/ws.js` `clientConnect`, `server.js`
 
 | option | value | what it limits |
 | --- | --- | --- |
-| `interactTimeout` | 3000 ms | the gap between two packets of one message |
+| `interactTimeout` | 1500 ms | the gap between two packets of one message |
 | `timeout` | 5000 ms | the whole message, end to end |
 | `packetSize` | 65536 B | one binary chunk |
 | `packetTimeout` | 1000 ms | wait for an ack before resending |
 | `packetRetry` | `Infinity` | resend attempts per packet |
 | `sendThreads` | 64 | packets in flight at once |
+| `maxReceiveBytes` | 32 MiB, or 0 (server only) | what the other side's unfinished messages may hold at once; a message past it is aborted, and the sender's fails `reject`. It follows the socket's relay permission (`receiveLimitOf`/`setRelayAllowed` in `handlers/rooms.js`): a binary message is only ever a relay frame and is held whole before anything looks at it, so a socket the relay does not allow may hold none |
+
+The server also caps a single WebSocket frame at 256 KiB (`maxPayload`, `SOCKET_FRAME_MAX` in `ws/ws.js`). No frame the protocol makes comes close: a binary packet is `packetSize`, and the largest JSON message is a relayed one. A frame too short for its own header, a side sync reply nobody is waiting for, and a JSON frame flagged as split are all logged and dropped rather than thrown. `receive` is async, so anything it threw would be an unhandled rejection and would end the process; `ws.js` also closes the socket on any error that does get out.
 
 `packetSize × sendThreads` is what one round trip can carry, since every packet
 is acknowledged: the relayed stream lives on that product (4 MB per RTT here),
@@ -312,7 +330,55 @@ itself:
 It is forwarded to the other socket of that room exactly as it arrived, one way
 and unanswered. This is the path with **no size limit**: the communicator splits
 an ArrayBuffer into `packetSize` packets and reassembles it, so what a JSON call
-could not carry (one message, one frame) a binary frame can.
+could not carry (one message, one frame) a binary frame can. It is **dropped**
+while the receiving socket has more than `RELAY_BACKLOG` (2 MiB, in
+`handlers/rooms.js`) waiting to go out: the sender hears the server's
+acknowledgments and never the far end's, so nothing else would stop a slow or
+silent receiver from having the server hold whatever the sender pushes. The
+client draws the same line at its own socket (`RELAY_BACKLOG` in
+`src/room/room.js`, 1 MiB) and refuses the frame there, as the direct leg does.
+
+**What today's client puts in a frame is sealed** (`src/room/seal.js`): always
+kind 1, and the payload `[version][4 byte epoch][8 byte counter][AES-GCM
+ciphertext + tag]`, with bytes, JSON and the seal's own rekey messages told apart
+only inside the seal - so a rekey is invisible to the server, and the only
+public keys it ever carries are the two `key` signals. The key is agreed across
+`room-signal` - one `{"kind": "key", "key": <base64 P-256 public key>}` from each
+side at `room-open` - so the server forwards what it cannot read, and the client
+drops a kind 2 frame and a `room-data` call as the server's own writing. Neither
+the server's handling nor the kind 2 path changed; only what the clients send.
+
+**Every socket is pinged every `HEARTBEAT_INTERVAL`** (30 s, `ws/ws.js`) and one
+that has not answered the previous ping by the next is terminated. A browser
+answers on its own, so what this ends is a socket that stopped reading - which
+everything queued for it would otherwise pile up in front of - and a half-open
+one that would hold its code and its rooms for ever.
+
+**`pair-request` has a budget per address.** A code that opens nothing
+(`unknown-code`) or is taken (`busy`, which says just as much: it is live) costs
+the address one try; past `PAIR_FAIL_MAX` (10) in `PAIR_FAIL_WINDOW` (10 min)
+every request from it is answered `too-many-attempts` before any code is looked
+up, so a live code and a dead one read the same. An IPv4 address is one key; an
+IPv6 address counts against its /64 and, with ten times the budget, its /48, so a
+site cannot walk its /64s for fresh budgets. Behind a configured `proxy` the
+address is the last `X-Forwarded-For` entry - the one the proxy appended - on a
+connection from an address the proxy's `trust` names (this machine when it
+names none); from anywhere else, and without a proxy, the header is ignored
+(`ws/address.js`), since a client that reaches the port directly would write a
+fresh address into it per try. The same address is what a host is shown in
+`pair-request`/`join-request` and what `sessions` records.
+
+**A remembered device is its account's, and no room outlives the join it stands
+on.** A join made while the peer was signed in carries that account
+(`peer_user_id`), and `join-connect` opens its peer side only on a socket signed
+in as it - any other is answered `not-allowed` - so a code that got out, or one
+kept past a sign-out, opens nothing; a guest's device is its code alone, and the
+host side is the machine's whoever is signed in. A socket that stops being the
+account (`logout`, `login-guest`, `sessions-revoke`, a sign-in as somebody else)
+is taken off that account's devices, and the rooms it made through them close.
+`join-delete` - and so an account deletion - ends every room standing on the
+join, both sides pushed `room-close` with the reason `removed`, and
+`join-disconnect` ends the caller's rooms on the joins it leaves (`gone`).
 
 | type | request | answer |
 | --- | --- | --- |
@@ -337,8 +403,8 @@ client never carries a default of its own.
 
 | flag | default | means |
 | --- | --- | --- |
-| `guestAllowShare` | `true` | a guest may share this device |
-| `guestAllowJoin` | `true` | a guest may join someone else's room |
+| `guestAllowShare` | `true` | a guest may share this device (`pair-create`); a signed-in socket may whatever it says |
+| `guestAllowJoin` | `true` | a guest may join someone else's room (`pair-request`); a signed-in socket may whatever it says |
 | `guestAllowRelay` | `false` | this server will carry the data of two devices that cannot reach each other, which is its own bandwidth - so it is the one guest flag that is off until it is asked for. It gates the **two relayed payload paths**: the `room-data` call and the binary relay frame, which is the one the client actually streams over. The negotiation itself (`room-signal`) is never gated. The client is told because a fallback that is not there must not be waited for. It is answered **once per connection**, into the client state at `clientConnect`, and read from there by every relayed message - never re-read from the configuration or a row while the socket is live |
 | `isAuth` | - | this server has some way to sign in, so an account is worth offering |
 | `isGoogleAuth` | - | Google sign-in is configured, so the button is worth showing |
@@ -442,8 +508,8 @@ Two things to settle before wiring it up:
 An unknown or malformed call is **answered** with `{"success": false, ...}`.
 This matters: `messageObj.abort()` on an *incoming* message only resolves the
 local promise, it sends nothing to the peer, so aborting would leave the caller
-waiting out its whole `interactTimeout` and failing with `inactive` three
-seconds later. `handleAPI` funnels both cases through `reject()`, which answers
+waiting out its whole `interactTimeout` and failing with `inactive` a second and
+a half later. `handleAPI` funnels both cases through `reject()`, which answers
 an invoke and only falls back to `abort()` for a one-way send.
 
 ## Gotchas
@@ -460,9 +526,10 @@ an invoke and only falls back to `abort()` for a one-way send.
 - **Nothing serves `src/client/web` directly.** A change to the client is
   invisible until `npm run server -- --compile` rebuilds `tmp/web`.
 - `ArrayBuffer.prototype.transfer` is used on every incoming binary frame,
-  acks included, so it is on the hot path of every message. It is newer than the
-  `"node": ">=20.11.0"` floor in `package.json` - worth verifying that floor
-  before trusting it.
+  acks included, so it is on the hot path of every message. It arrived in Node
+  21 (Chromium 114), which is why `package.json` asks for Node 22 or later: under
+  Node 20 every binary frame fails to parse and is dropped as a malformed one,
+  acks with it, so no message the server sends is ever confirmed.
 
 ## Testing it by hand
 
@@ -478,7 +545,7 @@ const com = new Communicator({
     "sender": async function(data) {
         ws.send((data instanceof ArrayBuffer) ? data : JSON.stringify(data));
     },
-    "interactTimeout": 3000, "timeout": 5000, "packetSize": 65536,
+    "interactTimeout": 1500, "timeout": 5000, "packetSize": 65536,
     "packetTimeout": 1000, "packetRetry": Infinity, "sendThreads": 64
 });
 const ws = new WebSocket("wss://localhost:8444", {"rejectUnauthorized": false});

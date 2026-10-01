@@ -1,8 +1,12 @@
 {
     "http": {
-        "name": {
-            "en": "Desktop Streamer (local)",
-            "hu": "Desktop Streamer (helyi)"
+        "appearance": {
+            "name": {
+                "en": "Desktop Streamer (local)",
+                "hu": "Desktop Streamer (helyi)"
+            },
+            "color": "#006e1c",
+            "theme": "auto"
         },
         "domain": "localhost",
         "port": 8443,

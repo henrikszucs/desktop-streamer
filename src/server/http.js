@@ -12,6 +12,7 @@ import https from "node:https";
 // first-party dependencies 
 import { getMIMEType } from "./mime.js";
 import { binarySearch } from "./common.js";
+import { getPublicAddress, getPublicRedirect } from "./config.js";
 
 // the folders holding the client assets, everything else is an SPA route
 const ASSET_FOLDERS = new Set(["src", "ui", "libs", "media"]);
@@ -37,8 +38,13 @@ const ServerHTTP = class {
     httpCacheUpdateLength = 5;
     httpCacheUpdateId = -1;
     httpCacheReloadId = -1;
+    isRefreshing = false;
     httpRedirect = null;
     httpDomain = "localhost";
+    // where a client reaches this server, which is not where it listens when a
+    // proxy stands in front of it - it is what a redirect has to point at
+    publicDomain = "localhost";
+    publicPort = 443;
 
     constructor() {
 
@@ -77,19 +83,15 @@ const ServerHTTP = class {
 
             const data = await fs.open(src);
             const date = new Date(stats.mtimeMs);
-            const stream = data.createReadStream();
 
-            //close when finished, destroyed or inactive
-            let timeOut = -1;
-            const closeHandle = function() {
-                clearTimeout(timeOut);
-                data?.close?.()?.catch?.(function() {});
-            };
-            stream.on("data", function() {
-                clearTimeout(timeOut);
-                timeOut = setTimeout(closeHandle, 10000);
+            // the stream closes the handle itself when it ends or is destroyed.
+            // Nothing may close it on a clock: a client that stops reading for a
+            // while pauses the pipe, and a handle closed under a paused stream
+            // cuts the download off at the next read
+            const stream = data.createReadStream();
+            stream.once("close", function() {
+                data.close().catch(function() {});
             });
-            stream.once("close", closeHandle);
 
             return {
                 "lastModified": date.toUTCString(),
@@ -113,6 +115,13 @@ const ServerHTTP = class {
             server.once("error", onError);
             server.listen(port, function() {
                 server.removeListener("error", onError);
+                // and one that is listening still reports: an accept that fails
+                // when the process is out of file descriptors - which a flood of
+                // connections that never finish their handshake gets it to - is
+                // an "error" event, and one nobody hears ends the process
+                server.on("error", function(error) {
+                    console.error("Server error on port " + port + ":", error.message);
+                });
                 resolve();
             });
         });
@@ -280,6 +289,24 @@ const ServerHTTP = class {
         this.httpCache = cache;
     };
 
+    // what the timer runs: one refresh at a time, and never one that fails out
+    // loud. A slow refresh - a zip read into memory - is not overtaken by the
+    // next tick, whose fresh index would take entries out from under it, and a
+    // rejection nobody handles would end the process.
+    async reloadCache() {
+        if (this.isRefreshing === true) {
+            return;
+        }
+        this.isRefreshing = true;
+        try {
+            await this.refreshCache();
+        } catch (error) {
+            console.error("Cannot refresh the file cache:", error);
+        } finally {
+            this.isRefreshing = false;
+        }
+    };
+
     async refreshCache() {
         await this.buildCache();
 
@@ -321,10 +348,11 @@ const ServerHTTP = class {
             }
         }
 
-        // and read in what it does
+        // and read in what it does - an entry a stop() cleared meanwhile is
+        // not there to fill
         for (const key of admitted) {
             const fileData = this.httpCache.get(key);
-            if (typeof fileData["buffer"] !== "undefined") {
+            if (typeof fileData === "undefined" || typeof fileData["buffer"] !== "undefined") {
                 continue;
             }
             const file = await this.getFileData(fileData["path"]);
@@ -418,16 +446,40 @@ const ServerHTTP = class {
         }
     };
 
+    // the path a redirect sends the client on to. The request target is attacker
+    // text just as the Host header is: one that is not a path is the site's
+    // root, and anything a header cannot carry is percent-encoded - the parser
+    // hands the target over one byte per character, so each is encoded as the
+    // byte it arrived as
+    redirectPath(url) {
+        if (typeof url !== "string" || url.startsWith("/") === false) {
+            return "/";
+        }
+        return url.replace(/[^\x21-\x7e]/g, function(char) {
+            const code = char.charCodeAt(0);
+            const bytes = (code <= 0xff ? [code] : [...new TextEncoder().encode(char)]);
+            return bytes.map(function(byte) {
+                return "%" + byte.toString(16).toUpperCase().padStart(2, "0");
+            }).join("");
+        });
+    };
+
     httpRedirectHandler = (req, res) => {
         // an HTTP/1.0 request carries no Host, and the header is attacker text
         // besides: the configured domain stands in for anything malformed
         const host = typeof req.headers.host === "string" ? req.headers.host : "";
         const name = host.split(":")[0];
-        const myURL = HOST_NAME.test(name) === true ? name : this.httpDomain;
-        const myPort = this.httpPort !== 443 ? ":" + this.httpPort : "";
-        res.writeHead(302, {
-            "Location": "https://" + myURL + myPort + req.url
-        });
+        const myURL = HOST_NAME.test(name) === true ? name : this.publicDomain;
+        const myPort = this.publicPort !== 443 ? ":" + this.publicPort : "";
+        // this listener is synchronous and nothing above it catches, so a
+        // header writeHead refuses would end the process - it is answered 400
+        try {
+            res.writeHead(302, {
+                "Location": "https://" + myURL + myPort + this.redirectPath(req.url)
+            });
+        } catch (error) {
+            res.writeHead(400);
+        }
         res.end();
     };
 
@@ -464,8 +516,8 @@ const ServerHTTP = class {
 
             // reload cache periodically
             clearInterval(this.httpCacheReloadId);
-            this.httpCacheReloadId = setInterval(async () => {
-                await this.refreshCache();
+            this.httpCacheReloadId = setInterval(() => {
+                this.reloadCache();
             }, this.httpCacheUpdate * this.httpCacheUpdateLength);
 
             requestHandle = this.httpsRequestHandlerWithCache;
@@ -474,18 +526,36 @@ const ServerHTTP = class {
         // create HTTP server
         this.httpPort = conf["http"]["port"];
         this.httpDomain = conf["http"]["domain"];
+        // a proxy in front of the server is where a client reaches it
+        const address = getPublicAddress(conf, "http");
+        this.publicDomain = address["domain"];
+        this.publicPort = address["port"];
         this.httpServer = https.createServer({
             "key": conf["http"]["key"],
             "cert": conf["http"]["cert"]
         }, requestHandle);
         await this.listen(this.httpServer, this.httpPort);
-        process.stdout.write("\n    Available: https://" + conf["http"]["domain"] + (conf["http"]["port"] !== 443 ? ":" + conf["http"]["port"] : "") + "\n");
+        process.stdout.write("\n    Available: https://" + this.publicDomain + (this.publicPort !== 443 ? ":" + this.publicPort : "") + "\n");
+        if (typeof conf["http"]["proxy"] === "object") {
+            // the line above is the proxy's address, name the socket as well
+            process.stdout.write("    Listening: https://" + this.httpDomain + (this.httpPort !== 443 ? ":" + this.httpPort : "") + "\n");
+        }
 
         // create redirect server
         if (typeof conf["http"]["redirect"] !== "undefined") {
             this.httpRedirect = http.createServer(this.httpRedirectHandler);
             await this.listen(this.httpRedirect, conf["http"]["redirect"]);
-            process.stdout.write("    Redirect: http://" + conf["http"]["domain"] + (conf["http"]["redirect"] !== 80 ? ":" + conf["http"]["redirect"] : "") + "\n");
+
+            // the plaintext address from outside, which a proxy only knows
+            // when it was given one - the socket is named either way
+            const redirect = getPublicRedirect(conf);
+            if (redirect !== null) {
+                process.stdout.write("    Redirect: http://" + redirect["domain"] + (redirect["port"] !== 80 ? ":" + redirect["port"] : "") + "\n");
+            }
+            if (redirect === null || typeof conf["http"]["proxy"] === "object") {
+                const label = redirect === null ? "Redirect: " : "Listening: ";
+                process.stdout.write("    " + label + "http://" + this.httpDomain + (conf["http"]["redirect"] !== 80 ? ":" + conf["http"]["redirect"] : "") + "\n");
+            }
         }
         process.stdout.write("done\n");
     };

@@ -7,6 +7,8 @@
         <meta name="keywords" content="desktop, streamer, remote, access"/>
         <title>Desktop Streamer</title>
         <link href="/media/icon.svg" rel="icon"  type="image/svg+xml"/>
+        <!-- The server's default paint and name, written by the build (buildPaint) -->
+        <meta name="appearance" content=""/>
 
         <link href="/libs/beercss/beer.min.css" rel="stylesheet"/>
         <script src="/libs/beercss/beer.min.js" type="module" async></script>
@@ -17,6 +19,56 @@
 
     </head>
     <body>
+        <!-- The theme and the title before the first paint - pickName is src/appname.js's
+             twin, see CLIENT.md, "The theme is painted before any module runs" -->
+        <script>
+            (function() {
+                const read = function(text) {
+                    try {
+                        const value = JSON.parse(text);
+                        return (typeof value === "object" && value !== null ? value : null);
+                    } catch (error) {
+                        return null;
+                    }
+                };
+                const pickName = function(names, lang) {
+                    const keys = Object.keys(names);
+                    const base = String(lang).slice(0, 2).toLowerCase();
+                    const key = keys.find((name) => name === lang) ?? keys.find((name) => name === base)
+                        ?? keys.find((name) => name.slice(0, 2) === base) ?? (typeof names["en"] === "string" ? "en" : keys[0]);
+                    return (typeof names[key] === "string" && names[key] !== "" ? names[key] : null);
+                };
+                const built = read(document.querySelector("meta[name=appearance]")?.content ?? "");
+                let cached = null;
+                try {
+                    cached = read(localStorage.getItem("appearance"));
+                } catch (error) {
+                    cached = null;
+                }
+
+                // the name is always the server's, a cache would outlive a rename
+                if (typeof built?.["name"] === "object" && built["name"] !== null) {
+                    const name = pickName(built["name"], cached?.["lang"] ?? navigator.language);
+                    if (name !== null) {
+                        document.title = name;
+                    }
+                }
+
+                const paint = (typeof cached?.["light"] === "string" && typeof cached?.["dark"] === "string" ? cached : built);
+                if (paint === null) {
+                    return;
+                }
+                let mode = paint["mode"];
+                if (mode !== "dark" && mode !== "light") {
+                    mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+                }
+                document.body.classList.add(mode);
+                if (typeof paint[mode] === "string") {
+                    document.body.setAttribute("style", paint[mode]);
+                }
+            })();
+        </script>
+
         <!--
             The four elements the application is built on top of, and nothing
             else. Every bar, screen and dialog - the two navigation bars

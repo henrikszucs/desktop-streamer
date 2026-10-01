@@ -1,11 +1,12 @@
 "use strict";
 
 // how a decoded frame gets onto the canvas: three ways, tried in order, all of
-// them the frame staying on the GPU. WebGPU is the one the upscaling work will
-// hang off (a VideoFrame imported as an external texture is what a model would
-// read), WebGL is the same thing for a browser without it, and the 2D context
-// is the last resort - still a GPU copy in every browser that has WebCodecs.
-// Each one is {draw(frame), close()}, and draw() sizes the canvas to the frame.
+// them the frame staying on the GPU. WebGPU first, WebGL is the same thing for
+// a browser without it, and the 2D context is the last resort - still a GPU
+// copy in every browser that has WebCodecs. Each one is {name, draw(frame),
+// close()}, and draw() sizes the canvas to the frame. The enhancer
+// (./stream-enhance.js) sits in front of all three and hands them a VideoFrame
+// like the decoder's, so none of them knows whether a picture was enhanced.
 // Runs in the worker (./stream-worker.js) and never touches the document.
 
 const fit = function(canvas, frame) {

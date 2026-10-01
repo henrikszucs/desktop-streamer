@@ -24,6 +24,10 @@
             "en": "Settings",
             "hu": "Beállítások"
         },
+        "disconnect": {
+            "en": "Disconnect",
+            "hu": "Kapcsolat bontása"
+        },
         "delete": {
             "en": "Delete",
             "hu": "Törlés"

@@ -1,7 +1,8 @@
 "use strict";
 
-// the localization core: the shell's own strings, and the lookup every module
-// goes through - the registry add()s each module's slice as it loads
+// the localization core: the lookup every module goes through. It holds no
+// strings and knows no file of them - the shell load()s the slices of its own
+// levels, and the registry add()s each module's slice as it loads
 
 let curLang = "en";
 
@@ -13,92 +14,8 @@ const setLang = (lang) => {
     curLang = lang;
 };
 
-// the shell slice, every other key arrives through add(): the loading layer of
-// index.html, and what the two bars share with the menu dialog
-const dict = {
-    "loading": {
-        "title": {
-            "en": "Loading...",
-            "hu": "Betöltés..."
-        },
-        "subtitle": {
-            "en": "The application is loading please wait...",
-            "hu": "Az alkalmazás betöltése folyamatban, kérlek várj..."
-        }
-    },
-    "main": {
-        "new": {
-            "en": "New",
-            "hu": "Új"
-        },
-        "share": {
-            "failed": {
-                "en": "The screen could not be shared, so the connection was ended.",
-                "hu": "A képernyőt nem sikerült megosztani, ezért a kapcsolat megszakadt."
-            }
-        },
-        "services": {
-            "en": "Services",
-            "hu": "Szolgáltatások"
-        },
-        "devices": {
-            "en": "Devices",
-            "hu": "Eszközök"
-        },
-        "shares": {
-            "en": "Shares",
-            "hu": "Megosztások"
-        },
-        "downloads": {
-            "en": "Download client",
-            "hu": "Kliens letöltése"
-        },
-        "search": {
-            "en": "Search...",
-            "hu": "Keresés..."
-        },
-        "login": {
-            "en": "Login",
-            "hu": "Bejelentkezés"
-        },
-        "account": {
-            "en": "Account settings",
-            "hu": "Fiók beállítások"
-        },
-        "logout": {
-            "en": "Logout",
-            "hu": "Kijelentkezés"
-        },
-        "guest": {
-            "en": "Guest",
-            "hu": "Vendég"
-        },
-        "switchAccount": {
-            "en": "Switch account",
-            "hu": "Fiókváltás"
-        },
-        "addUser": {
-            "en": "Add new user",
-            "hu": "Új felhasználó"
-        },
-        "menu": {
-            "en": "Menu",
-            "hu": "Menü"
-        },
-        "authDisabled": {
-            "en": "The administrator disabled authentication",
-            "hu": "Az adminisztrátor letiltotta a bejelentkezést"
-        },
-        "switchFailed": {
-            "en": "The account could not be switched.",
-            "hu": "A fiókot nem sikerült váltani."
-        },
-        "logoutFailed": {
-            "en": "Signing out failed. Please try again.",
-            "hu": "A kijelentkezés nem sikerült. Kérlek próbáld újra."
-        },
-    }
-};
+// the dictionary, empty until the slices arrive
+const dict = {};
 
 // merge a module slice into the dictionary, deeper keys win over shallower ones
 const add = (slice) => {
@@ -150,8 +67,8 @@ const translate = (lang=curLang, root=document) => {
     }
 };
 
-// the module slices arrive after boot, so the list comes from the shell slice -
-// every slice carries the same languages
+// every slice carries the same languages, so the list is read off the first
+// leaf - empty before anything is loaded
 const getSupportedLanguages = () => {
     const getFirstKey = (obj) => {
         if (typeof obj !== "object") {
@@ -165,12 +82,21 @@ const getSupportedLanguages = () => {
     let prevObj = null;
     let lastObj = dict;
     let lastKey = getFirstKey(lastObj);
-    while (lastKey !== null) {
+    while (lastKey !== null && lastKey !== undefined) {
         prevObj = lastObj;
         lastObj = lastObj[lastKey];
         lastKey = getFirstKey(lastObj);
     }
-    return Object.keys(prevObj);
+    return (prevObj === null ? [] : Object.keys(prevObj));
+};
+
+// one slice fetched into the dictionary
+const load = async (url) => {
+    const response = await fetch(url);
+    if (response.ok === false) {
+        throw new Error("Cannot load the dictionary " + url + ": " + response.status);
+    }
+    return add(await response.json());
 };
 
 const escapeRegex = (str) => {
@@ -212,17 +138,19 @@ const putParameters = (str, params=new Map(), charStart="{", charEnd="}", charSt
     return result;
 };
 
-const supportedLanguages = getSupportedLanguages();
-
-export { getLang, setLang, dict, add, get, translate, supportedLanguages, putParameters, escapeHTML };
+export { getLang, setLang, dict, load, add, get, translate, getSupportedLanguages, putParameters, escapeHTML };
 export default {
     "getLang": getLang,
     "setLang": setLang,
     "dict": dict,
+    "load": load,
     "add": add,
     "get": get,
     "translate": translate,
-    "supportedLanguages": supportedLanguages,
+    // read when asked, since the languages arrive with the slices
+    get supportedLanguages() {
+        return getSupportedLanguages();
+    },
     "putParameters": putParameters,
     "escapeHTML": escapeHTML
 };

@@ -36,7 +36,7 @@ const icon = Mouse.getIcon();
 {
     "width": 32,        // icon width
     "height": 32,       // icon height
-    "data": [0,1,2...], // image in argb data
+    "data": [0,1,2...], // image in rgba data, row by row from the top
     "xOffset": 0,       // pointer X offset from icon
     "yOffset": 0        // pointer Y offset from icon
 }

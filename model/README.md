@@ -4,13 +4,39 @@ The video work for Desktop Streamer: upscaling a received frame, and generating 
 between or after the ones that arrive. A `uv`-managed Python project, separate from the Node
 application — nothing in `src/` calls it yet.
 
-Three problems, one folder each, each with its own `summary.md`:
+Three problems, one folder each, each with its own `summary.md` - and beside them `mock/`,
+which is not a problem but the three stand-ins the client runs today (see below):
 
 | Folder | Problem | State |
 | --- | --- | --- |
 | [`upscale/`](upscale/summary.md) | more pixels out than in | a static baseline, three learned models and a strategy sweep |
 | [`frame_gen_intra/`](frame_gen_intra/summary.md) | interpolate between two frames | not started |
 | [`frame_gen_extra/`](frame_gen_extra/summary.md) | extrapolate past the newest frame | not started |
+
+## The mock graphs the client runs
+
+`mock/make_mock_models.py` writes the three graphs `src/client/web/media/models/` holds -
+`upscale.onnx`, `interpolate.onnx`, `extrapolate.onnx` - which the client's enhancement
+menu runs through ONNX Runtime Web (`src/client/web/src/room/stream-enhance.js`). They are
+stand-ins, not models: the smallest ONNX graph with the shape of the real thing and real GPU
+work in between, computing something that leaves the picture right (an identity convolution
+and a bilinear ×2; the mean of two frames; their linear extrapolation), so the client
+pipeline could be built and timed before any trained weights exist. The client never hands a
+graph a whole frame: it cuts it into 328×188 tiles (a 320×180 step with a 4 pixel halo, the
+geometry `upscale/webexport.py` measured), runs every tile of a frame as one batch, and
+merges the kept centres back - so a model has to be right on a tile of that size, read no
+further than the halo, and take a batch. The generator's docstring holds what the runtime's
+WebGPU provider charges for the operators the mocks could have been built from, which is
+worth reading before choosing a trained model's. A trained model replaces
+one by being exported under the same name with the same contract: float32 NCHW in [0, 1]
+with `N`, `H` and `W` symbolic - `input` `[N, 3, H, W]` for the upscaler, `previous` and
+`current` `[N, 3, H, W]` each for the two-frame ones (two inputs, never one stacked six
+channel tensor: the client would pay a copy and the graph a `Slice` for it), `output`
+`[N, 3, H, W]` or twice it for the upscaler.
+
+```
+uv run mock/make_mock_models.py
+```
 
 ## Setup
 

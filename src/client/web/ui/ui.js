@@ -3,11 +3,38 @@
 // the shell layer: everything boot needs a document for, and the build that
 // mounts the module tree - the one file in ./ui that is not a module
 
+// third-party dependencies - the same modules index.html starts fetching, so
+// ui() and the palette generator are there before a theme is applied
+import "../libs/beercss/beer.min.js";
+import "../libs/beercss/material-dynamic-colors.min.js";
+
 // first-party dependencies
-import { browser, width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
+import { width, sizeS, sizeM, getDisplay, getDisplayKind, getRootFontSize } from "../src/env.js";
 import localization from "../src/localization.js";
+import { pickName } from "../src/appname.js";
+import { buildPalette } from "../src/appearance.js";
 import registry from "../src/registry.js";
 import { createLoading } from "./loading/loading.js";
+
+// the dictionary slices no module brings, each beside what uses it: the
+// application's name (the title and the desktop shell), the loading layer of
+// index.html, and the chrome of the management segment its modules share - the
+// registry adds each module's own. The room's lines are the room module's.
+const LEVEL_DICTIONARIES = [
+    "/ui/localization.json",
+    "/ui/loading/localization.json",
+    "/ui/management/localization.json"
+];
+
+// a slice that fails is logged and skipped, as a module is, so boot goes on
+// with the markup's own text where its lines would have been
+const loadDictionaries = function() {
+    return Promise.all(LEVEL_DICTIONARIES.map(function(url) {
+        return localization.load(url).catch(function(error) {
+            console.error(error);
+        });
+    }));
+};
 
 // the size of the UI, from the display it is read on: every length in the shell
 // is a rem, so the root font size is the size of the whole UI
@@ -18,21 +45,147 @@ const applyScale = function() {
     return {"display": display, "kind": kind};
 };
 
-// the theme, then the mode a tick later - beercss derives the mode from the
-// theme it just built, so the two cannot be set in one go
-const applyTheme = function(local) {
-    globalThis.ui("theme", local["color"]);
-    setTimeout(() => {
-        let mode = local["mode"];
-        if (mode === "auto") {
-            mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        }
+// the paint cache the script in index.html reads first: {color, mode, light,
+// dark, lang} - see CLIENT.md, "The theme is painted before any module runs"
+const PAINT_KEY = "appearance";
+
+const readJSON = function(text) {
+    try {
+        const value = JSON.parse(text);
+        return (typeof value === "object" && value !== null ? value : null);
+    } catch (error) {
+        return null;
+    }
+};
+
+// the meta is read once, being the build's and never changing; the cache is read
+// every time, since another tab or window writes it too
+let built;
+
+const readBuilt = function() {
+    if (typeof built === "undefined") {
+        built = readJSON(document.querySelector("meta[name=appearance]")?.content ?? "");
+    }
+    return built;
+};
+
+const readCached = function() {
+    try {
+        return readJSON(localStorage.getItem(PAINT_KEY));
+    } catch (error) {
+        return null;
+    }
+};
+
+// fields merged into the cache, so the theme and the language keep each other's
+const writeCached = function(fields) {
+    try {
+        localStorage.setItem(PAINT_KEY, JSON.stringify({...readCached(), ...fields}));
+    } catch (error) {
+        // a browser with no storage paints the server's default next time
+    }
+};
+
+const isPaint = function(paint) {
+    return typeof paint?.["light"] === "string" && typeof paint?.["dark"] === "string";
+};
+
+// the palettes painted so far, the cache's before the build's
+const readPaints = function() {
+    return [readCached(), readBuilt()].filter(isPaint);
+};
+
+// the painted palette of this colour, if there is one to reuse
+const findPaint = function(paints, color) {
+    return paints.find(function(paint) {
+        return String(paint["color"]).toLowerCase() === String(color).toLowerCase();
+    }) ?? null;
+};
+
+// one build per colour in flight, however many calls are waiting on it - a
+// failed one is dropped, so the next call tries again
+const building = new Map();
+
+const getPalette = function(color) {
+    const key = String(color).toLowerCase();
+    if (building.has(key) === false) {
+        building.set(key, buildPalette(color).finally(function() {
+            building.delete(key);
+        }));
+    }
+    return building.get(key);
+};
+
+// the palette and the mode, drawn at once; before the first, beercss holds no
+// palette, and a mode set alone would wipe the one index.html painted
+let isDrawn = false;
+
+const drawTheme = function(paint, mode) {
+    globalThis.ui("theme", {"light": paint["light"], "dark": paint["dark"]});
+    globalThis.ui("mode", mode);
+    isDrawn = true;
+};
+
+// the mode, on the palette already on screen - before the first draw that is
+// the one index.html painted, handed to beercss so it is not wiped
+const drawMode = function(mode, paints) {
+    if (isDrawn === false && paints.length > 0) {
+        drawTheme(paints[0], mode);
+    } else {
         globalThis.ui("mode", mode);
-    }, 1);
+    }
+};
+
+// only the latest call draws, so a colour still being built never lands over
+// one picked after it
+let themeCount = 0;
+
+const applyTheme = async function(local) {
+    // the values as they are now - the object is the live configuration
+    const color = local["color"];
+    const localMode = local["mode"];
+    let mode = localMode;
+    if (mode === "auto") {
+        mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    const count = ++themeCount;
+    // nothing here may reject: applyLocal does not wait on it
+    try {
+        const paints = readPaints();
+        let paint = findPaint(paints, color);
+        if (paint === null) {
+            // the mode is switched at once, a failed build leaves it standing
+            try {
+                drawMode(mode, paints);
+            } catch (error) {
+                console.error("Cannot switch the theme mode:", error);
+            }
+            paint = await getPalette(color);
+            if (count !== themeCount) {
+                return;
+            }
+        }
+        drawTheme(paint, mode);
+        writeCached({"color": color, "mode": localMode, "light": paint["light"], "dark": paint["dark"]});
+    } catch (error) {
+        if (count === themeCount) {
+            console.error("Cannot apply the theme:", error);
+        }
+    }
+};
+
+// the name as the title - the tab's, and the desktop window's and tray's,
+// which follow it: the configured one in this language, else the dictionary's
+const applyName = function(lang) {
+    const name = pickName(readBuilt()?.["name"], lang) ?? localization.get("main.name", lang);
+    if (typeof name === "string" && name !== "") {
+        document.title = name;
+    }
 };
 
 // the language of the shell: "auto" follows the browser, anything unsupported
-// falls back to English, and the resolved one goes back to the desktop shell
+// falls back to English, and the resolved one goes back to the desktop shell -
+// the name follows it, and it is cached for the title of the next load
 const applyLanguage = function(local) {
     let lang = local["lang"];
     if (lang === "auto") {
@@ -43,6 +196,8 @@ const applyLanguage = function(local) {
     }
     localization.setLang(lang);
     localization.translate(lang);
+    applyName(lang);
+    writeCached({"lang": lang});
     return lang;
 };
 
@@ -163,15 +318,20 @@ const createUI = function(ctx) {
         "loading": loading,
         "snackbar": snackbar,
         "permissions": permissions,
-        "env": {"browser": browser, "width": width, "sizeS": sizeS, "sizeM": sizeM},
+        "env": {"width": width, "sizeS": sizeS, "sizeM": sizeM},
         "navigate": function(path, params) { return ctx["router"].navigate(path, params); },
         "openDialog": function(id, params, isNested) { return ctx["router"].openDialog(id, params, isNested); },
         "closeDialog": function(id) { return ctx["router"].closeDialog(id); },
         "closeDialogs": function() { return ctx["router"].closeDialogs(); },
+        "isDialogOpen": function(id) { return ctx["router"].isDialogOpen(id); },
         // the open route again, for a screen whose records changed under it
         "reload": function() { return ctx["router"].loadPath(); },
         // the local configuration applied again, for a reset of it
         "applyLocal": function() { return applyLocal(ctx["conf"]["local"], ctx["desktop"]); },
+        // the colour and the mode of the local configuration, drawn and cached
+        "applyTheme": function() { return applyTheme(ctx["conf"]["local"]); },
+        // the language of the local configuration, with the name that follows it
+        "applyLanguage": function() { return applyLanguage(ctx["conf"]["local"]); },
 
         // the one question asked before something is undone for good, answered
         // true or false. It opens nested - whatever asked it is still behind it
@@ -215,5 +375,5 @@ const buildUI = async function(router) {
     }
 };
 
-export { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
-export default { applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
+export { loadDictionaries, applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };
+export default { loadDictionaries, applyScale, applyTheme, applyLanguage, applyLocal, createSnackbar, createUI, buildUI };

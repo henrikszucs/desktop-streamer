@@ -13,7 +13,7 @@ const AboutWindow = class extends Panel {
 
     async mount(ctx) {
         const desktop = ctx["desktop"];
-        const browser = ctx["ui"].env.browser;
+        const stream = ctx["stream"];
 
         this.version = document.getElementById("about-version");
         this.version.innerText = ctx["conf"]["version"];
@@ -40,25 +40,37 @@ const AboutWindow = class extends Panel {
         this.systemAudio2 = document.getElementById("about-audio-unsupported");
         if (desktop.isAvailable === false) {
             isMissing = true;
-            if (browser["isChrome"] || browser["isOpera"] || browser["isEdgeChromium"]) {
+            if (stream.isAudioShareSupported() === true) {
                 this.systemAudio.classList.remove("hide");
             } else {
                 this.systemAudio2.classList.remove("hide");
             }
         }
 
-        // check screen share support
+        // check screen share support: a browser with WebCodecs shares what
+        // its picker is given, one without shares nothing
         this.screenShare = document.getElementById("about-screen");
+        this.screenShare2 = document.getElementById("about-screen-unsupported");
         if (desktop.isAvailable === false) {
             isMissing = true;
-            this.screenShare.classList.remove("hide");
+            if (stream.isShareSupported() === true) {
+                this.screenShare.classList.remove("hide");
+            } else {
+                this.screenShare2.classList.remove("hide");
+            }
         }
 
-        // check play support
+        // check play support: the picture and the sound decode apart, and a
+        // browser without the sound decoder still plays the picture
         this.playback = document.getElementById("about-play");
-        if (desktop.isAvailable === false && (typeof VideoDecoder === "undefined" || typeof AudioDecoder === "undefined")) {
+        if (desktop.isAvailable === false && typeof VideoDecoder === "undefined") {
             isMissing = true;
             this.playback.classList.remove("hide");
+        }
+        this.playbackAudio = document.getElementById("about-play-audio");
+        if (desktop.isAvailable === false && typeof AudioDecoder === "undefined") {
+            isMissing = true;
+            this.playbackAudio.classList.remove("hide");
         }
 
         // check control share support

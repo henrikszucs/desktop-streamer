@@ -11,10 +11,10 @@
 }
 
 /* Google draws the button at a fixed 32px for the size that is never
-   personalized (see google.js), so the drawn element is scaled up rather than
-   asked for a bigger one - a transform keeps it clickable as it is */
-#google-login > div,
-#google-recover > div {
+   personalized (see google-frame.js), so the frame holding it is scaled up
+   rather than asked for a bigger one - a transform keeps it clickable as it is */
+#google-login > iframe,
+#google-recover > iframe {
     transform: scale(1.5);
     transform-origin: center;
 }

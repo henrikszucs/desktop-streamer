@@ -275,9 +275,16 @@ The design above, with these differences:
 - **The socket packet is 64 KB with 64 in flight** rather than the 16 KB the
   text names: the relay's chunk is the whole frame, so the packet is sized for
   a frame rather than a channel chunk.
-- **The desktop host captures no sound.** ffmpeg's system audio input differs
-  per platform (none built in on macOS without a loopback device) and none is
-  wired; the web host's display audio goes through an `AudioEncoder` as Opus.
+- **The desktop host's sound is not ffmpeg's.** ffmpeg's system audio input
+  differs per platform (none built in on macOS without a loopback device), so
+  the sound is a Chromium display capture answered by `main.js` with the
+  `loopback` device, its 4x4 picture never read, and its audio track through
+  the same `AudioEncoder` as the web host's - Windows natively, macOS 13+ and
+  Linux (PulseAudio) behind Chromium features, Wayland refused because its
+  portal would ask on every unmute. Where that gives nothing, ffmpeg takes a
+  loopback device by name (dshow, avfoundation) or on Linux the PulseAudio
+  monitor, as raw PCM into the same encoder. Both paths are run on Windows;
+  macOS and Linux are untested.
 - **Control is gated on the host having easy-control**, not on a per-join tick
   the joins table does not carry; a browser host applies nothing.
 - **The host shares its primary display**; `room/settings` is still the empty

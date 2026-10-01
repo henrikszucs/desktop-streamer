@@ -25,14 +25,8 @@ const AppearanceWindow = class extends Panel {
             }
             await setLocal("lang", lang);
 
-            if (lang === "auto") {
-                lang = (navigator.language || navigator.userLanguage).substring(0,2);
-            }
-            if (localization.supportedLanguages.indexOf(lang) === -1) {
-                lang = "en";
-            }
-            localization.setLang(lang);
-            localization.translate(lang);
+            // the language resolved and applied, the title with it
+            lang = ctx["ui"].applyLanguage();
             if (desktop.isAvailable) {
                 desktop.ipcRenderer.send("api", "set-lang", lang);
             }
@@ -48,11 +42,7 @@ const AppearanceWindow = class extends Panel {
             } else {
                 conf["local"]["mode"] = "auto";
             }
-            let mode = conf["local"]["mode"];
-            if (mode === "auto") {
-                mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-            }
-            globalThis.ui("mode", mode);
+            ctx["ui"].applyTheme();
             this.setThemeIcon();
             await setLocal("mode", conf["local"]["mode"]);
         });
@@ -97,19 +87,33 @@ const AppearanceWindow = class extends Panel {
         this.autoLaunchError = document.getElementById("error-auto-launch");
         if (desktop.isAvailable) {
             this.autoLaunchLabel.classList.remove("hide");
-            desktop.autoLaunch.isEnabled().then((isEnabled) => {
-                this.autoLaunchCheckbox.checked = isEnabled;
-            });
             this.autoLaunchCheckbox.addEventListener("change", async (event) => {
                 const isChecked = event.target.checked;
-                if (isChecked) {
-                    await desktop.autoLaunch.enable();
-                } else {
-                    await desktop.autoLaunch.disable();
+                const count = this.lockAutoLaunch();
+                // what the system holds is read back either way, a failure too
+                let isSwitched = false;
+                try {
+                    if (isChecked) {
+                        await desktop.autoLaunch.enable();
+                    } else {
+                        await desktop.autoLaunch.disable();
+                    }
+                    isSwitched = true;
+                } catch (error) {
+                    console.error("Cannot switch auto launch:", error);
                 }
-                const isEnabled = await desktop.autoLaunch.isEnabled();
-                event.target.checked = isEnabled;
-                await setLocal("autoLaunch", isEnabled);
+                // the system is the only record of it - one that cannot be
+                // read is taken as switched only if the switch did not fail
+                let isEnabled = (isSwitched === true ? isChecked : !isChecked);
+                try {
+                    isEnabled = await desktop.autoLaunch.isEnabled();
+                } catch (error) {
+                    console.error("Cannot read auto launch:", error);
+                }
+                if (count === this.autoLaunchCount) {
+                    event.target.checked = isEnabled;
+                }
+                this.unlockAutoLaunch(count);
             });
         } else {
             this.autoLaunchError.classList.remove("hide");
@@ -126,14 +130,48 @@ const AppearanceWindow = class extends Panel {
             this.themeBtn.children[0].innerText = "dark_mode";
         }
     };
+    // drawn at once and written behind it - applyTheme reads the value that
+    // setLocal puts in memory before it reaches the disk
     async setColor(color) {
-        globalThis.ui("theme", color);
-        await this.ctx["setLocal"]("color", color);
+        const saving = this.ctx["setLocal"]("color", color);
+        await this.ctx["ui"].applyTheme();
+        await saving;
+    };
+
+    // the checkbox is off limits while a read or a switch is out, and only the
+    // latest of them hands it back, so a late answer never lands over a click
+    lockAutoLaunch() {
+        this.autoLaunchCheckbox.disabled = true;
+        this.autoLaunchCount = (this.autoLaunchCount ?? 0) + 1;
+        return this.autoLaunchCount;
+    };
+    unlockAutoLaunch(count) {
+        if (count === this.autoLaunchCount) {
+            this.autoLaunchCheckbox.disabled = false;
+        }
+    };
+
+    // the system holds the setting, so a reset or another window may have moved it
+    readAutoLaunch() {
+        const count = this.lockAutoLaunch();
+        this.ctx["desktop"].autoLaunch.isEnabled().then((isEnabled) => {
+            if (count === this.autoLaunchCount) {
+                this.autoLaunchCheckbox.checked = isEnabled;
+            }
+        }).catch((error) => {
+            console.error("Cannot read auto launch:", error);
+        }).finally(() => {
+            this.unlockAutoLaunch(count);
+        });
     };
 
     open(params) {
         this.langSelect.value = this.ctx["conf"]["local"]["lang"];
         this.setThemeIcon();
+        if (this.ctx["desktop"].isAvailable === true) {
+            this.trayCheckbox.checked = this.ctx["conf"]["local"]["minimizing"];
+            this.readAutoLaunch();
+        }
         super.open(params);
     };
 };
