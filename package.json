@@ -29,7 +29,7 @@
         "better-sqlite3": "^13.0.3",
         "knex": "^3.1.0",
         "mysql2": "^3.24.2",
-        "nodemailer": "^9.0.5",
+        "nodemailer": "^10.0.13",
         "uglify-js": "^3.19.3",
         "ws": "^8.19.0"
     },
@@ -44,5 +44,8 @@
     "cpu": [
         "x64",
         "arm64"
-    ]
+    ],
+    "allowScripts": {
+        "better-sqlite3@13.0.3": true
+    }
 }
