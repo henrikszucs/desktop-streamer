@@ -9,13 +9,20 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs/promises";
 
-// the build copies the client tree as it is, so a reference that resolves in the
-// sources resolves in tmp/web, and one that does not is a 404 in both
+// first-party dependencies
+import { CLIENT_PACKAGES } from "../src/server/building.js";
+
+// the build copies the client tree as it is, plus the CLIENT_PACKAGES it takes
+// from node_modules, so a reference that resolves in the sources or to one of
+// those resolves in tmp/web, and one that does not is a 404 in both
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 const webPath = path.join(repoPath, "src", "client", "web");
 const electronPath = path.join(repoPath, "src", "client", "electron");
 const builtWebPath = path.join(repoPath, "tmp", "web");
+const packagePaths = new Set(CLIENT_PACKAGES.map(function([, dest]) {
+    return path.join(webPath, ...dest);
+}));
 
 const ASSET_EXTENSIONS = "js|mjs|css|html|svg|png|jpg|jpeg|webp|mp3|json|woff2|ico|webmanifest|onnx|wasm";
 const SCANNED_EXTENSIONS = [".js", ".mjs", ".html", ".css"];
@@ -27,6 +34,11 @@ const exists = async function(filePath) {
     } catch (error) {
         return false;
     }
+};
+
+// a file the sources hold, or one the build puts there from node_modules
+const inTree = async function(filePath) {
+    return packagePaths.has(filePath) || await exists(filePath);
 };
 
 // every file of the client the scanners below have anything to say about, the
@@ -92,7 +104,7 @@ test("every asset the web client requests by absolute path is in the tree", asyn
         for (const ref of rootAbsoluteRefs(code)) {
             checked++;
             const target = path.join(webPath, ref);
-            assert.equal(await exists(target), true, file + " asks for " + ref + " which is not in src/client/web");
+            assert.equal(await inTree(target), true, file + " asks for " + ref + " which is not in src/client/web");
         }
     }
     assert.equal(checked > 0, true, "no absolute asset references found, the scanner is broken");
@@ -110,7 +122,7 @@ test("every module the web client imports relatively is in the tree", async () =
         const dir = path.dirname(path.join(webPath, file));
         for (const ref of relativeImports(code)) {
             checked++;
-            assert.equal(await exists(path.resolve(dir, ref)), true, file + " imports " + ref + " which is not in the tree");
+            assert.equal(await inTree(path.resolve(dir, ref)), true, file + " imports " + ref + " which is not in the tree");
         }
     }
     assert.equal(checked > 0, true, "no relative imports found, the scanner is broken");

@@ -12,21 +12,25 @@ be restored see [../plans/README.md](../plans/README.md).
                 src/server/ws/ws.js  <->  src/client/web/src/server.js
     ----------------------------------------------------------------------------
     communicator   packets, acks, retries, split, message ids, invoke/answer
-                   src/server/communicator.js  <->  libs/communicator/communicator.js
+                   easy-communicator (npm)  <->  libs/communicator/communicator.js
     ----------------------------------------------------------------------------
     transport      one wss:// WebSocket, text frames for JSON, binary for the rest
 ```
 
-The two `communicator.js` files are vendored copies of the maintainer's own
-`easy-communicator` (LGPL-3.0-or-later, see the SPDX headers). **They implement
-the same protocol and have to stay in sync** - a change to one is a change to
-both. They are also intended to back WebRTC data channels later, which is why
-the protocol knows nothing about WebSockets: it only calls a `sender` function.
+Both ends run the maintainer's own
+[`easy-communicator`](https://github.com/henrikszucs/easy-communicator)
+(LGPL-3.0-only), an npm dependency pinned to an exact version. The server imports it
+from `node_modules`; the browser loads `libs/communicator/communicator.js`,
+which is not in the sources but copied from that same package by the client
+build (`CLIENT_PACKAGES` in `src/server/building.js`), so **the two ends cannot
+run different versions of the protocol**. It also backs the room's WebRTC
+`control` data channel, which is why the protocol knows nothing about
+WebSockets: it only calls a `sender` function.
 
 | side | files |
 | --- | --- |
-| server | [`src/server/ws/ws.js`](../../src/server/ws/ws.js), [`src/server/ws/api.js`](../../src/server/ws/api.js), [`src/server/communicator.js`](../../src/server/communicator.js) |
-| client | [`src/client/web/src/server.js`](../../src/client/web/src/server.js), [`src/client/web/libs/communicator/communicator.js`](../../src/client/web/libs/communicator/communicator.js) |
+| server | [`src/server/ws/ws.js`](../../src/server/ws/ws.js), [`src/server/ws/api.js`](../../src/server/ws/api.js), `node_modules/easy-communicator/src/communicator.js` |
+| client | [`src/client/web/src/server.js`](../../src/client/web/src/server.js), `tmp/web/libs/communicator/communicator.js` (built) |
 
 ## Where the address comes from
 
@@ -520,9 +524,10 @@ an invoke and only falls back to `abort()` for a one-way send.
 - **Every call needs a failure branch.** Any type the server does not serve now
   answers `{"success": false}`, so `data["success"]` is safe to read - but a
   connection that dies mid-call still leaves `data` `undefined`.
-- **The two `communicator.js` copies must stay in sync**, including the parts
-  this document describes as layout. They are deliberately not an npm
-  dependency; edit the copies in the repo and keep their SPDX headers.
+- **The protocol is changed upstream**, in `easy-communicator`, including the
+  parts this document describes as layout: release it, bump the exact version in
+  `package.json`, and rebuild with `--compile` so the browser gets it too. Use
+  `npm link` to the local checkout while working on both.
 - **Nothing serves `src/client/web` directly.** A change to the client is
   invisible until `npm run server -- --compile` rebuilds `tmp/web`.
 - `ArrayBuffer.prototype.transfer` is used on every incoming binary frame,
@@ -538,7 +543,7 @@ that drives the **browser's own** communicator against a running server, which
 is what verified the table above:
 
 ```js
-import Communicator from "<repo>/src/client/web/libs/communicator/communicator.js";
+import Communicator from "<repo>/tmp/web/libs/communicator/communicator.js";
 import WebSocket from "<repo>/node_modules/ws/index.js";
 
 const com = new Communicator({

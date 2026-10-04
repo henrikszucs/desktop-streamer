@@ -8,9 +8,9 @@ import https from "node:https";
 
 // third-party dependencies
 import { WebSocketServer } from "ws";
+import Communicator from "easy-communicator";
 
 // first-party dependencies
-import Communicator from "../communicator.js";
 import { generateId, getVersion } from "../common.js";
 import { getPublicWsAddress } from "../config.js";
 import serverHTTP from "../http.js";

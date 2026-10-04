@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
+import { CLIENT_PACKAGES, buildPackages, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 
@@ -285,4 +285,17 @@ test("buildConfFile names the dists of the compile it belongs to", async () => {
     const built = JSON.parse(await buildConfFile(confSections(), [{"os": "win32", "arch": "x64"}]));
     assert.deepEqual(built["clients"], ["win32-x64.zip"]);
     assert.equal(typeof built["version"], "string");
+});
+
+//
+// buildPackages
+//
+test("buildPackages takes every client package from node_modules, minified, where the client imports it", async () => {
+    const built = await buildPackages();
+    assert.deepEqual(built.map((file) => file["path"]), CLIENT_PACKAGES.map(([, dest]) => path.join(...dest)));
+    for (const [index, [name]] of CLIENT_PACKAGES.entries()) {
+        const source = await fs.readFile(new URL(import.meta.resolve(name)));
+        assert.equal(built[index]["data"].length > 0, true, name + " built empty");
+        assert.equal(built[index]["data"].length < source.length, true, name + " was copied rather than minified");
+    }
 });

@@ -7,7 +7,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import process from "node:process";
 
 // third-party dependencies
@@ -51,6 +51,12 @@ const PALETTE_SCRIPT = ["client", "web", "libs", "beercss", "material-dynamic-co
 
 // written by the build, never copied from the sources
 const GENERATED_FILES = new Set([CONF_FILE]);
+
+// npm packages the web client imports, copied from node_modules into the build
+// so the browser runs the very version the server does: [package, path in web]
+const CLIENT_PACKAGES = [
+    ["easy-communicator", ["libs", "communicator", "communicator.js"]]
+];
 
 // what a desktop leaves in a folder it browsed, never part of a client
 const JUNK_FILES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
@@ -294,6 +300,18 @@ const buildFolder = async function(srcPath, isModule=true, skip=new Set()) {
     return built;
 };
 
+// build the client packages into [{path, data}], laid out like buildFolder's files
+const buildPackages = async function() {
+    const built = [];
+    for (const [name, dest] of CLIENT_PACKAGES) {
+        built.push({
+            "path": path.join(...dest),
+            "data": await buildFile(fileURLToPath(import.meta.resolve(name)))
+        });
+    }
+    return built;
+};
+
 // the configuration the built clients read: the version, a section per server
 // (they are configured apart), and the zips this compile is about to write
 const buildConfFile = async function(conf, dists = []) {
@@ -515,7 +533,7 @@ const compileClients = async function(conf) {
     process.stdout.write("\n    Building web client...    ");
     const webPath = path.join(serverScriptPath, "client", "web");
     const electronPath = path.join(serverScriptPath, "client", "electron");
-    const webFiles = await buildFolder(webPath, true, GENERATED_FILES);
+    const webFiles = [...await buildFolder(webPath, true, GENERATED_FILES), ...await buildPackages()];
     const electronFiles = await buildFolder(electronPath, false);
     // a page without its palette still works, it only switches colour once
     // its first module runs, so a failure here is a warning
@@ -584,5 +602,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { compileClients, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
-export default { compileClients, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export { CLIENT_PACKAGES, compileClients, buildPackages, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export default { CLIENT_PACKAGES, compileClients, buildPackages, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };

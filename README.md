@@ -424,23 +424,25 @@ operators of a modified server must offer its complete corresponding source to
 their users.
 
 ### Bundled libraries
-The realtime protocol and MIME helpers are vendored directly into this
-repository instead of being pulled from npm:
+The MIME helper is vendored directly into this repository instead of being
+pulled from npm:
 
 | Path | Upstream | License in this repo |
 | ---- | -------- | -------------------- |
-| `src/server/communicator.js` | [`easy-communicator`](https://github.com/henrikszucs/easy-communicator) | LGPL-3.0-or-later |
 | `src/server/mime.js` | [`easy-mime`](https://github.com/henrikszucs/easy-mime) | LGPL-3.0-or-later |
-| `src/client/web/libs/communicator/communicator.js` | [`easy-communicator`](https://github.com/henrikszucs/easy-communicator) | LGPL-3.0-or-later |
 
-These libraries are authored and copyright-held by Henrik Szűcs. Their upstream
-npm packages are (were) published under GPL-2.0; the copies bundled here are
-re-licensed by the copyright holder under the **GNU Lesser General Public
-License, version 3 or later**, which is compatible with the project's AGPL-3.0
-license, and are no longer listed as npm dependencies. Each vendored file carries
-an SPDX header, and both `src/server/` and `src/client/web/libs/communicator/`
-contain their own `COPYING` (GPL-3.0) and `COPYING.LESSER` (LGPL-3.0) texts. The
-MIME table in `mime.js` follows the schema of jshttp/mime-db (MIT).
+It is authored and copyright-held by Henrik Szűcs. Its upstream npm package is
+(was) published under GPL-2.0; the copy bundled here is re-licensed by the
+copyright holder under the **GNU Lesser General Public License, version 3 or
+later**, which is compatible with the project's AGPL-3.0 license, and carries an
+SPDX header. The MIME table in `mime.js` follows the schema of jshttp/mime-db
+(MIT).
+
+The realtime protocol, [`easy-communicator`](https://github.com/henrikszucs/easy-communicator)
+by the same author (LGPL-3.0-only), is an ordinary npm dependency. The server imports
+it from `node_modules`, and the client build copies that same file into the web
+client as `libs/communicator/communicator.js`, so the browser always runs the
+version the server does.
 
 ### Contributing
 Contributions require signing the [Contributor License Agreement](CLA.md) once,

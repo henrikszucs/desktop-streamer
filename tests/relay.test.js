@@ -7,8 +7,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+// third-party dependencies
+import Communicator from "easy-communicator";
+
 // first-party dependencies
-import Communicator from "../src/server/communicator.js";
 import serverWS from "../src/server/ws/ws.js";
 import { buildPublicConf } from "../src/server/ws/handlers/conf.js";
 import { releasePairCodes } from "../src/server/ws/handlers/pairing.js";
