@@ -55,7 +55,8 @@ const GENERATED_FILES = new Set([CONF_FILE]);
 // npm packages the web client imports, copied from node_modules into the build
 // so the browser runs the very version the server does: [package, path in web]
 const CLIENT_PACKAGES = [
-    ["easy-communicator", ["libs", "communicator", "communicator.js"]]
+    ["easy-communicator", ["libs", "communicator", "communicator.js"]],
+    ["easy-idb", ["libs", "idb", "idb.js"]]
 ];
 
 // what a desktop leaves in a folder it browsed, never part of a client

@@ -12,15 +12,16 @@ be restored see [../plans/README.md](../plans/README.md).
                 src/server/ws/ws.js  <->  src/client/web/src/server.js
     ----------------------------------------------------------------------------
     communicator   packets, acks, retries, split, message ids, invoke/answer
-                   easy-communicator (npm)  <->  libs/communicator/communicator.js
+                easy-communicator (GitHub)  <->  libs/communicator/communicator.js
     ----------------------------------------------------------------------------
     transport      one wss:// WebSocket, text frames for JSON, binary for the rest
 ```
 
 Both ends run the maintainer's own
 [`easy-communicator`](https://github.com/henrikszucs/easy-communicator)
-(LGPL-3.0-only), an npm dependency pinned to an exact version. The server imports it
-from `node_modules`; the browser loads `libs/communicator/communicator.js`,
+(LGPL-3.0-only), a GitHub dependency pinned to a release tag
+(`github:henrikszucs/easy-communicator#v<version>`). The server imports its
+prebuilt `dist/communicator.js` from `node_modules`; the browser loads `libs/communicator/communicator.js`,
 which is not in the sources but copied from that same package by the client
 build (`CLIENT_PACKAGES` in `src/server/building.js`), so **the two ends cannot
 run different versions of the protocol**. It also backs the room's WebRTC
@@ -29,7 +30,7 @@ WebSockets: it only calls a `sender` function.
 
 | side | files |
 | --- | --- |
-| server | [`src/server/ws/ws.js`](../../src/server/ws/ws.js), [`src/server/ws/api.js`](../../src/server/ws/api.js), `node_modules/easy-communicator/src/communicator.js` |
+| server | [`src/server/ws/ws.js`](../../src/server/ws/ws.js), [`src/server/ws/api.js`](../../src/server/ws/api.js), `node_modules/easy-communicator/dist/communicator.js` |
 | client | [`src/client/web/src/server.js`](../../src/client/web/src/server.js), `tmp/web/libs/communicator/communicator.js` (built) |
 
 ## Where the address comes from
@@ -525,9 +526,10 @@ an invoke and only falls back to `abort()` for a one-way send.
   answers `{"success": false}`, so `data["success"]` is safe to read - but a
   connection that dies mid-call still leaves `data` `undefined`.
 - **The protocol is changed upstream**, in `easy-communicator`, including the
-  parts this document describes as layout: release it, bump the exact version in
-  `package.json`, and rebuild with `--compile` so the browser gets it too. Use
-  `npm link` to the local checkout while working on both.
+  parts this document describes as layout: rebuild its `dist/`, commit and tag a
+  release there, bump the tag in `package.json`, and rebuild with `--compile` so
+  the browser gets it too. Use `npm link` to the local checkout while working on
+  both (and `npm run build` in it, since this repo loads its `dist/`).
 - **Nothing serves `src/client/web` directly.** A change to the client is
   invisible until `npm run server -- --compile` rebuilds `tmp/web`.
 - `ArrayBuffer.prototype.transfer` is used on every incoming binary frame,

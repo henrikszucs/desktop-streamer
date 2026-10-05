@@ -9,8 +9,10 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 
-// first-party dependencies 
-import { getMIMEType } from "./mime.js";
+// third-party dependencies
+import { getMIMEType } from "easy-mime";
+
+// first-party dependencies
 import { binarySearch } from "./common.js";
 import { getPublicAddress, getPublicRedirect } from "./config.js";
 

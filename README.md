@@ -423,26 +423,25 @@ server is delivered over a network, the AGPL section 13 obligation applies:
 operators of a modified server must offer its complete corresponding source to
 their users.
 
-### Bundled libraries
-The MIME helper is vendored directly into this repository instead of being
-pulled from npm:
+### Own libraries
+Three libraries by the same author are ordinary dependencies, each taken from
+its prebuilt `dist/` build:
 
-| Path | Upstream | License in this repo |
-| ---- | -------- | -------------------- |
-| `src/server/mime.js` | [`easy-mime`](https://github.com/henrikszucs/easy-mime) | LGPL-3.0-or-later |
+| Package | Used by | License |
+| ------- | ------- | ------- |
+| [`easy-communicator`](https://github.com/henrikszucs/easy-communicator) | server and web client | LGPL-3.0-only |
+| [`easy-mime`](https://github.com/henrikszucs/easy-mime) | server (`http.js`) | LGPL-3.0-only |
+| [`easy-idb`](https://github.com/henrikszucs/easy-idb) | web client (`src/conf.js`) | see its repository |
 
-It is authored and copyright-held by Henrik Szűcs. Its upstream npm package is
-(was) published under GPL-2.0; the copy bundled here is re-licensed by the
-copyright holder under the **GNU Lesser General Public License, version 3 or
-later**, which is compatible with the project's AGPL-3.0 license, and carries an
-SPDX header. The MIME table in `mime.js` follows the schema of jshttp/mime-db
-(MIT).
-
-The realtime protocol, [`easy-communicator`](https://github.com/henrikszucs/easy-communicator)
-by the same author (LGPL-3.0-only), is an ordinary npm dependency. The server imports
-it from `node_modules`, and the client build copies that same file into the web
-client as `libs/communicator/communicator.js`, so the browser always runs the
-version the server does.
+All three come from GitHub, each pinned to a release tag
+(`github:henrikszucs/easy-communicator#v1.2.0`,
+`github:henrikszucs/easy-mime#v1.1.0`, `github:henrikszucs/easy-idb#v1.0.0`),
+not from the npm registry (where the name `easy-idb` belongs to another
+package). The server imports what it needs from `node_modules`, and the client
+build copies the packages the browser needs into the web client
+(`libs/communicator/communicator.js`, `libs/idb/idb.js`), so the browser always
+runs the version the server was built with. The MIME table in `easy-mime`
+follows the schema of jshttp/mime-db (MIT).
 
 ### Contributing
 Contributions require signing the [Contributor License Agreement](CLA.md) once,
