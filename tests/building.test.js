@@ -133,7 +133,7 @@ test("minifyScript keeps require and module.exports in script mode", () => {
 test("minifyScript parses module syntax whichever mode it is given", () => {
     // the isModule flag does not gate ESM syntax, so an Electron file that grew
     // an import still minifies here and only fails once Electron requires it
-    assert.match(minifyScript("export const value = 1;", false), /export\{/);
+    assert.match(minifyScript("export const value = 1;", false), /^export const value=1;/);
 });
 
 test("minifyScript throws on a syntax error", () => {

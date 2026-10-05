@@ -11,7 +11,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import process from "node:process";
 
 // third-party dependencies
-import UglifyJS from "uglify-js";
+import * as esbuild from "esbuild";
 
 // first-party dependencies
 import { serverScriptPath, getVersion } from "./common.js";
@@ -74,18 +74,19 @@ const zipPath = function(...parts) {
 //
 // Minifiers
 //
-// minify a script, isModule=false parses it as CommonJS (the Electron shell)
+// minify a script, isModule=false keeps the top level names as they are, since
+// in a script (the CommonJS Electron shell, an inline classic script) they may
+// be read from outside the file
 const minifyScript = function(code, isModule=true) {
-    const result = UglifyJS.minify(code, {
-        "module": isModule,
-        "compress": {},
-        "mangle": true,
-        "output": {"comments": false}
-    });
-    if (typeof result["error"] !== "undefined") {
-        throw new Error(result["error"]["message"]);
+    const options = {
+        "minify": true,
+        "legalComments": "none",
+        "logLevel": "silent"
+    };
+    if (isModule) {
+        options["format"] = "esm";
     }
-    return result["code"];
+    return esbuild.transformSync(code, options)["code"];
 };
 
 // minify a stylesheet: drop the comments and every space the parser ignores

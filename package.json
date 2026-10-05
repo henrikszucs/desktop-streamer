@@ -28,10 +28,10 @@
         "ajv": "^8.20.0",
         "better-sqlite3": "^13.0.3",
         "easy-communicator": "1.2.0",
+        "esbuild": "^0.28.2",
         "knex": "^3.1.0",
         "mysql2": "^3.24.2",
         "nodemailer": "^10.0.13",
-        "uglify-js": "^3.19.3",
         "ws": "^8.19.0"
     },
     "engines": {

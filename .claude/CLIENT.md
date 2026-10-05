@@ -1494,7 +1494,7 @@ dictionary when asked rather than when the module is imported.
   on a first visit, the server's default, which the build computes for
   `http.appearance` with the same `material-dynamic-colors` the client uses
   (`buildPaint` in `building.js`) and writes into `<meta name="appearance">` —
-  an attribute, because the minifier routes inline script through UglifyJS and
+  an attribute, because the minifier routes inline script through esbuild and
   leaves attributes alone. `applyTheme` in `ui/ui.js` then hands beercss a
   palette it already has as `{light, dark}`, which is synchronous and draws
   nothing new, builds one only for a colour never drawn, and caches whatever
