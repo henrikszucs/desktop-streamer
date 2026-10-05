@@ -12,10 +12,10 @@
 //     {"width", "height", "data": [...], "xOffset", "yOffset"}
 // and `data` is one of two pictures, depending on the build of easy-control
 // behind it. `width * height * 4` entries are RGBA, a byte per channel, the
-// way `dev/control/src/mouse.cpp` writes them today. `width * height` entries
-// are one packed pixel each, `0xAARRGGBB`, which is what the addon vendored
-// under `src/client/native/` reports - it predates that source and fills no
-// alpha at all, so its picture is a silhouette: the pointer's own shape in one
+// way easy-control's `src/mouse.cpp` writes them today (its win32 build).
+// `width * height` entries are one packed pixel each, `0xAARRGGBB`, which is
+// what a build that predates that source reports (its darwin and linux ones,
+// at the pinned release) - it fills no alpha at all, so its picture is a silhouette: the pointer's own shape in one
 // colour and nothing around it. Both are read here, because the client is not
 // what builds the addon and either may be the one it is running against.
 //

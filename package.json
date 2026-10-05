@@ -28,6 +28,7 @@
         "ajv": "^8.20.0",
         "better-sqlite3": "^13.0.3",
         "easy-communicator": "github:henrikszucs/easy-communicator#v1.2.0",
+        "easy-control": "github:henrikszucs/easy-control#v0.9.0",
         "easy-idb": "github:henrikszucs/easy-idb#v1.0.0",
         "easy-mime": "github:henrikszucs/easy-mime#v1.1.0",
         "esbuild": "^0.28.2",

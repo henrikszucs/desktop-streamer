@@ -59,6 +59,13 @@ const CLIENT_PACKAGES = [
     ["easy-idb", ["libs", "idb", "idb.js"]]
 ];
 
+// native npm packages the desktop client loads, copied from node_modules into
+// every dist beside the native libs: [package, path in app]. Each one ships a
+// build per target in a <os>-<arch> folder next to the entry it resolves to
+const NATIVE_PACKAGES = [
+    ["easy-control", ["libs", "easy-control"]]
+];
+
 // what a desktop leaves in a folder it browsed, never part of a client
 const JUNK_FILES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 const isJunkFile = function(file) {
@@ -312,6 +319,18 @@ const buildPackages = async function() {
         });
     }
     return built;
+};
+
+// the folders a dist of the target takes beside the app, as [{src, dest}]: the
+// target's own native libs at the top, and each native package's build where
+// the client loads it from
+const nativeFolders = function(nativePath, target) {
+    const folders = [{"src": path.join(nativePath, target), "dest": ""}];
+    for (const [name, dest] of NATIVE_PACKAGES) {
+        const distPath = path.dirname(fileURLToPath(import.meta.resolve(name)));
+        folders.push({"src": path.join(distPath, target), "dest": path.join(...dest)});
+    }
+    return folders;
 };
 
 // the configuration the built clients read: the version, a section per server
@@ -572,20 +591,38 @@ const compileClients = async function(conf) {
             entries.push({"name": zipPath(commonDest, file["path"]), "data": file["data"]});
         }
 
-        // copy native lib files, read one by one while they are deflated
-        const nativeLibPath = path.join(nativePath, target);
-        const nativeLibFiles = await fs.readdir(nativeLibPath, {"recursive": true});
-        for (const file of nativeLibFiles) {
-            if (isJunkFile(file)) {
-                continue;
+        // copy native lib files, read one by one while they are deflated; a
+        // native package without a build for the target leaves the dist unwritten,
+        // the client would fail to start without it
+        let missing = null;
+        for (const folder of nativeFolders(nativePath, target)) {
+            let files;
+            try {
+                files = await fs.readdir(folder["src"], {"recursive": true});
+            } catch (error) {
+                missing = folder["src"];
+                break;
             }
-            const filePath = path.join(nativeLibPath, file);
-            const stat = await fs.stat(filePath);
-            if (stat.isDirectory()) {
-                entries.push({"name": zipPath(commonDest, file) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
-            } else {
-                entries.push({"name": zipPath(commonDest, file), "path": filePath, "mode": stat.mode, "date": stat.mtime});
+            if (folder["dest"] !== "") {
+                const stat = await fs.stat(folder["src"]);
+                entries.push({"name": zipPath(commonDest, folder["dest"]) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
             }
+            for (const file of files) {
+                if (isJunkFile(file)) {
+                    continue;
+                }
+                const filePath = path.join(folder["src"], file);
+                const stat = await fs.stat(filePath);
+                if (stat.isDirectory()) {
+                    entries.push({"name": zipPath(commonDest, folder["dest"], file) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
+                } else {
+                    entries.push({"name": zipPath(commonDest, folder["dest"], file), "path": filePath, "mode": stat.mode, "date": stat.mtime});
+                }
+            }
+        }
+        if (missing !== null) {
+            process.stdout.write("error (no native build in " + missing + ")");
+            continue;
         }
 
         // add conf file
@@ -604,5 +641,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { CLIENT_PACKAGES, compileClients, buildPackages, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
-export default { CLIENT_PACKAGES, compileClients, buildPackages, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export { CLIENT_PACKAGES, NATIVE_PACKAGES, compileClients, buildPackages, nativeFolders, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export default { CLIENT_PACKAGES, NATIVE_PACKAGES, compileClients, buildPackages, nativeFolders, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };

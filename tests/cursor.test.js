@@ -31,8 +31,8 @@ const icon = function(width, height, fill = 1, xOffset = 0, yOffset = 0) {
     return {"width": width, "height": height, "data": data, "xOffset": xOffset, "yOffset": yOffset};
 };
 
-// and the way the addon vendored under src/client/native reports one, which
-// predates that source: one packed pixel per entry, with the alpha byte left
+// and the way an easy-control build that predates its RGBA source reports one:
+// one packed pixel per entry, with the alpha byte left
 // empty. `shape` says which pixels are the pointer.
 const packedIcon = function(width, height, shape, colour = 0xffffff, alpha = 0) {
     const data = [];

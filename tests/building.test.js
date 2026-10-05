@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { CLIENT_PACKAGES, buildPackages, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
+import { CLIENT_PACKAGES, NATIVE_PACKAGES, buildPackages, nativeFolders, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 
@@ -297,5 +297,31 @@ test("buildPackages takes every client package from node_modules, minified, wher
         const source = await fs.readFile(new URL(import.meta.resolve(name)));
         assert.equal(built[index]["data"].length > 0, true, name + " built empty");
         assert.equal(built[index]["data"].length < source.length, true, name + " was copied rather than minified");
+    }
+});
+
+//
+// nativeFolders
+//
+const nativePath = path.join(repoPath, "src", "client", "native");
+
+test("nativeFolders gives every desktop target a build of each native package, where the client loads it", async () => {
+    for (const target of await fs.readdir(nativePath)) {
+        const folders = nativeFolders(nativePath, target);
+        assert.deepEqual(folders.map((folder) => folder["dest"]), ["", ...NATIVE_PACKAGES.map(([, dest]) => path.join(...dest))]);
+        for (const folder of folders) {
+            assert.equal((await fs.stat(folder["src"])).isDirectory(), true, folder["src"] + " is missing");
+        }
+        // the file src/desktop.js requires the addon from
+        const control = folders.find((folder) => folder["dest"] === path.join("libs", "easy-control"));
+        await fs.access(path.join(control["src"], "easy-control.node"));
+    }
+});
+
+test("no native package is vendored under src/client/native as well", async () => {
+    for (const target of await fs.readdir(nativePath)) {
+        for (const [name, dest] of NATIVE_PACKAGES) {
+            await assert.rejects(fs.access(path.join(nativePath, target, ...dest)), {"code": "ENOENT"}, name + " is vendored for " + target);
+        }
     }
 });

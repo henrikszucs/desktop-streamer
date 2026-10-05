@@ -1190,17 +1190,18 @@ rather than off any scaling the desktop applies.
 
 **Two layouts, because the client is not what builds the addon.**
 `Mouse.getIcon()` hands over `width * height * 4` bytes of RGBA where
-`dev/control/src/mouse.cpp` stands today, and `width * height` packed
-`0xAARRGGBB` pixels from the build vendored under `src/client/native/`, which
-predates that source. `iconStride` is what tells them apart and `readIcon`
-reads either. The vendored one fills no alpha at all, so what it reports is a
+`easy-control`'s `src/mouse.cpp` stands today - the `win32-x64` build of the
+pinned release - and `width * height` packed `0xAARRGGBB` pixels from a build
+that predates it, which the `darwin-arm64` and `linux-x64` ones still do.
+`iconStride` is what tells them apart and `readIcon` reads either. The older
+layout fills no alpha at all, so what it reports is a
 silhouette - the Windows arrow arrives as one white shape where it is really
 white inside a black edge - and a white pointer on a white document is a
 pointer nobody can see: `outlineSilhouette` gives the empty pixels touching the
 shape its contrast, black around a light pointer and white around a dark one.
 Nothing is invented about the shape, only about the edge it lost, and a picture
 that came with an alpha channel never goes through there. Rebuilding the addon
-from `dev/control/` is what replaces the guess with the real thing.
+upstream on each platform is what replaces the guess with the real thing.
 
 **A shape is encoded once.** The fingerprint - FNV-1a over the pixels with the
 size and the hotspot in front of it - is what says the peer already has this
@@ -1628,8 +1629,8 @@ dictionary when asked rather than when the module is imported.
 - **The desktop shell's libs are loaded by path, once.** `src/desktop.js` asks
   the main process for the app path and `require()`s the three libs from it -
   `auto-launch` and `ffmpeg-chunkifier` from the shell's own `libs/`, the
-  `easy-control.node` addon from the native folder that the build lays beside it
-  - onto `ctx["desktop"]`, and then sets `globalThis.require` to `undefined`, so
+  `easy-control.node` addon from `libs/easy-control/`, which the build copies in
+  from the `easy-control` package - onto `ctx["desktop"]`, and then sets `globalThis.require` to `undefined`, so
   nothing that runs after boot can reach Node whatever it was handed. Anything
   the desktop needs from Node is either on `ctx["desktop"]` already or goes
   through `ipcRenderer` to `main.js`.

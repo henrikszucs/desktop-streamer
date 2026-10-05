@@ -423,7 +423,7 @@ operators of a modified server must offer its complete corresponding source to
 their users.
 
 ### Own libraries
-Three libraries by the same author are ordinary dependencies, each taken from
+Four libraries by the same author are ordinary dependencies, each taken from
 its prebuilt `dist/` build:
 
 | Package | Used by | License |
@@ -431,15 +431,19 @@ its prebuilt `dist/` build:
 | [`easy-communicator`](https://github.com/henrikszucs/easy-communicator) | server and web client | LGPL-3.0-only |
 | [`easy-mime`](https://github.com/henrikszucs/easy-mime) | server (`http.js`) | LGPL-3.0-only |
 | [`easy-idb`](https://github.com/henrikszucs/easy-idb) | web client (`src/conf.js`) | see its repository |
+| [`easy-control`](https://github.com/henrikszucs/easy-control) | desktop client (`src/desktop.js`) | LGPL-3.0-only |
 
-All three come from GitHub, each pinned to a release tag
+All four come from GitHub, each pinned to a release tag
 (`github:henrikszucs/easy-communicator#v1.2.0`,
-`github:henrikszucs/easy-mime#v1.1.0`, `github:henrikszucs/easy-idb#v1.0.0`),
+`github:henrikszucs/easy-mime#v1.1.0`, `github:henrikszucs/easy-idb#v1.0.0`,
+`github:henrikszucs/easy-control#v0.9.0`),
 not from the npm registry (where the name `easy-idb` belongs to another
 package). The server imports what it needs from `node_modules`, and the client
 build copies the packages the browser needs into the web client
 (`libs/communicator/communicator.js`, `libs/idb/idb.js`), so the browser always
-runs the version the server was built with. The MIME table in `easy-mime`
+runs the version the server was built with. `easy-control` is a native addon
+prebuilt per platform: the build copies its `dist/<os>-<arch>/` into each
+desktop dist as `libs/easy-control/`. The MIME table in `easy-mime`
 follows the schema of jshttp/mime-db (MIT).
 
 ### Contributing
