@@ -12,12 +12,6 @@ conf/*
 package-lock.json
 dev/electron
 
-model/.venv
-model/uv.lock
-
-model/*/data
-model/*/checkpoints
-model/*/benchmark/www/models
 __pycache__/
 
 .playwright-mcp

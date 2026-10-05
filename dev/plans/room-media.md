@@ -53,7 +53,7 @@ the room is the seam it left (`getConnection()`, `getChannel()`, `send()`,
 The codec work is already on hardware (NVENC / VideoToolbox on the host, the
 browser's decoder behind `VideoDecoder`). WebGL and WebGPU do not encode or
 decode; what they are for is everything around the codec - keeping the frame on
-the GPU from decode to pixel, and the `model/` upscaling that will consume that
+the GPU from decode to pixel, and the desktop-streamer-ai upscaling that will consume that
 texture. So the order below is transport, encoder, presentation, and only then
 GPU compute: nothing a shader does helps a frame that waited on an ack.
 
@@ -229,11 +229,11 @@ channel or the room's `message` event, reassembles, and presents:
 - `stats` every second from what the Worker counts, for the room bar's
   tooltip and for deciding whether the auto resolution should step down.
 
-**GPU compute** - the `model/` upscaler and frame generation - hangs off the
+**GPU compute** - the desktop-streamer-ai upscaler and frame generation - hangs off the
 canvas path and nothing else: the decoded `VideoFrame` is imported as a
 texture, the ONNX Runtime Web session on the WebGPU EP runs over it, and the
 result is what is drawn. It is a stage after this plan, gated on a browser
-measurement from `model/upscale/benchmark/` that does not exist yet (every
+measurement from desktop-streamer-ai's `upscale/benchmark/` that does not exist yet (every
 recorded number is a CPU torch number), and the plan here only has to leave the
 frame on the GPU for it.
 

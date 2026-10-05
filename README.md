@@ -394,7 +394,6 @@ see step 5.
 ├── .claude/ Claude Code setting and configurations
 ├── conf/ - configuration files
 ├── dev/ - developer documents and helper temporary or useful mini scripts
-├── model/ - The CNN model development folder
 ├── tests/ - node --test suites (npm test)
 ├── src/ - source of the program
 │   ├── client/ - Client program's code

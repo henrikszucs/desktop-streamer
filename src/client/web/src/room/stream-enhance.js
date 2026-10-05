@@ -4,7 +4,7 @@
 // the models the bar ticked run over it in ONNX Runtime Web, and what comes
 // out is handed on as frames the drawer draws like any other. Three
 // enhancements - upscale, frame interpolation, frame extrapolation - each a
-// graph under /media/models, all three mocks today (model/mock/). Runs in the
+// graph under /media/models, all three mocks today (desktop-streamer-ai's mock/). Runs in the
 // worker beside the decoder and never touches the document. The reasoning is
 // .claude/CLIENT.md, "The enhancer".
 //
@@ -320,7 +320,7 @@ const probeBackend = async function() {
 // because one run of every tile costs a frame a fraction of thirty-six runs
 // of one; and because a session is then one shape whatever the stream's
 // resolution, which is what the WebGL provider wants anyway. The geometry is
-// the one model/upscale/webexport.py measured: a 320x180 step, which divides
+// the one desktop-streamer-ai's upscale/webexport.py measured: a 320x180 step, which divides
 // every 16:9 resolution exactly, and the halo every model reads beyond it -
 // shared by the whole chain, so a tile out of one model is a tile into the
 // next. A tile near an edge is not cut short: its input window is slid back

@@ -1306,7 +1306,7 @@ not the host's: it never travels in `settings`, it outlives a room, and the
 room screen keeps it beside `settings` rather than in it.
 
 **The models are mocks, and the pipeline is real.** Each enhancement is one
-ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
+ONNX graph under `media/models/`, written by `mock/make_mock_models.py` in desktop-streamer-ai:
 a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
 convolution before the resize, at the input resolution, the way a real
 upscaler computes low and upsamples last), and the two blends as the
@@ -1329,8 +1329,9 @@ with the upscaler on: `Resize` 11, the transposes 4, the draw onto the canvas
 *shape* of the real thing - the same input and output, real GPU work in
 between, a picture that stays right - so the whole path from decoded frame to
 drawn picture can be built and timed before a trained model exists, and a
-trained one replaces a mock by being exported under the same name. `model/`
-is where those are trained; nothing there runs in the client.
+trained one replaces a mock by being exported under the same name. The
+desktop-streamer-ai repo is where those are trained; nothing there runs in the
+client.
 
 **The runtime is fetched when the first switch is turned on, not at boot.**
 ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
@@ -1357,7 +1358,7 @@ then one shape whatever the stream's resolution, which is what the WebGL
 provider wants anyway. `planTiles()` is pure and tested: a 320×180 step, which
 divides every 16:9 resolution exactly (720p is 4×4 of it, 1080p 6×6, 4K
 12×12), and a halo of 4 pixels every model is given beyond it - the geometry
-`model/upscale/webexport.py` measured as the cheapest, and one halo for the
+desktop-streamer-ai's `upscale/webexport.py` measured as the cheapest, and one halo for the
 whole chain, so a tile out of one model is a tile into the next. A tile near
 an edge is not cut short: its input window is slid back into the frame, so
 every tile of a frame has the same input size and the kept region moves
