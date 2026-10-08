@@ -9,7 +9,7 @@
 // Events out, batched per animation frame so a fast mouse is one message:
 //     {"t": "move", "x": 0..1, "y": 0..1}
 //     {"t": "down" | "up", "b": "left" | "middle" | "right" | "back" | "forward"}
-//     {"t": "scroll", "x": lines, "y": lines}
+//     {"t": "scroll", "x": notches, "y": notches}      (fractions included)
 //     {"t": "key", "c": KeyboardEvent.code, "d": isDown}
 //
 // The way out is a shortcut held for its delay - Escape for a second in a
@@ -49,8 +49,9 @@ const pictureBox = function(canvas, size) {
     };
 };
 
-// how many lines one notch of the wheel is worth on the host, whichever unit
-// the browser reported the wheel in
+// the pixels of a wheel notch, as Chromium scrolls one: a wheel reported in
+// pixels goes to the host as notches and their fractions, which is what
+// easy-control's Mouse.scroll takes
 const WHEEL_LINE = 100;
 
 // the shortcuts every client has, before the settings add any

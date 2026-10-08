@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import zlib from "node:zlib";
 
 // first-party dependencies
-import { cursorFingerprint, iconStride, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor } from "../src/client/web/src/room/cursor.js";
+import { cursorFingerprint, isIconDrawn, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor } from "../src/client/web/src/room/cursor.js";
 import { pictureBox } from "../src/client/web/src/room/stream-input.js";
 import { createStream } from "../src/client/web/src/room/stream.js";
 
@@ -24,28 +24,11 @@ import { createStream } from "../src/client/web/src/room/stream.js";
 // an icon the way Mouse.getIcon() reports one: RGBA bytes, its size, and the
 // pixel inside it that is the pointer
 const icon = function(width, height, fill = 1, xOffset = 0, yOffset = 0) {
-    const data = [];
-    for (let i = 0; i < width * height * 4; i++) {
-        data.push((i * fill) % 256);
+    const data = new Uint8Array(width * height * 4);
+    for (let i = 0; i < data.length; i++) {
+        data[i] = (i * fill) % 256;
     }
     return {"width": width, "height": height, "data": data, "xOffset": xOffset, "yOffset": yOffset};
-};
-
-// and the way an easy-control build that predates its RGBA source reports one:
-// one packed pixel per entry, with the alpha byte left
-// empty. `shape` says which pixels are the pointer.
-const packedIcon = function(width, height, shape, colour = 0xffffff, alpha = 0) {
-    const data = [];
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            data.push(shape(x, y) === true ? ((alpha << 24) | colour) >>> 0 : 0);
-        }
-    }
-    return {"width": width, "height": height, "data": data, "xOffset": 0, "yOffset": 0};
-};
-
-const alphaOf = function(rgba, width, x, y) {
-    return rgba[(y * width + x) * 4 + 3];
 };
 
 const SCREEN = {"width": 2560, "height": 1440, "x": 0, "y": 0, "index": 0, "scaleFactor": 1};
@@ -63,78 +46,42 @@ test("the fingerprint is the shape, and nothing else is the same shape", () => {
 });
 
 test("a pointer the host is not showing has no fingerprint at all", () => {
-    assert.equal(cursorFingerprint({"width": 0, "height": 0, "data": [], "xOffset": 0, "yOffset": 0}), "");
+    // what easy-control reports while the pointer is hidden: no size, no bytes
+    assert.equal(cursorFingerprint({"width": 0, "height": 0, "data": new Uint8Array(0), "xOffset": 0, "yOffset": 0}), "");
     assert.equal(cursorFingerprint(undefined), "");
     assert.equal(cursorFingerprint({"width": 8, "height": 8, "data": [1, 2, 3]}), "");
 });
 
-//
-// the two layouts: the client is not what builds the addon, so it reads either
-//
-test("an icon is read whether it arrives as bytes or as packed pixels", () => {
-    assert.equal(iconStride(icon(16, 16)), 4);
-    assert.equal(iconStride(packedIcon(16, 16, () => true)), 1);
-    // fewer entries than it has pixels is not a picture, whichever it meant
-    assert.equal(iconStride({"width": 16, "height": 16, "data": [1, 2, 3]}), 0);
-
-    // the same shape in the two layouts is not the same fingerprint, and
-    // neither is one of them against itself with a pixel moved
-    const packed = packedIcon(8, 8, (x, y) => x === y);
-    assert.notEqual(cursorFingerprint(packed), cursorFingerprint(icon(8, 8)));
-    assert.notEqual(cursorFingerprint(packed), cursorFingerprint(packedIcon(8, 8, (x) => x === 0)));
-});
-
-test("a packed pixel is ARGB, and its alpha is used when the addon fills one", () => {
-    const withAlpha = packedIcon(2, 2, (x) => x === 0, 0x10203f, 0x80);
-    const rgba = readIcon(withAlpha);
-    assert.deepEqual([...rgba.subarray(0, 4)], [0x10, 0x20, 0x3f, 0x80]);
-    assert.deepEqual([...rgba.subarray(4, 8)], [0, 0, 0, 0]);
-});
-
-test("a silhouette is given the outline the addon did not report", () => {
-    // the Windows arrow arrives from that build as one white shape - no alpha
-    // and no black edge - and a white pointer on a white document is one
-    // nobody can see, so the empty pixels around the shape become its contrast
-    const square = packedIcon(5, 5, (x, y) => (x >= 2 && x <= 3 && y >= 2 && y <= 3));
-    const rgba = readIcon(square);
-    assert.equal(alphaOf(rgba, 5, 2, 2), 255, "the shape itself is opaque");
-    assert.equal(alphaOf(rgba, 5, 1, 2), 255, "the pixel beside it is the outline");
-    assert.deepEqual([...rgba.subarray((2 * 5 + 1) * 4, (2 * 5 + 1) * 4 + 3)], [0, 0, 0], "black around a light shape");
-    assert.equal(alphaOf(rgba, 5, 0, 0), 0, "and a corner that touches nothing stays empty");
-
-    // a dark pointer is outlined the other way round
-    const dark = readIcon(packedIcon(5, 5, (x, y) => (x === 2 && y === 2), 0x101010));
-    assert.deepEqual([...dark.subarray((2 * 5 + 1) * 4, (2 * 5 + 1) * 4 + 3)], [255, 255, 255], "white around a dark shape");
-
-    // and a picture that came with an alpha channel is never touched
-    const given = readIcon(packedIcon(5, 5, (x, y) => (x === 2 && y === 2), 0xffffff, 0xff));
-    assert.equal(alphaOf(given, 5, 1, 2), 0);
+test("an icon is a picture only with the RGBA bytes its size says", () => {
+    assert.equal(isIconDrawn(icon(16, 16)), true);
+    assert.equal(isIconDrawn({"width": 16, "height": 16, "data": new Uint8Array(16 * 16)}), false);
+    assert.equal(isIconDrawn({"width": 0, "height": 0, "data": new Uint8Array(0)}), false);
+    assert.equal(isIconDrawn(null), false);
 });
 
 //
 // the size: fractions, since the peer knows the display only as a rectangle
 //
 test("the size is the shape as a fraction of the display, and the hotspot of the shape", () => {
-    const size = normalizeCursor(icon(32, 64, 1, 8, 16), SCREEN, "win32");
+    const size = normalizeCursor(icon(32, 64, 1, 8, 16), SCREEN);
     assert.equal(size["width"], 32 / 2560);
     assert.equal(size["height"], 64 / 1440);
     assert.equal(size["hotspotX"], 8 / 32);
     assert.equal(size["hotspotY"], 16 / 64);
 });
 
-test("a scaled Windows display is divided out, and nothing else is", () => {
-    // Windows hands the cursor over at the size it is drawn on screen, which
-    // follows the display's scaling, while the display is reported in logical
-    // pixels: a 48 pixel pointer at 150% is 32 of the 1706 the screen is wide
+test("a scaled display is divided out, since the icon is in physical pixels", () => {
+    // easy-control hands the cursor over in physical pixels on every platform
+    // while the display is reported in logical ones: a 48 pixel pointer at
+    // 150% is 32 of the 1706 the screen is wide, and a Retina pointer is two
+    // of its pixels to every point
     const scaled = {"width": 1706, "height": 960, "scaleFactor": 1.5};
-    assert.equal(cursorScale("win32", scaled), 1.5);
-    assert.equal(normalizeCursor(icon(48, 48), scaled, "win32")["width"], 32 / 1706);
-    // a macOS NSImage is in points already, and the X11 scale is read off the
-    // monitor's millimetres rather than off any scaling the desktop applies
-    assert.equal(cursorScale("darwin", {"scaleFactor": 2}), 1);
-    assert.equal(cursorScale("linux", {"scaleFactor": 1.15}), 1);
+    assert.equal(cursorScale(scaled), 1.5);
+    assert.equal(normalizeCursor(icon(48, 48), scaled)["width"], 32 / 1706);
+    assert.equal(normalizeCursor(icon(64, 64), {"width": 1512, "height": 982, "scaleFactor": 2})["width"], 32 / 1512);
     // and a display that reports no scale at all is not one to guess at
-    assert.equal(cursorScale("win32", {"width": 1920, "height": 1080}), 1);
+    assert.equal(cursorScale({"width": 1920, "height": 1080}), 1);
+    assert.equal(cursorScale({"scaleFactor": 0}), 1);
 });
 
 //
@@ -161,12 +108,12 @@ test("the shape is a PNG with the right header and the pixels it was given", asy
     assert.equal(raw.length, (8 * 4 + 1) * 4);
     for (let y = 0; y < 4; y++) {
         assert.equal(raw[y * 33], 0, "row " + y + " is unfiltered");
-        assert.deepEqual([...raw.subarray(y * 33 + 1, y * 33 + 33)], shape["data"].slice(y * 32, y * 32 + 32));
+        assert.deepEqual([...raw.subarray(y * 33 + 1, y * 33 + 33)], [...shape["data"].subarray(y * 32, y * 32 + 32)]);
     }
 });
 
 test("the shape travels as a data URL, and a hidden pointer as nothing", async () => {
-    const packed = await packCursor(icon(16, 16, 1, 4, 8), SCREEN, "win32");
+    const packed = await packCursor(icon(16, 16, 1, 4, 8), SCREEN);
     assert.match(packed["image"], /^data:image\/png;base64,[A-Za-z0-9+/=]+$/);
     assert.equal(packed["width"], 16 / 2560);
     // the shape's own pixels go with it: that is what the hotspot is in when
@@ -176,13 +123,7 @@ test("the shape travels as a data URL, and a hidden pointer as nothing", async (
     assert.equal(packed["hotspotY"] * packed["imageHeight"], 8);
     assert.equal(toDataURL(new Uint8Array([0, 1, 2])).startsWith("data:image/png;base64,"), true);
 
-    // a packed icon travels the same way, which is what the addon in the tree
-    // actually reports
-    const silhouette = await packCursor(packedIcon(32, 32, (x, y) => x + y < 20), SCREEN, "win32");
-    assert.match(silhouette["image"], /^data:image\/png;base64,/);
-    assert.equal(silhouette["imageWidth"], 32);
-
-    const hidden = await packCursor({"width": 0, "height": 0, "data": []}, SCREEN, "win32");
+    const hidden = await packCursor({"width": 0, "height": 0, "data": new Uint8Array(0)}, SCREEN);
     assert.equal(hidden["image"], null);
 });
 
@@ -208,10 +149,13 @@ const wait = function(ms) {
     });
 };
 
-// a host whose pointer is whatever the test says it is
+// a host whose pointer is whatever the test says it is. `reads` counts the
+// looks at the shape - its id, every tick - and `pictures` the shape read
+// whole, which is only when the id says it changed
 const fakeHost = function() {
-    const state = {"shape": 1, "x": 480, "y": 270, "reads": 0};
+    const state = {"shape": 1, "x": 480, "y": 270, "reads": 0, "pictures": 0, "isBlocked": false, "hasAccess": true};
     const sent = [];
+    const calls = [];               // what the peer's input became on the host
     const target = new EventTarget();
     const room = {
         "addEventListener": target.addEventListener.bind(target),
@@ -237,16 +181,43 @@ const fakeHost = function() {
             "ffmpegPath": "ffmpeg",
             "os": {"platform": function() { return "win32"; }},
             "Control": {
+                "Platform": {
+                    "isSupported": true,
+                    "hasInputAccess": function() { return state["hasAccess"]; },
+                    "requestInputAccess": function() {
+                        calls.push(["requestInputAccess"]);
+                        return Promise.resolve(false);
+                    }
+                },
                 "Screen": {"list": function() {
                     return [{"width": 1920, "height": 1080, "x": 0, "y": 0, "isPrimary": true, "scaleFactor": 1}];
                 }},
                 "Mouse": {
-                    "getIcon": function() {
+                    "getIconId": function() {
                         state["reads"]++;
+                        return state["shape"];
+                    },
+                    "getIcon": function() {
+                        state["pictures"]++;
                         return icon(16, 16, state["shape"]);
                     },
-                    "getX": function() { return state["x"]; },
-                    "getY": function() { return state["y"]; }
+                    "getPosition": function() { return {"x": state["x"], "y": state["y"]}; },
+                    "setPosition": function(x, y) { calls.push(["setPosition", x, y]); },
+                    "buttonDown": function(button) { calls.push(["buttonDown", button]); },
+                    "buttonUp": function(button) { calls.push(["buttonUp", button]); },
+                    "scroll": function(x, y) { calls.push(["scroll", x, y]); },
+                    "releaseAll": function() { calls.push(["Mouse.releaseAll"]); }
+                },
+                "Keyboard": {
+                    "isKeySupported": function(code) { return code !== "Unknown"; },
+                    "keyDown": function(code) {
+                        if (state["isBlocked"] === true) {
+                            throw Object.assign(new Error("blocked"), {"code": "EASYCONTROL_INPUT_BLOCKED"});
+                        }
+                        calls.push(["keyDown", code]);
+                    },
+                    "keyUp": function(code) { calls.push(["keyUp", code]); },
+                    "releaseAll": function() { calls.push(["Keyboard.releaseAll"]); }
                 }
             },
             // the line never runs: what is being timed here is the pointer
@@ -260,8 +231,60 @@ const fakeHost = function() {
     const count = function(kind) {
         return sent.filter(function(message) { return message["kind"] === kind; }).length;
     };
-    return {"ctx": ctx, "room": room, "state": state, "sent": sent, "count": count};
+    return {"ctx": ctx, "room": room, "state": state, "sent": sent, "calls": calls, "count": count};
 };
+
+test("the peer's input lands on the shared display, and letting go releases everything", async () => {
+    const fake = fakeHost();
+    const stream = createStream(fake.ctx);
+    fake.room.dispatch("connected", {"isHost": true});
+    await wait(120);
+
+    const input = function(events) {
+        fake.room.dispatch("message", {"data": {"kind": "input", "events": events}});
+    };
+    fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
+    input([
+        {"t": "move", "x": 0.5, "y": 0.25},
+        {"t": "down", "b": "left"},
+        {"t": "up", "b": "left"},
+        // a touchpad's fraction of a notch stays a fraction, and a wheel
+        // flung past what one event may carry is held to it
+        {"t": "scroll", "x": 0, "y": 0.3},
+        {"t": "scroll", "x": -1e9, "y": 0},
+        {"t": "key", "c": "KeyA", "d": true},
+        {"t": "key", "c": "Unknown", "d": true}
+    ]);
+    assert.deepEqual(fake.calls, [
+        ["setPosition", 960, 270],
+        ["buttonDown", "left"],
+        ["buttonUp", "left"],
+        ["scroll", 0, 0.3],
+        ["scroll", -100, 0],
+        ["keyDown", "KeyA"]
+    ]);
+
+    // input the host refuses (the secure desktop) is not the end of the rest
+    fake.state["isBlocked"] = true;
+    fake.calls.length = 0;
+    input([{"t": "key", "c": "KeyB", "d": true}, {"t": "down", "b": "right"}]);
+    assert.deepEqual(fake.calls, [["buttonDown", "right"]]);
+
+    // and the peer letting go leaves nothing held, through easy-control's own
+    // count of what it pressed
+    fake.calls.length = 0;
+    fake.room.dispatch("message", {"data": {"kind": "control", "isControl": false}});
+    assert.deepEqual(fake.calls, [["Keyboard.releaseAll"], ["Mouse.releaseAll"]]);
+
+    // a host without the permission input needs (macOS's Accessibility) is
+    // asked for it when the peer takes the keyboard, and one with it is not
+    fake.calls.length = 0;
+    fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
+    fake.state["hasAccess"] = false;
+    fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
+    assert.deepEqual(fake.calls, [["requestInputAccess"]]);
+    await stream.stop();
+});
 
 test("a pointer that has not changed is looked at, not sent", async () => {
     const fake = fakeHost();
@@ -272,7 +295,8 @@ test("a pointer that has not changed is looked at, not sent", async () => {
     // the shape and the position each crossed once, however many ticks fit
     assert.equal(fake.count("cursor"), 1, "the shape the peer did not have");
     assert.equal(fake.count("cursor-move"), 1, "and where it was");
-    assert.ok(fake.state["reads"] >= 3, "but the pointer was read every tick: " + fake.state["reads"]);
+    assert.ok(fake.state["reads"] >= 3, "but the pointer was looked at every tick: " + fake.state["reads"]);
+    assert.equal(fake.state["pictures"], 1, "and its picture read only the once it was new");
 
     // moving it is the position's news alone - the shape is the same shape
     const reads = fake.state["reads"];
@@ -293,6 +317,7 @@ test("a pointer that has not changed is looked at, not sent", async () => {
     fake.state["shape"] = 1;
     await wait(150);
     assert.equal(fake.count("cursor"), 3);
+    assert.equal(fake.state["pictures"], 3, "a picture read per change of shape, not per tick");
 
     await stream.stop();
     const after = fake.state["reads"];

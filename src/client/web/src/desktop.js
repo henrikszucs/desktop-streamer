@@ -281,7 +281,9 @@ const initDesktop = async function() {
 
     // load desktop specific libs
     const AutoLaunch = require(path.join(appPath, "libs/auto-launch/auto-launch.js"));
-    const Control = require(path.join(appPath, "libs/easy-control/easy-control.node"));
+    // the package's loader, which picks this target's build beside it and
+    // releases what is still held when the process ends
+    const Control = require(path.join(appPath, "libs/easy-control/easy-control.cjs"));
     const FFmpegEncoder = require(path.join(appPath, "libs/ffmpeg-chunkifier/encoder-ffmpeg.js"));
 
     // expose desktop APIs

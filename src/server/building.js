@@ -7,6 +7,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -60,8 +61,10 @@ const CLIENT_PACKAGES = [
 ];
 
 // native npm packages the desktop client loads, copied from node_modules into
-// every dist beside the native libs: [package, path in app]. Each one ships a
-// build per target in a <os>-<arch> folder next to the entry it resolves to
+// every dist beside the native libs: [package, path in app]. Each one ships its
+// CommonJS entry - a loader - with a build per target in a <os>-<arch> folder
+// beside it, which the loader requires by the target it runs on, so a dist takes
+// the loader and its own target's folder, side by side as they were
 const NATIVE_PACKAGES = [
     ["easy-control", ["libs", "easy-control"]]
 ];
@@ -321,16 +324,18 @@ const buildPackages = async function() {
     return built;
 };
 
-// the folders a dist of the target takes beside the app, as [{src, dest}]: the
-// target's own native libs at the top, and each native package's build where
-// the client loads it from
-const nativeFolders = function(nativePath, target) {
-    const folders = [{"src": path.join(nativePath, target), "dest": ""}];
+// what a dist of the target takes beside the app, as [{src, dest}]: the
+// target's own native libs at the top, and each native package's loader with
+// the target's build beside it, where the client requires the loader from
+const nativeSources = function(nativePath, target) {
+    const sources = [{"src": path.join(nativePath, target), "dest": ""}];
+    const require = createRequire(import.meta.url);
     for (const [name, dest] of NATIVE_PACKAGES) {
-        const distPath = path.dirname(fileURLToPath(import.meta.resolve(name)));
-        folders.push({"src": path.join(distPath, target), "dest": path.join(...dest)});
+        const entryPath = require.resolve(name);
+        sources.push({"src": entryPath, "dest": path.join(...dest, path.basename(entryPath))});
+        sources.push({"src": path.join(path.dirname(entryPath), target), "dest": path.join(...dest, target)});
     }
-    return folders;
+    return sources;
 };
 
 // the configuration the built clients read: the version, a section per server
@@ -595,28 +600,35 @@ const compileClients = async function(conf) {
         // native package without a build for the target leaves the dist unwritten,
         // the client would fail to start without it
         let missing = null;
-        for (const folder of nativeFolders(nativePath, target)) {
-            let files;
+        for (const source of nativeSources(nativePath, target)) {
+            let stat;
+            let files = [];
             try {
-                files = await fs.readdir(folder["src"], {"recursive": true});
+                stat = await fs.stat(source["src"]);
+                if (stat.isDirectory()) {
+                    files = await fs.readdir(source["src"], {"recursive": true});
+                }
             } catch (error) {
-                missing = folder["src"];
+                missing = source["src"];
                 break;
             }
-            if (folder["dest"] !== "") {
-                const stat = await fs.stat(folder["src"]);
-                entries.push({"name": zipPath(commonDest, folder["dest"]) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
+            if (stat.isDirectory() === false) {
+                entries.push({"name": zipPath(commonDest, source["dest"]), "path": source["src"], "mode": stat.mode, "date": stat.mtime});
+                continue;
+            }
+            if (source["dest"] !== "") {
+                entries.push({"name": zipPath(commonDest, source["dest"]) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
             }
             for (const file of files) {
                 if (isJunkFile(file)) {
                     continue;
                 }
-                const filePath = path.join(folder["src"], file);
-                const stat = await fs.stat(filePath);
-                if (stat.isDirectory()) {
-                    entries.push({"name": zipPath(commonDest, folder["dest"], file) + "/", "isDir": true, "mode": stat.mode, "date": stat.mtime});
+                const filePath = path.join(source["src"], file);
+                const fileStat = await fs.stat(filePath);
+                if (fileStat.isDirectory()) {
+                    entries.push({"name": zipPath(commonDest, source["dest"], file) + "/", "isDir": true, "mode": fileStat.mode, "date": fileStat.mtime});
                 } else {
-                    entries.push({"name": zipPath(commonDest, folder["dest"], file), "path": filePath, "mode": stat.mode, "date": stat.mtime});
+                    entries.push({"name": zipPath(commonDest, source["dest"], file), "path": filePath, "mode": fileStat.mode, "date": fileStat.mtime});
                 }
             }
         }
@@ -641,5 +653,5 @@ const compileClients = async function(conf) {
     return true;
 };
 
-export { CLIENT_PACKAGES, NATIVE_PACKAGES, compileClients, buildPackages, nativeFolders, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
-export default { CLIENT_PACKAGES, NATIVE_PACKAGES, compileClients, buildPackages, nativeFolders, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export { CLIENT_PACKAGES, NATIVE_PACKAGES, compileClients, buildPackages, nativeSources, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };
+export default { CLIENT_PACKAGES, NATIVE_PACKAGES, compileClients, buildPackages, nativeSources, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup };

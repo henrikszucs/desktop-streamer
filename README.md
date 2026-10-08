@@ -436,14 +436,15 @@ its prebuilt `dist/` build:
 All four come from GitHub, each pinned to a release tag
 (`github:henrikszucs/easy-communicator#v1.2.0`,
 `github:henrikszucs/easy-mime#v1.1.0`, `github:henrikszucs/easy-idb#v1.0.1`,
-`github:henrikszucs/easy-control#v0.9.0`),
+`github:henrikszucs/easy-control#v0.13.0`),
 not from the npm registry (where the name `easy-idb` belongs to another
 package). The server imports what it needs from `node_modules`, and the client
 build copies the packages the browser needs into the web client
 (`libs/communicator/communicator.js`, `libs/idb/idb.js`), so the browser always
 runs the version the server was built with. `easy-control` is a native addon
-prebuilt per platform: the build copies its `dist/<os>-<arch>/` into each
-desktop dist as `libs/easy-control/`. The MIME table in `easy-mime`
+prebuilt per platform: the build copies its loader (`dist/easy-control.cjs`)
+into each desktop dist as `libs/easy-control/easy-control.cjs`, with the
+target's `dist/<os>-<arch>/` beside it, which is where the loader finds it. The MIME table in `easy-mime`
 follows the schema of jshttp/mime-db (MIT).
 
 ### Contributing

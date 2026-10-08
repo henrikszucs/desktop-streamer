@@ -111,6 +111,9 @@ const CLIPBOARD_POLL = 700;
 // application is a handful.
 const CURSOR_POLL = 1000 / 30;
 const CURSOR_SHAPES = 32;
+// the most wheel notches one scroll event turns into, either way: easy-control
+// refuses more than 10000, and no wheel turns that far in a frame
+const SCROLL_MAX = 100;
 
 // what a pointer picture from the host may be: the PNG data URL cursor.js packs
 // and nothing else. The peer puts it in a CSS url() and an img src, so a string
@@ -279,11 +282,17 @@ const createAudioPlayer = function() {
     };
 };
 
+// whether easy-control has a build for this machine: its loader hands out
+// stand-ins that throw where it has none, so a function being there says nothing
+const isControlSupported = function(control) {
+    return control?.["Platform"]?.["isSupported"] === true;
+};
+
 // whether this host can hand its own pointer over as a picture of its own
 // (src/room/cursor.js), which is what decides whether the capture has to draw
 // it into the video instead
 const isCursorSupported = function(ctx) {
-    return typeof ctx["desktop"]?.["Control"]?.["Mouse"]?.["getIcon"] === "function";
+    return isControlSupported(ctx["desktop"]?.["Control"]);
 };
 
 //
@@ -1098,41 +1107,34 @@ const createWebEncoder = function() {
 //
 const createControl = function(ctx) {
     const control = ctx["desktop"]?.["Control"];
+    const isSupported = isControlSupported(control);
     let screen = null;
-    const downButtons = new Set();
-    const downKeys = new Set();
+    let isBlocked = false;      // input is being refused, and that was said once
 
     const apply = function(event) {
-        if (control === undefined || screen === null) {
+        if (isSupported === false || screen === null) {
             return;
         }
         const mouse = control["Mouse"];
         const keyboard = control["Keyboard"];
         switch (event["t"]) {
             case "move":
-                mouse.setX(Math.round(screen["x"] + event["x"] * screen["width"]));
-                mouse.setY(Math.round(screen["y"] + event["y"] * screen["height"]));
+                mouse.setPosition(Math.round(screen["x"] + event["x"] * screen["width"]),
+                    Math.round(screen["y"] + event["y"] * screen["height"]));
                 break;
             case "down":
                 mouse.buttonDown(event["b"]);
-                downButtons.add(event["b"]);
                 break;
             case "up":
                 mouse.buttonUp(event["b"]);
-                downButtons.delete(event["b"]);
                 break;
             case "scroll": {
-                const y = Number(event["y"]) || 0;
-                const x = Number(event["x"]) || 0;
-                if (y > 0) {
-                    mouse.scrollDown(Math.max(1, Math.round(y)), false);
-                } else if (y < 0) {
-                    mouse.scrollUp(Math.max(1, Math.round(-y)), false);
-                }
-                if (x > 0) {
-                    mouse.scrollDown(Math.max(1, Math.round(x)), true);
-                } else if (x < 0) {
-                    mouse.scrollUp(Math.max(1, Math.round(-x)), true);
+                // wheel notches with their fractions, in WheelEvent's signs, so
+                // a touchpad's small steps arrive as small steps
+                const x = Math.max(-SCROLL_MAX, Math.min(SCROLL_MAX, Number(event["x"]) || 0));
+                const y = Math.max(-SCROLL_MAX, Math.min(SCROLL_MAX, Number(event["y"]) || 0));
+                if (x !== 0 || y !== 0) {
+                    mouse.scroll(x, y);
                 }
                 break;
             }
@@ -1142,10 +1144,8 @@ const createControl = function(ctx) {
                 }
                 if (event["d"] === true) {
                     keyboard.keyDown(event["c"]);
-                    downKeys.add(event["c"]);
                 } else {
                     keyboard.keyUp(event["c"]);
-                    downKeys.delete(event["c"]);
                 }
                 break;
         }
@@ -1153,10 +1153,21 @@ const createControl = function(ctx) {
 
     return {
         "isAvailable": function() {
-            return control !== undefined;
+            return isSupported;
         },
         "start": function(sharedScreen) {
             screen = sharedScreen;
+        },
+        // macOS drops every event of an app without the Accessibility
+        // permission, silently, so the peer taking the keyboard is when the
+        // person at the host is shown the system's prompt for it
+        "requestAccess": function() {
+            if (isSupported === false || control["Platform"].hasInputAccess() === true) {
+                return;
+            }
+            control["Platform"].requestInputAccess().catch(function(error) {
+                console.error("Cannot ask for input access:", error);
+            });
         },
         "apply": function(events) {
             if (Array.isArray(events) === false) {
@@ -1165,25 +1176,36 @@ const createControl = function(ctx) {
             for (const event of events) {
                 try {
                     apply(event);
+                    isBlocked = false;
                 } catch (error) {
+                    // the system refusing input (the secure desktop) refuses
+                    // every event until it is gone, so it is said once
+                    if (error?.["code"] === "EASYCONTROL_INPUT_BLOCKED") {
+                        if (isBlocked === false) {
+                            console.warn("The host refuses input:", error.message);
+                        }
+                        isBlocked = true;
+                        continue;
+                    }
                     console.error("Cannot apply an input event:", error);
                 }
             }
         },
-        // a peer that lets go leaves nothing pressed behind it
+        // a peer that lets go leaves nothing pressed behind it. easy-control
+        // keeps what it pressed and has not released, and what it cannot
+        // release now (the secure desktop) it keeps for the next call - the
+        // keys and the buttons apart, so one failing does not keep the other
         "release": function() {
-            try {
-                for (const button of downButtons) {
-                    control?.["Mouse"].buttonUp(button);
-                }
-                for (const code of downKeys) {
-                    control?.["Keyboard"].keyUp(code);
-                }
-            } catch (error) {
-                // the addon is gone with the shell
+            if (isSupported === false) {
+                return;
             }
-            downButtons.clear();
-            downKeys.clear();
+            for (const device of [control["Keyboard"], control["Mouse"]]) {
+                try {
+                    device.releaseAll();
+                } catch (error) {
+                    console.warn("Cannot release the host's input:", error.message);
+                }
+            }
         },
         "stop": function() {
             this.release();
@@ -1209,30 +1231,38 @@ const createControl = function(ctx) {
 // and packing one costs more than reading ten.
 //
 const createCursorWatch = function(ctx, say) {
-    const mouse = ctx["desktop"]?.["Control"]?.["Mouse"];
-    const platform = ctx["desktop"]?.["os"]?.platform?.() ?? "";
+    const control = ctx["desktop"]?.["Control"];
+    const mouse = control?.["Mouse"];
     const packed = new Map();       // fingerprint -> the message body
     let screen = null;              // the display being shared, or none while stopped
     let pollTimerId = -1;
     let startedAt = 0;              // what the tick keeps its rate against
+    let shapeId = null;             // easy-control's id of the shape last looked at
     let shape = "";                 // the fingerprint the peer was last given
     let position = "";              // and the position, as it was last said
     let isControlled = false;
     let isPacking = false;
 
-    // the shape, if it is one the peer has not been given. The fingerprint is
-    // what answers that, and it costs a thousandth of the reading in front of
-    // it - so the question is asked on every tick and the answer is almost
-    // always no.
+    // the shape, if it is one the peer has not been given. easy-control's id
+    // of the shape is what is asked on every tick - a number that changes
+    // with the shape, far cheaper than its picture on Windows and Linux - and
+    // the picture is read only when it has; the fingerprint over the picture is
+    // then what says whether it is one the peer already has.
     const readShape = async function() {
         if (isPacking === true || screen === null) {
             return;
         }
         let icon = null;
         try {
+            const id = mouse.getIconId();
+            if (id === shapeId) {
+                return;
+            }
+            shapeId = id;
             icon = mouse.getIcon();
         } catch (error) {
-            return;     // the addon is gone with the shell
+            shapeId = null;
+            return;     // not to be read now (the secure desktop), or gone with the shell
         }
         const fingerprint = cursorFingerprint(icon);
         if (fingerprint === shape) {
@@ -1242,9 +1272,10 @@ const createCursorWatch = function(ctx, say) {
         if (typeof body === "undefined") {
             isPacking = true;
             try {
-                body = await packCursor(icon, screen, platform);
+                body = await packCursor(icon, screen);
             } catch (error) {
                 console.error("Cannot pack the pointer:", error);
+                shapeId = null;
                 return;
             } finally {
                 isPacking = false;
@@ -1272,8 +1303,10 @@ const createCursorWatch = function(ctx, say) {
         let x = 0;
         let y = 0;
         try {
-            x = (mouse.getX() - screen["x"]) / screen["width"];
-            y = (mouse.getY() - screen["y"]) / screen["height"];
+            // both from one read, so they belong to the same moment
+            const point = mouse.getPosition();
+            x = (point["x"] - screen["x"]) / screen["width"];
+            y = (point["y"] - screen["y"]) / screen["height"];
         } catch (error) {
             return;
         }
@@ -1311,7 +1344,7 @@ const createCursorWatch = function(ctx, say) {
 
     return {
         "isAvailable": function() {
-            return typeof mouse?.["getIcon"] === "function";
+            return isControlSupported(control);
         },
         "start": function(sharedScreen) {
             this.stop();
@@ -1336,6 +1369,7 @@ const createCursorWatch = function(ctx, say) {
             clearTimeout(pollTimerId);
             pollTimerId = -1;
             screen = null;
+            shapeId = null;
             shape = "";
             position = "";
             isControlled = false;
@@ -1868,6 +1902,8 @@ const createStream = function(ctx) {
                 case "control":
                     if (message["isControl"] !== true) {
                         control?.release();
+                    } else {
+                        control?.requestAccess();
                     }
                     cursorWatch?.setControlled(message["isControl"] === true);
                     break;

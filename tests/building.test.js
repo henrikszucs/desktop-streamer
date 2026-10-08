@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { CLIENT_PACKAGES, NATIVE_PACKAGES, buildPackages, nativeFolders, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
+import { CLIENT_PACKAGES, NATIVE_PACKAGES, buildPackages, nativeSources, buildConfFile, buildPaint, injectAppearance, minifyScript, minifyStyle, minifyMarkup } from "../src/server/building.js";
 
 const repoPath = path.resolve(import.meta.dirname, "..");
 
@@ -301,20 +301,25 @@ test("buildPackages takes every client package from node_modules, minified, wher
 });
 
 //
-// nativeFolders
+// nativeSources
 //
 const nativePath = path.join(repoPath, "src", "client", "native");
 
-test("nativeFolders gives every desktop target a build of each native package, where the client loads it", async () => {
+test("nativeSources gives every desktop target each native package's loader and its build, where the client loads them", async () => {
     for (const target of await fs.readdir(nativePath)) {
-        const folders = nativeFolders(nativePath, target);
-        assert.deepEqual(folders.map((folder) => folder["dest"]), ["", ...NATIVE_PACKAGES.map(([, dest]) => path.join(...dest))]);
-        for (const folder of folders) {
-            assert.equal((await fs.stat(folder["src"])).isDirectory(), true, folder["src"] + " is missing");
+        const sources = nativeSources(nativePath, target);
+        assert.deepEqual(sources.map((source) => source["dest"]), ["", ...NATIVE_PACKAGES.flatMap(([, dest]) => [path.join(...dest, "easy-control.cjs"), path.join(...dest, target)])]);
+        assert.equal((await fs.stat(sources[0]["src"])).isDirectory(), true, sources[0]["src"] + " is missing");
+        for (const [, dest] of NATIVE_PACKAGES) {
+            // the file src/desktop.js requires, and the build it requires by
+            // the target it runs on: the two keep the places they have in the
+            // package, so the loader finds its build in the dist as it does there
+            const loader = sources.find((source) => source["dest"] === path.join(...dest, "easy-control.cjs"));
+            const build = sources.find((source) => source["dest"] === path.join(...dest, target));
+            assert.equal((await fs.stat(loader["src"])).isFile(), true, loader["src"] + " is missing");
+            assert.equal(path.dirname(loader["src"]), path.dirname(build["src"]));
+            await fs.access(path.join(build["src"], "easy-control.node"));
         }
-        // the file src/desktop.js requires the addon from
-        const control = folders.find((folder) => folder["dest"] === path.join("libs", "easy-control"));
-        await fs.access(path.join(control["src"], "easy-control.node"));
     }
 });
 

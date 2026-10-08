@@ -1134,8 +1134,19 @@ before it and `AUDIO_JITTER` ahead of the clock when the chain restarts.
 are read off the canvas and mapped into the *picture* - the canvas letterboxes,
 so its rectangle is not the picture's - batched per animation frame with only
 the newest move kept, and sent as `{"kind": "input"}` on `room.send()`; the host
-applies them with easy-control on the screen it is sharing, and lifts every
-button and key it was handed when the peer lets go or leaves. The way out of a
+applies them with easy-control on the screen it is sharing - a move as one
+`setPosition`, a wheel as `Mouse.scroll` in notches with their fractions, so a
+touchpad's small steps stay small - and lifts every button and key it was
+handed when the peer lets go or leaves, through easy-control's own
+`releaseAll`, which knows what it pressed and keeps what it could not release
+for the next call. Input the system refuses (the secure desktop) throws
+`EASYCONTROL_INPUT_BLOCKED` on every event until it is gone, so it is logged
+once rather than per event; and macOS drops every event of an app without the
+Accessibility permission, silently, so the peer taking the keyboard is when the
+host asks `Platform` for it and the person at the host sees the system's prompt.
+Whether there is a keyboard to take at all is `Platform.isSupported`, never a
+function being there: the package's loader hands out stand-ins that throw on a
+machine it has no build for. The way out of a
 taken keyboard is a shortcut *held* for its delay (Escape for a second in a
 browser, five under the desktop shell, and whatever `settings.control` added),
 because every key the peer presses goes to the host, so a key alone cannot mean
@@ -1161,9 +1172,12 @@ a second, the rate the picture beside it moves at - sending `{"kind":
 the shared display, `null` when the pointer has walked onto another one). **The
 deciding is local**: a pointer sitting still is looked at thirty times a second
 and mentioned none. The looking is the cost - reading the shape is ~1.5 ms
-inside the addon against ~1 us for the position, about a twentieth of a core at
-this rate - which is what the fingerprint in front of the packing is worth, and
-why the two halves share one tick with the cheap one first. That tick schedules
+inside the addon against ~1 us for the position - which is why what is read
+every tick is `Mouse.getIconId()`, a number that changes with the shape and is
+cheap on Windows and Linux (a hash of the picture on macOS, about as dear as
+the picture), and the picture only when that number moves; the fingerprint
+over the picture is then what says whether the peer already has it, and the
+two halves share one tick with the cheap one first. That tick schedules
 itself against the clock the run started on rather than against the tick before
 it, so the read inside it is not added to the gap after it - an interval of the
 same length drifts to 25 a second on a read of a millisecond and a half. The
@@ -1182,26 +1196,12 @@ the shape only crosses the line when it changes at all.
 display being shared and its hotspot against the shape, because the peer knows
 that display only as the rectangle it drew it in - so a pointer covering a
 button on the host covers the same button on the peer, at any window size.
-Windows is the one platform whose scaling has to be divided out (`cursorScale`):
-it hands the cursor over at the size it is drawn on screen while
-`Screen.list()` reports that display in logical pixels, where a macOS `NSImage`
-is in points already and the X11 figure is read off the monitor's millimetres
-rather than off any scaling the desktop applies.
-
-**Two layouts, because the client is not what builds the addon.**
-`Mouse.getIcon()` hands over `width * height * 4` bytes of RGBA where
-`easy-control`'s `src/mouse.cpp` stands today - the `win32-x64` build of the
-pinned release - and `width * height` packed `0xAARRGGBB` pixels from a build
-that predates it, which the `darwin-arm64` and `linux-x64` ones still do.
-`iconStride` is what tells them apart and `readIcon` reads either. The older
-layout fills no alpha at all, so what it reports is a
-silhouette - the Windows arrow arrives as one white shape where it is really
-white inside a black edge - and a white pointer on a white document is a
-pointer nobody can see: `outlineSilhouette` gives the empty pixels touching the
-shape its contrast, black around a light pointer and white around a dark one.
-Nothing is invented about the shape, only about the edge it lost, and a picture
-that came with an alpha channel never goes through there. Rebuilding the addon
-upstream on each platform is what replaces the guess with the real thing.
+The display's scale is divided out of the shape on every platform
+(`cursorScale`): `Mouse.getIcon()` hands the cursor over in physical pixels -
+two to a point on a Retina Mac - while `Screen.list()` reports the display in
+logical ones, and X11, which has no logical pixels, reports a scale of 1. The
+picture itself is the same everywhere: `width * height * 4` bytes of straight
+RGBA, and no size at all while the pointer is hidden.
 
 **A shape is encoded once.** The fingerprint - FNV-1a over the pixels with the
 size and the hotspot in front of it - is what says the peer already has this
@@ -1629,8 +1629,8 @@ dictionary when asked rather than when the module is imported.
 - **The desktop shell's libs are loaded by path, once.** `src/desktop.js` asks
   the main process for the app path and `require()`s the three libs from it -
   `auto-launch` and `ffmpeg-chunkifier` from the shell's own `libs/`, the
-  `easy-control.node` addon from `libs/easy-control/`, which the build copies in
-  from the `easy-control` package - onto `ctx["desktop"]`, and then sets `globalThis.require` to `undefined`, so
+  `easy-control` package's loader from `libs/easy-control/easy-control.cjs`, which
+  the build copies in with the target's build beside it - onto `ctx["desktop"]`, and then sets `globalThis.require` to `undefined`, so
   nothing that runs after boot can reach Node whatever it was handed. Anything
   the desktop needs from Node is either on `ctx["desktop"]` already or goes
   through `ipcRenderer` to `main.js`.
