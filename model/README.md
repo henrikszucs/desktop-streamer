@@ -15,9 +15,12 @@ which is not a problem but the three stand-ins the client runs today (see below)
 
 ## The mock graphs the client runs
 
-`mock/make_mock_models.py` writes the three graphs `src/client/web/media/models/` holds -
-`upscale.onnx`, `interpolate.onnx`, `extrapolate.onnx` - which the client's enhancement
-menu runs through ONNX Runtime Web (`src/client/web/src/room/stream-enhance.js`). They are
+`src/client/web/media/models/` holds the three graphs the client's enhancement menu runs
+through ONNX Runtime Web (`src/client/web/src/room/stream-enhance.js`). `upscale.onnx` is
+trained now - the desktop-streamer-ai repository's notebook 23, told each frame's slice QP,
+loop filter and I or P as a second input, `condition` (float32 `[3]`). `interpolate.onnx`
+and `extrapolate.onnx` are written by `mock/make_mock_models.py`, which writes its mock
+`upscale.onnx` over the trained one only when run with `--upscale`. They are
 stand-ins, not models: the smallest ONNX graph with the shape of the real thing and real GPU
 work in between, computing something that leaves the picture right (an identity convolution
 and a bilinear ×2; the mean of two frames; their linear extrapolation), so the client
@@ -32,7 +35,8 @@ one by being exported under the same name with the same contract: float32 NCHW i
 with `N`, `H` and `W` symbolic - `input` `[N, 3, H, W]` for the upscaler, `previous` and
 `current` `[N, 3, H, W]` each for the two-frame ones (two inputs, never one stacked six
 channel tensor: the client would pay a copy and the graph a `Slice` for it), `output`
-`[N, 3, H, W]` or twice it for the upscaler.
+`[N, 3, H, W]` or twice it for the upscaler. A graph that also declares `condition` is
+handed the frame's three numbers beside the picture.
 
 ```
 uv run mock/make_mock_models.py

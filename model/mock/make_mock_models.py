@@ -1,4 +1,4 @@
-"""The three mock graphs the client's enhancement menu runs.
+"""The mock graphs the client's enhancement menu runs where no trained one exists yet.
 
 They are stand-ins, not models: each one is the smallest ONNX graph that has the *shape*
 of the real thing - the same input, the same output, real GPU work in between - so the
@@ -7,8 +7,12 @@ timed before any trained weights exist. What they compute is chosen so the pictu
 right: a client running all three with these graphs shows the stream it would show
 without them, only later.
 
+The upscaler is trained now: `upscale.onnx` is desktop-streamer-ai's notebook 23 export,
+told each frame's condition beside the picture, so running this script leaves it alone and
+writes the two frame generators only. `--upscale` writes the mock upscaler over it again.
+
     upscale.onnx      input [N, 3, H, W]                     -> output [N, 3, 2H, 2W]
-                      a depthwise 3x3 identity conv, then bilinear x2
+                      a depthwise 3x3 identity conv, then bilinear x2 (--upscale only)
     interpolate.onnx  previous, current [N, 3, H, W] each    -> output [N, 3, H, W]
                       the mean of the two frames
     extrapolate.onnx  previous, current [N, 3, H, W] each    -> output [N, 3, H, W]
@@ -54,6 +58,7 @@ Run from `model/` and the files land where the client reads them:
 """
 
 # internal
+import sys
 from pathlib import Path
 
 # third-party
@@ -130,6 +135,7 @@ def make_blend(name, weight_a, weight_b):
 
 
 if __name__ == "__main__":
-    make_upscale()
+    if "--upscale" in sys.argv[1:]:
+        make_upscale()
     make_blend("interpolate", 0.5, 0.5)
     make_blend("extrapolate", -1.0, 2.0)

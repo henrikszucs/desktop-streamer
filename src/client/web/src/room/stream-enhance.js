@@ -4,7 +4,8 @@
 // the models the bar ticked run over it in ONNX Runtime Web, and what comes
 // out is handed on as frames the drawer draws like any other. Three
 // enhancements - upscale, frame interpolation, frame extrapolation - each a
-// graph under /media/models, all three mocks today (model/mock/). Runs in the
+// graph under /media/models: the upscaler trained and told each frame's QP,
+// the two others mocks still (model/mock/). Runs in the
 // worker beside the decoder and never touches the document. The reasoning is
 // .claude/CLIENT.md, "The enhancer".
 //
@@ -32,6 +33,15 @@ const MODELS = {
 };
 const KINDS = Object.keys(MODELS);
 const OUTPUT_NAME = "output";
+
+// what a told graph is told of a frame, beside the picture: `condition`, the
+// slice QP / 51, the loop filter and I frame as 0 or 1, read by
+// ./stream-h264.js. A graph that does not declare the input is not handed it.
+const CONDITION_NAME = "condition";
+const QP_MAX = 51;
+// before the first frame the reader could read: a middle QP, the loop filter
+// on as most hosts' encoders have it, a P frame
+const DEFAULT_CONDITION = Object.freeze([30 / QP_MAX, 1, 0]);
 
 // the frame interval a generated frame is placed inside when the stream has
 // not said one yet, and the range a measured one is trusted in
@@ -88,6 +98,20 @@ const schedule = function(options, hasPrevious) {
         ];
     }
     return [{"kind": "frame", "at": 0}];
+};
+
+// a frame's condition out of what ./stream-h264.js read of it, or null for a
+// frame it could not read. Pure, and tested in tests/enhance.test.js.
+const conditionOf = function(picture) {
+    const qp = picture?.["qp"];
+    if (typeof qp !== "number" || Number.isFinite(qp) === false) {
+        return null;
+    }
+    return [
+        Math.min(QP_MAX, Math.max(0, qp)) / QP_MAX,
+        (picture["isDeblocked"] === true ? 1 : 0),
+        (picture["type"] === "I" ? 1 : 0)
+    ];
 };
 
 // the models a set of options needs loaded
@@ -357,6 +381,16 @@ const planTiles = function(width, height) {
     };
 };
 
+// the frame's condition as a CPU tensor, for a session whose graph declares
+// one - three numbers, which the runtime uploads beside the picture's buffer
+const toldInputs = function(ort, session, condition) {
+    if (session.inputNames.includes(CONDITION_NAME) === false) {
+        return {};
+    }
+    const values = Float32Array.from(condition ?? DEFAULT_CONDITION);
+    return {[CONDITION_NAME]: new ort.Tensor("float32", values, [values.length])};
+};
+
 // whether two pictures are of the same frame size, which is what a two-frame
 // model needs of the previous one and the current one
 const isSameShape = function(a, b) {
@@ -542,9 +576,10 @@ const createGPUBackend = async function(ort) {
 
         // every tile of every picture through the session at once: the feeds
         // are the graph's input names to pictures, each handed over as the
-        // tensor its buffer already is, nothing copied
-        "run": async function(session, feeds, scale) {
-            const inputs = {};
+        // tensor its buffer already is, nothing copied, and the frame's
+        // condition beside them for a told graph
+        "run": async function(session, feeds, scale, condition) {
+            const inputs = toldInputs(ort, session, condition);
             let picture = null;
             for (const [name, fed] of Object.entries(feeds)) {
                 inputs[name] = ort.Tensor.fromGpuBuffer(fed["buffer"], {"dataType": "float32", "dims": fed["dims"]});
@@ -695,8 +730,8 @@ const createCPUBackend = function(ort) {
             return {"plan": plan, "scale": 1, "dims": [plan["tiles"].length, 3, tileHeight, tileWidth], "data": data};
         },
 
-        "run": async function(session, feeds, scale) {
-            const inputs = {};
+        "run": async function(session, feeds, scale, condition) {
+            const inputs = toldInputs(ort, session, condition);
             let picture = null;
             for (const [name, fed] of Object.entries(feeds)) {
                 inputs[name] = new ort.Tensor("float32", fed["data"], fed["dims"]);
@@ -764,7 +799,8 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     let previousTimestamp = -1;
     let interval = DEFAULT_INTERVAL;
     let isBusy = false;
-    let pending = [];               // frames that arrived while busy, newest last
+    let pending = [];               // {frame, condition} that arrived while busy, newest last
+    let lastCondition = null;       // the last frame's the reader could read, for one it could not
     let scheduled = [];             // {frame, timerId} not yet drawn
     let isClosed = false;
     let generation = 0;             // bumped by reset(), so a frame in flight across it is let go
@@ -863,8 +899,9 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         previousTimestamp = -1;
     };
 
-    // one frame through the steps its options ask for
-    const process = async function(frame) {
+    // one frame through the steps its options ask for, a told graph told the
+    // frame's condition
+    const process = async function(frame, condition) {
         const started = performance.now();
         const timestamp = frame.timestamp;
         await ensureEngine();
@@ -897,12 +934,12 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 let picture = current;
                 if (step["kind"] !== "frame") {
                     const session = await loadSession(step["kind"], current["dims"]);
-                    picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"]);
+                    picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"], condition);
                 }
                 if (options["upscale"] === true) {
                     const source = picture;
                     try {
-                        picture = await engine.run(await loadSession("upscale", source["dims"]), {"input": source}, MODELS["upscale"]["scale"]);
+                        picture = await engine.run(await loadSession("upscale", source["dims"]), {"input": source}, MODELS["upscale"]["scale"], condition);
                     } finally {
                         if (source !== current) {
                             engine.release(source);
@@ -948,13 +985,13 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         isBusy = true;
         try {
             while (pending.length > 0 && isClosed === false) {
-                const frame = pending.shift();
+                const entry = pending.shift();
                 if (isAnyOn(options) === false) {
-                    onPresent(frame);
+                    onPresent(entry["frame"]);
                     continue;
                 }
                 try {
-                    await process(frame);
+                    await process(entry["frame"], entry["condition"]);
                 } catch (error) {
                     console.error("The enhancer failed:", error);
                     options = {...OFF};
@@ -999,32 +1036,35 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             return isAnyOn(options);
         },
 
-        // a decoded frame, which is the enhancer's from here: drawn as it is
+        // a decoded frame, which is the enhancer's from here, and what
+        // ./stream-h264.js read of it (null for nothing): drawn as it is
         // while nothing is on, enhanced otherwise
-        "push": function(frame) {
+        "push": function(frame, picture = null) {
             if (isClosed === true) {
                 frame.close();
                 return;
             }
+            lastCondition = conditionOf(picture) ?? lastCondition;
             if (isAnyOn(options) === false && isBusy === false) {
                 onPresent(frame);
                 return;
             }
             while (pending.length >= PENDING_MAX) {
-                pending.shift().close();
+                pending.shift()["frame"].close();
                 droppedCount++;
             }
-            pending.push(frame);
+            pending.push({"frame": frame, "condition": lastCondition});
             drain();
         },
 
         // the stream is over or restarted: nothing of the last picture carries
         // into the next one
         "reset": function() {
-            for (const frame of pending) {
-                frame.close();
+            for (const entry of pending) {
+                entry["frame"].close();
             }
             pending = [];
+            lastCondition = null;
             for (const entry of scheduled) {
                 clearTimeout(entry["timerId"]);
                 entry["frame"].close();
@@ -1067,5 +1107,5 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     };
 };
 
-export { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
-export default { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export { KINDS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export default { KINDS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };

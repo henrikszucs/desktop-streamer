@@ -15,13 +15,14 @@
 //      {type: "close"}                              the worker is done
 // Out: {type: "need-keyframe"}                      the decoder cannot go on without one
 //      {type: "size", width, height}                the picture changed size
-//      {type: "stats", fps, decoded, dropped, drawer, enhance}
+//      {type: "stats", fps, decoded, dropped, drawer, enhance, qp}
 //      {type: "enhance", backend, options, error}   what the enhancer can do and is doing
 //      {type: "error", message}
 
 // first-party dependencies
 import { createDrawer } from "./stream-draw.js";
 import { OFF, isAnyOn, probeBackend, createEnhancer } from "./stream-enhance.js";
+import { createSliceReader } from "./stream-h264.js";
 
 // how many frames may be waiting in the decoder before the ones after them are
 // not worth decoding. A hardware decoder is faster than the line, so a queue
@@ -43,9 +44,17 @@ let isKeyAsked = false;     // one request per gap, not one per frame
 let lastWidth = 0;
 let lastHeight = 0;
 
+// what each frame's slice headers say (./stream-h264.js), by timestamp until
+// its picture decodes; a frame the decoder never returns is let go here
+const PICTURES_MAX = 16;
+const sliceReader = createSliceReader();
+const pictures = new Map();
+
 // counted between two stats messages
 let decodedCount = 0;
 let droppedCount = 0;
+let qpSum = 0;
+let qpCount = 0;
 let statsTimerId = -1;
 
 const post = function(message) {
@@ -83,10 +92,16 @@ const onOutput = function(frame) {
         post({"type": "size", "width": width, "height": height});
     }
     decodedCount++;
-    // the enhancer draws what it makes of the frame, in its own time; the
-    // frame is its from here either way
+    const picture = pictures.get(frame.timestamp) ?? null;
+    if (picture !== null) {
+        pictures.delete(frame.timestamp);
+        qpSum += picture["qp"];
+        qpCount++;
+    }
+    // the enhancer draws what it makes of the frame, in its own time, told
+    // what the slice headers said of it; the frame is its from here either way
     if (enhancer !== null) {
-        enhancer.push(frame);
+        enhancer.push(frame, picture);
         return;
     }
     draw(frame);
@@ -232,6 +247,13 @@ const onFrame = function(message) {
         isWaitingKey = false;
         isKeyAsked = false;
     }
+    const picture = sliceReader.read(message["data"]);
+    if (picture !== null) {
+        pictures.set(message["timestamp"], picture);
+        if (pictures.size > PICTURES_MAX) {
+            pictures.delete(pictures.keys().next().value);
+        }
+    }
     try {
         decoder.decode(new EncodedVideoChunk({
             "type": (isKey === true ? "key" : "delta"),
@@ -247,6 +269,8 @@ const onFrame = function(message) {
 const onReset = function() {
     closeDecoder();
     enhancer?.reset();
+    sliceReader.reset();
+    pictures.clear();
     config = null;
     configKey = "";
     // the picture is gone, so the next one is news whatever its size: what is
@@ -268,10 +292,13 @@ const startStats = function() {
             "decoded": decodedCount,
             "dropped": droppedCount,
             "drawer": drawer?.["name"] ?? "",
-            "enhance": (enhancer?.getStats() ?? null)
+            "enhance": (enhancer?.getStats() ?? null),
+            "qp": (qpCount > 0 ? Math.round(qpSum / qpCount * 10) / 10 : null)
         });
         decodedCount = 0;
         droppedCount = 0;
+        qpSum = 0;
+        qpCount = 0;
     }, 1000);
 };
 

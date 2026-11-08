@@ -1757,7 +1757,8 @@ const createStream = function(ctx) {
                 "fps": workerStats?.["fps"] ?? 0,
                 "dropped": droppedFrames + (workerStats?.["dropped"] ?? 0),
                 "drawer": workerStats?.["drawer"] ?? "",
-                "enhance": workerStats?.["enhance"] ?? null
+                "enhance": workerStats?.["enhance"] ?? null,
+                "qp": workerStats?.["qp"] ?? null
             };
             sentBytes = 0;
             sentFrames = 0;

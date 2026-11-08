@@ -1305,8 +1305,15 @@ between three things a person wants all of. What is on is this client's and
 not the host's: it never travels in `settings`, it outlives a room, and the
 room screen keeps it beside `settings` rather than in it.
 
-**The models are mocks, and the pipeline is real.** Each enhancement is one
-ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
+**The upscaler is trained; the frame generators are mocks, and the pipeline
+is real.** `media/models/upscale.onnx` is the told upscaler (see The QP of a
+frame), exported by the desktop-streamer-ai repository's notebook 23: on its
+validation patches +0.024 SSIM-Y and +1.5 dB luma over bicubic, a 3×3 stem,
+two residual blocks at 24 channels and a frozen bicubic skip, 60 KB. Its time
+on a GPU in a browser is not measured yet. The two
+frame generators, and the upscaler before it, are mocks - each one ONNX
+graph under `media/models/`, written by `model/mock/make_mock_models.py`
+(which leaves the trained upscaler alone unless asked with `--upscale`):
 a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
 convolution before the resize, at the input resolution, the way a real
 upscaler computes low and upsamples last), and the two blends as the
@@ -1395,7 +1402,8 @@ WebGL provider runs static shapes only: a dimension the graph leaves symbolic
 so for WebGL the graph's bytes are patched - the symbolic input dimensions
 written as the frame's, a small protobuf rewrite of the fields on that path
 alone - and a session made per resolution. `tests/enhance.test.js` proves the
-patch against the mock files.
+patch against the graphs in `media/models/`, the told upscaler's fixed
+`condition` input left as it is.
 
 **A generated frame has a place in the interval, and the real one moves to
 make room.** `schedule()` is pure: for one arriving frame it says which
@@ -1445,6 +1453,69 @@ stream's `stats` while a picture is being received, or the backend alone until
 there has been one. It is **one row that is always there** and only ever
 changes its text: a row that appears or goes moves the rows under the pointer
 of an open menu, which is what it did first.
+
+## The QP of a frame
+
+The trained upscaler is **told each frame's QP** (the desktop-streamer-ai
+repository, `src/upscale/`, notebooks 17 to 23): one model, handed beside the
+picture a `condition` of three numbers - the slice QP / 51, the loop filter
+and I frame as 0 or 1 - which only ever moves its biases (`b + W c`, 72
+numbers a frame, computed inside the graph), so the per-pixel work is the
+blind model's. It has to be the frame's own QP: told 3 steps off, the model
+gives back much of what being told won, and 6 off it is no better than one
+never told. So the client reads it, per frame, from the stream itself.
+
+**Nothing in the browser hands it over.** A decoded `VideoFrame` carries no
+QP; WebRTC's `qpSum` exists for RTP media tracks, which this stream is never
+(see The stream), and is a sum over a second anyway. The host cannot say it
+either: ffmpeg writes raw H.264 down the pipe and nothing about it, x264
+prints a frame's QP only at the debug log level, and NVENC, AMF and
+VideoToolbox not at all. What every encoder does write is the QP itself, in
+the slice header: `26 + pic_init_qp_minus26 + slice_qp_delta`. The worker
+holds every access unit before `decode()`, so `stream-h264.js` reads it
+there - the SPS and PPS as they come in-band with a keyframe, then each slice
+header as far as its loop filter field, through the emulation prevention
+bytes and without a copy, about 0.02-0.04 ms a 960×540 frame - and the
+picture is matched to its decoded frame by `timestamp`. A frame with no
+parameter sets behind it yet (a peer that joined after the last keyframe)
+reads as null rather than as a guess.
+
+**The slice QP is the frame's starting QP, not its mean.** Rate control moves
+the QP between macroblocks inside a frame, and the model was trained on the
+mean over them. Measured on the host's own lines (30 clips, 6 bitrates, the
+mean read back from the decoder's macroblock table), on settled P frames:
+
+| line | mean minus slice QP | mean / 90th percentile gap | I frames |
+| --- | --- | --- | --- |
+| x264 | +0.93, never below | 0.93 / 2.06 | +3.1 |
+| NVENC | -0.80 (-1.27 on screens) | 1.21 / 2.49 | +3.9 |
+
+So the slice QP is what the model is **trained on** - the number the
+client has, by construction - rather than corrected by an offset here. A
+frame of several slices (x264 cuts 5-8 under sliced threads, the same QP in
+each) reads as the mean over its macroblocks.
+
+**The loop filter comes with it.** The host's x264 line (`ultrafast`) codes
+with H.264's deblocking filter off, its NVENC line with it on, and the same
+QP leaves different artifacts behind each; `isDeblocked` is read from the same
+headers, and the model is told which. It earns its place: told the QP alone,
+the model trained on both lines scored *below* a blind one on NVENC's middle
+QPs, since the same number means a smoother picture there; told the loop
+filter as well, it is the best of the three on both (notebook 22). In the
+host's lines the flag is the encoder - x264 never filters, NVENC always does -
+and AMF, VideoToolbox and the browser host's WebCodecs encoder filter, so they
+are read as NVENC is, which nothing has measured yet. I frame or not is told
+too and measured as worth nothing; it costs nothing either.
+
+**What the enhancer hands the graph.** The worker passes each decoded frame to
+the enhancer with what was read of it, and `conditionOf()` (pure, tested)
+turns that into the three numbers; a frame the reader could not read is given
+the last one that it could, and a stream's first frames before any the middle
+`DEFAULT_CONDITION` (QP 30, filtered, P). The condition goes in as a CPU
+tensor beside the picture's GPU buffer - three numbers for the runtime to
+upload - and only to a graph that declares a `condition` input, so the mock
+frame generators, and a blind upscaler, run as they did. Every tile of a frame
+shares its condition, which is why it has no batch dimension.
 
 ## The registry
 
@@ -1649,8 +1720,8 @@ monitor - both paths run on Windows in Electron 42; macOS and Linux are built
 to what Electron and Chromium document and are untested). What `dev/plans/room-media.md` still lists as open: a desktop host cannot answer a keyframe request
 over a pipe, the access unit splitter is one frame behind the encoder (a unit is
 only known whole when the next delimiter arrives), and the enhancer runs mock
-graphs - the pipeline is there, the trained models are not (see The
-enhancer). The previous client implementation is at commit `da3921d`, and it read
+frame generators - the pipeline is there and the upscaler is trained, the
+two others are not (see The enhancer). The previous client implementation is at commit `da3921d`, and it read
 message types the server no longer serves — do not paste it back untouched.
 
 Two modules are markup with nothing behind them. `management/search`: the field
