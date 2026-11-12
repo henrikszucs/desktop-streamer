@@ -10,8 +10,6 @@ conf/*
 !conf/config.example.json
 
 package-lock.json
-# the easy-control snapshot keeps the lock its own repository commits
-!dev/control/package-lock.json
 dev/electron
 
 model/.venv
