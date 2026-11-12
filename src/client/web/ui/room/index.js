@@ -146,10 +146,12 @@ const RoomScreen = class extends Screen {
 
     // the enhancements over the picture: what is ticked, and what the stream
     // last said of them - the backend it has ("" for none, and not yet known
-    // until it has said), and which are running. They are this client's and
-    // not the host's, so they are no part of `settings` and outlive a room.
+    // until it has said), which of them it can run, and which are running.
+    // They are this client's and not the host's, so they are no part of
+    // `settings` and outlive a room.
     enhance = {"upscale": false, "interpolate": false, "extrapolate": false};
     enhanceBackend = "";
+    enhanceKinds = [];
     isEnhanceKnown = false;
     isEnhanceLoading = false;
     enhanceReading = "";    // the last cost reading, kept so the row never empties
@@ -806,7 +808,7 @@ const RoomScreen = class extends Screen {
     // back off, with the reason in the snackbar. Nothing is asked of a browser
     // with no backend - the rows are inert then.
     setEnhance(kind, isOn) {
-        if (ENHANCEMENTS.includes(kind) === false || this.enhanceBackend === "") {
+        if (ENHANCEMENTS.includes(kind) === false || this.enhanceKinds.includes(kind) === false) {
             return;
         }
         this.enhance[kind] = (isOn === true);
@@ -820,6 +822,7 @@ const RoomScreen = class extends Screen {
     onStreamEnhance = (event) => {
         const state = event.detail ?? {};
         this.enhanceBackend = (typeof state["backend"] === "string" ? state["backend"] : "");
+        this.enhanceKinds = (Array.isArray(state["kinds"]) === true ? [...state["kinds"]] : []);
         this.isEnhanceKnown = (state["isKnown"] === true);
         this.isEnhanceLoading = false;
         for (const kind of ENHANCEMENTS) {
@@ -954,10 +957,15 @@ const RoomScreen = class extends Screen {
             if (typeof kind === "undefined") {
                 continue;
             }
+            // a kind this backend cannot run is greyed with the reason in its own row
             const isOn = (this.enhance[kind] === true);
+            const isRunnable = (this.enhanceKinds.includes(kind) === true);
             item.classList.toggle("active", isOn);
-            item.classList.toggle("room-menu-blocked", isSupported === false || this.isEnhanceLoading === true);
+            item.classList.toggle("room-menu-blocked", isRunnable === false || this.isEnhanceLoading === true);
             item.children.item(0).classList.toggle("room-menu-unchecked", isOn === false);
+            item.children.item(1).innerText = (isSupported === true && isRunnable === false
+                ? localization.get("room.enhance." + kind) + " " + localization.get("room.enhance.needsWebGPU")
+                : localization.get("room.enhance." + kind));
         }
 
         // the status row, in the order the states are reached: the probe,

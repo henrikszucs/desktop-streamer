@@ -205,6 +205,10 @@
                 "en": "Extrap.",
                 "hu": "Extrap."
             },
+            "needsWebGPU": {
+                "en": "(needs WebGPU)",
+                "hu": "(WebGPU szükséges)"
+            },
             "unsupported": {
                 "en": "Needs a GPU the browser can use (WebGPU or WebGL)",
                 "hu": "A böngésző által használható GPU kell hozzá (WebGPU vagy WebGL)"

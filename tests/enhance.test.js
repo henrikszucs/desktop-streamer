@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { KINDS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
+import { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
 
 const modelsPath = path.resolve(import.meta.dirname, "..", "src", "client", "web", "media", "models");
 
@@ -48,17 +48,20 @@ test("a two-frame model waits for its second frame", () => {
 
 test("the interpolated frame stands in before the real one, the extrapolated after it", () => {
     assert.deepEqual(schedule({...OFF, "interpolate": true}, true), [
-        {"kind": "interpolate", "at": 0},
+        {"kind": "interpolate", "graph": "interpolate", "at": 0},
         {"kind": "frame", "at": 1 / 2}
     ]);
     assert.deepEqual(schedule({...OFF, "extrapolate": true}, true), [
         {"kind": "frame", "at": 0},
-        {"kind": "extrapolate", "at": 1 / 2}
+        {"kind": "extrapolate", "graph": "extrapolate", "at": 1 / 2}
     ]);
+    // both on is three pictures an interval: the interpolated one two thirds of
+    // the way to the real one and the extrapolated one a third past it, which
+    // the 2x graphs (half way, half past) do not make - so the 3x pair
     assert.deepEqual(schedule({"upscale": true, "interpolate": true, "extrapolate": true}, true), [
-        {"kind": "interpolate", "at": 0},
+        {"kind": "interpolate", "graph": "interpolate3x", "at": 0},
         {"kind": "frame", "at": 1 / 3},
-        {"kind": "extrapolate", "at": 2 / 3}
+        {"kind": "extrapolate", "graph": "extrapolate3x", "at": 2 / 3}
     ]);
 });
 
@@ -73,6 +76,9 @@ test("every schedule presents the real frame once and in order", () => {
                     for (let i = 1; i < steps.length; i++) {
                         assert.equal(steps[i]["at"] > steps[i - 1]["at"], true, "steps out of order");
                     }
+                    for (const step of steps.filter((step) => step["kind"] !== "frame")) {
+                        assert.equal(GRAPHS.includes(step["graph"]), true, step["graph"] + " is a graph the client has");
+                    }
                     assert.equal(steps[0]["at"], 0, "the first picture is drawn at once");
                     assert.equal(steps[steps.length - 1]["at"] < 1, true, "nothing is drawn after the next frame is due");
                 }
@@ -81,9 +87,28 @@ test("every schedule presents the real frame once and in order", () => {
     }
 });
 
-test("only the models that are on are loaded", () => {
+test("only the models that are on are loaded, and both frame generators as their 3x pair", () => {
     assert.deepEqual(modelsFor(OFF), []);
     assert.deepEqual(modelsFor({"upscale": true, "interpolate": false, "extrapolate": true}), ["upscale", "extrapolate"]);
+    assert.deepEqual(modelsFor({"upscale": true, "interpolate": true, "extrapolate": true}), ["upscale", "interpolate3x", "extrapolate3x"]);
+    for (const upscale of [false, true]) {
+        for (const interpolate of [false, true]) {
+            for (const extrapolate of [false, true]) {
+                const options = {"upscale": upscale, "interpolate": interpolate, "extrapolate": extrapolate};
+                const needed = schedule(options, true).filter((step) => step["kind"] !== "frame").map((step) => step["graph"]);
+                for (const graph of needed) {
+                    assert.equal(modelsFor(options).includes(graph), true, graph + " is loaded before it runs");
+                }
+            }
+        }
+    }
+});
+
+test("the frame generators run on WebGPU only", () => {
+    // they read with GridSample, which the WebGL provider has not got
+    assert.deepEqual(kindsFor("webgpu"), KINDS);
+    assert.deepEqual(kindsFor("webgl"), ["upscale"]);
+    assert.deepEqual(kindsFor(""), []);
 });
 
 test("a picture's bytes are its float32 count rounded to 16", () => {
@@ -94,23 +119,26 @@ test("a picture's bytes are its float32 count rounded to 16", () => {
 });
 
 // the upscaler is the trained one, told a frame's condition as a second
-// input of three numbers; the two frame generators are mocks still
+// input of three numbers; the frame generators, 2x and 3x, take two frames
 const PICTURE_DIMS = ["N", 3, "H", "W"];
 const INPUT_DIMS = {
     "upscale": [PICTURE_DIMS, [3]],
     "interpolate": [PICTURE_DIMS, PICTURE_DIMS],
-    "extrapolate": [PICTURE_DIMS, PICTURE_DIMS]
+    "extrapolate": [PICTURE_DIMS, PICTURE_DIMS],
+    "interpolate3x": [PICTURE_DIMS, PICTURE_DIMS],
+    "extrapolate3x": [PICTURE_DIMS, PICTURE_DIMS]
 };
 
 test("every graph is there and takes a batch of tiles of any size, one frame per input", async () => {
-    for (const kind of KINDS) {
+    assert.deepEqual(GRAPHS, Object.keys(INPUT_DIMS));
+    for (const kind of GRAPHS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
         assert.deepEqual(readInputDims(bytes), INPUT_DIMS[kind], kind + " takes " + (kind === "upscale" ? "one frame and its condition" : "two frames"));
     }
 });
 
 test("the symbolic dimensions of every input are written as the batch's, and nothing else moves", async () => {
-    for (const kind of KINDS) {
+    for (const kind of GRAPHS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
         const patched = patchInputDims(bytes, [36, 188, 328]);
         const expected = INPUT_DIMS[kind].map(function(dims) {

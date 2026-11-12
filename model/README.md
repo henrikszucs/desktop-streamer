@@ -15,13 +15,14 @@ which is not a problem but the three stand-ins the client runs today (see below)
 
 ## The mock graphs the client runs
 
-`src/client/web/media/models/` holds the three graphs the client's enhancement menu runs
-through ONNX Runtime Web (`src/client/web/src/room/stream-enhance.js`). `upscale.onnx` is
-trained now - the desktop-streamer-ai repository's notebook 23, told each frame's slice QP,
-loop filter and I or P as a second input, `condition` (float32 `[3]`). `interpolate.onnx`
-and `extrapolate.onnx` are written by `mock/make_mock_models.py`, which writes its mock
-`upscale.onnx` over the trained one only when run with `--upscale`. They are
-stand-ins, not models: the smallest ONNX graph with the shape of the real thing and real GPU
+`src/client/web/media/models/` holds the graphs the client's enhancement menu runs
+through ONNX Runtime Web (`src/client/web/src/room/stream-enhance.js`), all trained now by
+the desktop-streamer-ai repository: `upscale.onnx` (notebook 23, told each frame's slice QP,
+loop filter and I or P as a second input, `condition`, float32 `[3]`), and the frame
+generators `interpolate.onnx` and `extrapolate.onnx` (`src/frame_gen_intra/` notebook 1,
+`src/frame_gen_extra/` notebook 13) with the `3x` twins the client runs when both are on.
+`mock/make_mock_models.py` writes its mocks over them only when named - `--upscale`,
+`--interpolate`, `--extrapolate`. The mocks are stand-ins, not models: the smallest ONNX graph with the shape of the real thing and real GPU
 work in between, computing something that leaves the picture right (an identity convolution
 and a bilinear ×2; the mean of two frames; their linear extrapolation), so the client
 pipeline could be built and timed before any trained weights exist. The client never hands a
@@ -39,7 +40,7 @@ channel tensor: the client would pay a copy and the graph a `Slice` for it), `ou
 handed the frame's three numbers beside the picture.
 
 ```
-uv run mock/make_mock_models.py
+uv run mock/make_mock_models.py --interpolate --extrapolate
 ```
 
 ## Setup

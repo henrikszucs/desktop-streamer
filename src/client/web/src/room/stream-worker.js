@@ -16,12 +16,12 @@
 // Out: {type: "need-keyframe"}                      the decoder cannot go on without one
 //      {type: "size", width, height}                the picture changed size
 //      {type: "stats", fps, decoded, dropped, drawer, enhance, qp}
-//      {type: "enhance", backend, options, error}   what the enhancer can do and is doing
+//      {type: "enhance", backend, kinds, options, error}   what the enhancer can do and is doing
 //      {type: "error", message}
 
 // first-party dependencies
 import { createDrawer } from "./stream-draw.js";
-import { OFF, isAnyOn, probeBackend, createEnhancer } from "./stream-enhance.js";
+import { OFF, isAnyOn, kindsFor, probeBackend, createEnhancer } from "./stream-enhance.js";
 import { createSliceReader } from "./stream-h264.js";
 
 // how many frames may be waiting in the decoder before the ones after them are
@@ -112,11 +112,13 @@ const onOutput = function(frame) {
 //
 // Made once, on the first enhancement asked for, since making it is fetching
 // the runtime. What it reports back is what the bar draws: the backend it
-// has, the options in force, and the failure that turned one off.
+// has, the enhancements that backend can run, the options in force, and the
+// failure that turned one off.
 const reportEnhance = function(error = "") {
     post({
         "type": "enhance",
         "backend": enhanceBackend,
+        "kinds": kindsFor(enhanceBackend),
         "options": (enhancer?.getOptions() ?? {...OFF}),
         "error": error
     });

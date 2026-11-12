@@ -5,7 +5,7 @@
 // out is handed on as frames the drawer draws like any other. Three
 // enhancements - upscale, frame interpolation, frame extrapolation - each a
 // graph under /media/models: the upscaler trained and told each frame's QP,
-// the two others mocks still (model/mock/). Runs in the
+// the two others the desktop-streamer-ai repository's tile searches. Runs in the
 // worker beside the decoder and never touches the document. The reasoning is
 // .claude/CLIENT.md, "The enhancer".
 //
@@ -26,12 +26,17 @@ const ORT_WASM_PATH = new URL("/libs/onnxruntime/", import.meta.url).href;
 // inputs rather than one stacked six channel one, since stacking was a copy
 // here and a Slice in the graph to take them apart again, more than half of
 // what an interpolated frame cost.
+// The frame generators come twice: one picture an interval (2x), and, with
+// both on, the pair that places theirs by thirds (3x, see schedule).
 const MODELS = {
     "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
     "interpolate": {"url": new URL("/media/models/interpolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
-    "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1}
+    "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
+    "interpolate3x": {"url": new URL("/media/models/interpolate3x.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
+    "extrapolate3x": {"url": new URL("/media/models/extrapolate3x.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1}
 };
-const KINDS = Object.keys(MODELS);
+const KINDS = ["upscale", "interpolate", "extrapolate"];
+const GRAPHS = Object.keys(MODELS);
 const OUTPUT_NAME = "output";
 
 // what a told graph is told of a frame, beside the picture: `condition`, the
@@ -70,31 +75,31 @@ const isAnyOn = function(options) {
     });
 };
 
-// what one arriving frame turns into and when, as fractions of the frame
-// interval: the interpolated frame stands in *before* the real one and the
-// extrapolated one *after* it, so the real frame moves to make room for
-// whichever of the two is on. Upscaling is not a step - it is applied to
-// every picture the steps produce. Pure, and tested in tests/enhance.test.js.
+// what one arriving frame turns into, when, and through which graph, as
+// fractions of the frame interval: the interpolated frame stands in *before*
+// the real one and the extrapolated one *after* it, so the real frame moves to
+// make room for whichever of the two is on - and with both on, the 3x graphs.
+// Upscaling is not a step. Pure, and tested in tests/enhance.test.js.
 const schedule = function(options, hasPrevious) {
     const isInterpolate = (options["interpolate"] === true && hasPrevious === true);
     const isExtrapolate = (options["extrapolate"] === true && hasPrevious === true);
     if (isInterpolate === true && isExtrapolate === true) {
         return [
-            {"kind": "interpolate", "at": 0},
+            {"kind": "interpolate", "graph": "interpolate3x", "at": 0},
             {"kind": "frame", "at": 1 / 3},
-            {"kind": "extrapolate", "at": 2 / 3}
+            {"kind": "extrapolate", "graph": "extrapolate3x", "at": 2 / 3}
         ];
     }
     if (isInterpolate === true) {
         return [
-            {"kind": "interpolate", "at": 0},
+            {"kind": "interpolate", "graph": "interpolate", "at": 0},
             {"kind": "frame", "at": 1 / 2}
         ];
     }
     if (isExtrapolate === true) {
         return [
             {"kind": "frame", "at": 0},
-            {"kind": "extrapolate", "at": 1 / 2}
+            {"kind": "extrapolate", "graph": "extrapolate", "at": 1 / 2}
         ];
     }
     return [{"kind": "frame", "at": 0}];
@@ -114,11 +119,24 @@ const conditionOf = function(picture) {
     ];
 };
 
-// the models a set of options needs loaded
+// the graphs a set of options needs loaded: with both frame generators on,
+// their 3x pair
 const modelsFor = function(options) {
+    const isBoth = (options["interpolate"] === true && options["extrapolate"] === true);
     return KINDS.filter(function(kind) {
         return options[kind] === true;
+    }).map(function(kind) {
+        return (isBoth === true && kind !== "upscale" ? kind + "3x" : kind);
     });
+};
+
+// the enhancements a backend can run: the frame generators read with
+// GridSample, which the WebGL provider has not got
+const kindsFor = function(backend) {
+    if (backend === "webgpu") {
+        return [...KINDS];
+    }
+    return (backend === "webgl" ? ["upscale"] : []);
 };
 
 // bytes of one float32 NCHW picture, rounded to what the runtime reads in
@@ -790,8 +808,8 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     ort.env.wasm.numThreads = 1;    // no cross-origin isolation, so no threads to have
     ort.env.logLevel = "warning";
 
-    const sessions = new Map();     // kind (and, for WebGL, the size) -> InferenceSession
-    const graphs = new Map();       // kind -> the model bytes, for the WebGL patching
+    const sessions = new Map();     // graph (and, for WebGL, the size) -> InferenceSession
+    const graphs = new Map();       // graph -> the model bytes, for the WebGL patching
     let engine = null;              // made after the first session, on the runtime's device
 
     let options = {...OFF};
@@ -816,31 +834,31 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         ...(backend === "webgpu" ? {"preferredOutputLocation": "gpu-buffer"} : {})
     };
 
-    // the graph's bytes, fetched once per kind
-    const loadGraph = async function(kind) {
-        if (graphs.has(kind) === false) {
-            const response = await fetch(MODELS[kind]["url"]);
+    // the graph's bytes, fetched once per graph
+    const loadGraph = async function(name) {
+        if (graphs.has(name) === false) {
+            const response = await fetch(MODELS[name]["url"]);
             if (response.ok === false) {
-                throw new Error("Cannot fetch the " + kind + " model (" + response.status + ")");
+                throw new Error("Cannot fetch the " + name + " model (" + response.status + ")");
             }
-            graphs.set(kind, new Uint8Array(await response.arrayBuffer()));
+            graphs.set(name, new Uint8Array(await response.arrayBuffer()));
         }
-        return graphs.get(kind);
+        return graphs.get(name);
     };
 
-    // a session for a kind - and, on WebGL, for the batch it is about to run
+    // a session for a graph - and, on WebGL, for the batch it is about to run
     // on, since that provider takes one shape per session. One shape at a
-    // time per kind: only a change of resolution changes it.
-    const loadSession = async function(kind, dims) {
+    // time per graph: only a change of resolution changes it.
+    const loadSession = async function(name, dims) {
         const isStatic = (backend === "webgl");
-        const key = (isStatic === true ? kind + "|" + dims[0] + "x" + dims[2] + "x" + dims[3] : kind);
+        const key = (isStatic === true ? name + "|" + dims[0] + "x" + dims[2] + "x" + dims[3] : name);
         if (sessions.has(key) === true) {
             return sessions.get(key);
         }
-        let bytes = await loadGraph(kind);
+        let bytes = await loadGraph(name);
         if (isStatic === true) {
             for (const [held, session] of [...sessions]) {
-                if (held.startsWith(kind + "|") === true) {
+                if (held.startsWith(name + "|") === true) {
                     sessions.delete(held);
                     await session.release?.();
                 }
@@ -933,8 +951,8 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             for (const step of steps) {
                 let picture = current;
                 if (step["kind"] !== "frame") {
-                    const session = await loadSession(step["kind"], current["dims"]);
-                    picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"], condition);
+                    const session = await loadSession(step["graph"], current["dims"]);
+                    picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["graph"]]["scale"], condition);
                 }
                 if (options["upscale"] === true) {
                     const source = picture;
@@ -1009,16 +1027,21 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             return backend;
         },
 
-        // what is on. The models it needs are loaded here, so a graph that
-        // will not load refuses the option rather than the next frame - on
-        // WebGL only fetched, since a session there waits for a size.
+        // what is on - of what this backend can run. The models it needs are
+        // loaded here, so a graph that will not load refuses the option rather
+        // than the next frame - on WebGL only fetched, since a session there
+        // waits for a size.
         "setOptions": async function(wanted) {
             const next = normalizeOptions(wanted);
-            for (const kind of modelsFor(next)) {
+            const runnable = kindsFor(backend);
+            for (const kind of KINDS) {
+                next[kind] = (next[kind] === true && runnable.includes(kind) === true);
+            }
+            for (const name of modelsFor(next)) {
                 if (backend === "webgl") {
-                    await loadGraph(kind);
+                    await loadGraph(name);
                 } else {
-                    await loadSession(kind, null);
+                    await loadSession(name, null);
                 }
             }
             const wasTwoFrame = (options["interpolate"] === true || options["extrapolate"] === true);
@@ -1107,5 +1130,5 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     };
 };
 
-export { KINDS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
-export default { KINDS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export default { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };

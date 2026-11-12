@@ -1305,15 +1305,26 @@ between three things a person wants all of. What is on is this client's and
 not the host's: it never travels in `settings`, it outlives a room, and the
 room screen keeps it beside `settings` rather than in it.
 
-**The upscaler is trained; the frame generators are mocks, and the pipeline
-is real.** `media/models/upscale.onnx` is the told upscaler (see The QP of a
+**All three graphs are trained, and the pipeline is real.**
+`media/models/upscale.onnx` is the told upscaler (see The QP of a
 frame), exported by the desktop-streamer-ai repository's notebook 23: on its
 validation patches +0.024 SSIM-Y and +1.5 dB luma over bicubic, a 3×3 stem,
 two residual blocks at 24 channels and a frozen bicubic skip, 60 KB. Its time
-on a GPU in a browser is not measured yet. The two
-frame generators, and the upscaler before it, are mocks - each one ONNX
-graph under `media/models/`, written by `model/mock/make_mock_models.py`
-(which leaves the trained upscaler alone unless asked with `--upscale`):
+on a GPU in a browser is not measured yet. The frame generators are that
+repository's tile searches - one motion per tile, found from the cost of
+every offset within ±8 px on half-resolution luma, nothing learned in the
+search: `interpolate.onnx` moves the last frame and this one half of it
+towards each other (`src/frame_gen_intra/`, notebook 1), and `extrapolate.onnx`
+carries the last motion half an interval on, or repeats the frame where a
+400-weight network on the search's own costs says it would do better
+(`src/frame_gen_extra/`, notebook 13). On that repository's validation clips
+cut into these tiles, interpolation is +2.4 dB over the mean of the two
+frames on the tiles that move and extrapolation +1.4 over repeating the
+frame - most of it on scrolls and pans, half a dB on recorded screens - for
+3.3 and 2.75 ms a 1080p frame in Chrome's WebGPU on an RTX 3090. Before them
+all three were mocks, each one ONNX graph written by
+`model/mock/make_mock_models.py` - which now writes a mock only over the
+graphs it is named (`--upscale`, `--interpolate`, `--extrapolate`):
 a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
 convolution before the resize, at the input resolution, the way a real
 upscaler computes low and upsamples last), and the two blends as the
@@ -1332,12 +1343,12 @@ NCHW↔NHWC `Transpose` pair the provider puts around a graph's convolutions is
 are index-bound, not bandwidth- or arithmetic-bound. A trained model will pay
 those prices for whatever it is built from. Where a 1080p frame's ~26 ms go
 with the upscaler on: `Resize` 11, the transposes 4, the draw onto the canvas
-~4, the frame into planes ~2.5, the convolution 1.4. They are the
+~4, the frame into planes ~2.5, the convolution 1.4. They were the
 *shape* of the real thing - the same input and output, real GPU work in
 between, a picture that stays right - so the whole path from decoded frame to
-drawn picture can be built and timed before a trained model exists, and a
-trained one replaces a mock by being exported under the same name. `model/`
-is where those are trained; nothing there runs in the client.
+drawn picture could be built and timed before a trained model existed, and a
+trained one replaced each mock by being exported under the same name.
+`model/` is where those are trained; nothing there runs in the client.
 
 **The runtime is fetched when the first switch is turned on, not at boot.**
 ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
@@ -1348,7 +1359,12 @@ to the bar before anything is asked for, so the entry is greyed with the reason
 in its menu rather than left to fail on the click. There is no third backend
 on purpose: the runtime has a CPU one, and a CPU cannot keep up with a stream,
 so a browser with neither GPU path is told it needs one instead of being given
-a picture that arrives a second late.
+a picture that arrives a second late. **The frame generators run on WebGPU
+only**: their search reads with `GridSample`, which the WebGL provider has not
+got, so `kindsFor()` (pure, tested) says which enhancements a backend can run,
+the worker reports it beside the backend, the bar greys the two rows with
+"(needs WebGPU)" in the rows themselves, and the enhancer refuses them in
+`setOptions` too.
 
 **A model never sees a whole frame, and every tile of a frame is one run.**
 Every picture is cut into tiles of one size, the tiles go through the model as
@@ -1412,8 +1428,16 @@ The interpolated frame stands in *before* the real one (it is the picture
 between this frame and the last) and the extrapolated one *after* it, so with
 interpolation on the real frame is drawn at half the interval, with
 extrapolation on the predicted frame is, and with both on the three are spaced
-by thirds. Upscaling is not a step - it runs over every picture the steps
-produce. The interval is measured from the stream's own timestamps rather than
+by thirds. **Both on is not the 2x graphs twice**: spaced by thirds, the
+interpolated frame is two thirds of the way from the last frame to this one
+and the extrapolated one a third of an interval past it, where the 2x graphs
+make half way and half past - the last frame's extrapolation and this
+interpolation would show the same moment. So `schedule()` names the graph
+each step runs, and both on runs the 3x pair, `interpolate3x.onnx` and
+`extrapolate3x.onnx`: the same searches with the motion carried by thirds, the
+interpolated frame mixed ⅓ : ⅔ by nearness. Neither placement is measured -
+the research's run set holds 2x samples only. Upscaling is not a step - it
+runs over every picture the steps produce. The interval is measured from the stream's own timestamps rather than
 assumed. Whatever is still held when the next real frame arrives is drawn
 ahead of it, in order, rather than dropped: a generated frame never covers a
 real one, and none is lost.
@@ -1513,8 +1537,8 @@ turns that into the three numbers; a frame the reader could not read is given
 the last one that it could, and a stream's first frames before any the middle
 `DEFAULT_CONDITION` (QP 30, filtered, P). The condition goes in as a CPU
 tensor beside the picture's GPU buffer - three numbers for the runtime to
-upload - and only to a graph that declares a `condition` input, so the mock
-frame generators, and a blind upscaler, run as they did. Every tile of a frame
+upload - and only to a graph that declares a `condition` input, so the frame
+generators, and a blind upscaler, run as they did. Every tile of a frame
 shares its condition, which is why it has no batch dimension.
 
 ## The registry
@@ -1719,9 +1743,8 @@ display capture, then ffmpeg from a loopback device or Linux's PulseAudio
 monitor - both paths run on Windows in Electron 42; macOS and Linux are built
 to what Electron and Chromium document and are untested). What `dev/plans/room-media.md` still lists as open: a desktop host cannot answer a keyframe request
 over a pipe, the access unit splitter is one frame behind the encoder (a unit is
-only known whole when the next delimiter arrives), and the enhancer runs mock
-frame generators - the pipeline is there and the upscaler is trained, the
-two others are not (see The enhancer). The previous client implementation is at commit `da3921d`, and it read
+only known whole when the next delimiter arrives), and the trained frame
+generators have not been watched in a live session yet (see The enhancer). The previous client implementation is at commit `da3921d`, and it read
 message types the server no longer serves — do not paste it back untouched.
 
 Two modules are markup with nothing behind them. `management/search`: the field

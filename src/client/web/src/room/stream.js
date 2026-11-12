@@ -1381,7 +1381,7 @@ const createStream = function(ctx) {
     // (src/room/stream-enhance.js) - kept here, since they are this viewer's
     // and never the host's - and what the worker last said of them
     let enhanceWanted = {"upscale": false, "interpolate": false, "extrapolate": false};
-    let enhanceState = {"backend": "", "isKnown": false, "options": {...enhanceWanted}};
+    let enhanceState = {"backend": "", "kinds": [], "isKnown": false, "options": {...enhanceWanted}};
 
     // the peer's side
     let canvas = null;
@@ -1701,6 +1701,7 @@ const createStream = function(ctx) {
                 // an option it refused is off here too
                 enhanceState = {
                     "backend": message["backend"] ?? "",
+                    "kinds": [...(message["kinds"] ?? [])],
                     "isKnown": true,
                     "options": {...message["options"]}
                 };
