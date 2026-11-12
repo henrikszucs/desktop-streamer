@@ -402,27 +402,31 @@ const probeBackend = async function() {
 // the one model/upscale/webexport.py measured: a 320x180 step, which divides
 // every 16:9 resolution exactly, and the halo every model reads beyond it -
 // shared by the whole chain, so a tile out of one model is a tile into the
-// next. A tile near an edge is not cut short: its input window is slid back
-// into the frame, so every tile of a frame has the same input size and the
+// next. The frame's own edge has the halo too: a window reaches up to it past
+// the frame, where the edge pixels are read again, since what a model puts
+// there itself is its padding - the upscaler's zeros made the outermost row
+// of every picture a fifth darker. A tile kept short at the far edge slides
+// its window back, so every tile of a frame has the same input size and the
 // kept region moves inside it instead. A frame smaller than a tile is one
-// tile of its own size.
+// tile of its own size and the halo.
 const TILE_STEP = {"width": 320, "height": 180};
 const HALO = 4;
 
 // {width, height, tileWidth, tileHeight, across, tiles: [{x, y, w, h, ix, iy, ox, oy}]}
 // - the kept region (x, y, w, h) in frame pixels, the input window's origin
-// (ix, iy), where the kept region sits inside the window (ox, oy), and how
-// many tiles a row of them is, so a frame pixel finds its tile by division
+// (ix, iy) - up to the halo outside the frame - where the kept region sits
+// inside the window (ox, oy), and how many tiles a row of them is, so a frame
+// pixel finds its tile by division
 const planTiles = function(width, height) {
-    const tileWidth = Math.min(width, TILE_STEP["width"] + 2 * HALO);
-    const tileHeight = Math.min(height, TILE_STEP["height"] + 2 * HALO);
+    const tileWidth = Math.min(width, TILE_STEP["width"]) + 2 * HALO;
+    const tileHeight = Math.min(height, TILE_STEP["height"]) + 2 * HALO;
     const tiles = [];
     for (let y = 0; y < height; y += TILE_STEP["height"]) {
         const h = Math.min(TILE_STEP["height"], height - y);
-        const iy = Math.min(Math.max(0, y - HALO), height - tileHeight);
+        const iy = Math.min(y - HALO, height + HALO - tileHeight);
         for (let x = 0; x < width; x += TILE_STEP["width"]) {
             const w = Math.min(TILE_STEP["width"], width - x);
-            const ix = Math.min(Math.max(0, x - HALO), width - tileWidth);
+            const ix = Math.min(x - HALO, width + HALO - tileWidth);
             tiles.push({"x": x, "y": y, "w": w, "h": h, "ix": ix, "iy": iy, "ox": x - ix, "oy": y - iy});
         }
     }
@@ -476,7 +480,7 @@ struct Info {
     frame: vec2u        // the frame, in pixels
 };
 @group(0) @binding(0) var<uniform> info: Info;
-@group(0) @binding(1) var<storage, read> origins: array<vec2u>;     // each tile's window in the frame
+@group(0) @binding(1) var<storage, read> origins: array<vec2i>;     // each tile's window in the frame, up to the halo outside it
 @group(0) @binding(2) var frameSampler: sampler;
 @group(0) @binding(3) var frameTexture: texture_external;
 @group(0) @binding(4) var<storage, read_write> planes: array<f32>;
@@ -486,7 +490,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if (id.x >= info.tile.x || id.y >= info.tile.y) {
         return;
     }
-    let uv = (vec2f(origins[id.z] + id.xy) + 0.5) / vec2f(info.frame);
+    // outside the frame the sample is clamped to its edge pixel
+    let uv = (vec2f(origins[id.z] + vec2i(id.xy)) + 0.5) / vec2f(info.frame);
     let color = textureSampleBaseClampToEdge(frameTexture, frameSampler, uv);
     let n = info.tile.x * info.tile.y;
     let base = id.z * 3u * n + id.y * info.tile.x + id.x;
@@ -637,7 +642,7 @@ const createGPUBackend = async function(ort, onLost) {
             const count = plan["tiles"].length;
             const dims = [count, 3, plan["tileHeight"], plan["tileWidth"]];
             device.queue.writeBuffer(infoIn, 0, new Uint32Array([plan["tileWidth"], plan["tileHeight"], width, height]));
-            const origins = new Uint32Array(count * 2);
+            const origins = new Int32Array(count * 2);
             plan["tiles"].forEach(function(tile, index) {
                 origins[index * 2] = tile["ix"];
                 origins[index * 2 + 1] = tile["iy"];
@@ -803,11 +808,14 @@ const createCPUBackend = function(ort) {
             const tileHeight = plan["tileHeight"];
             const n = tileWidth * tileHeight;
             const data = new Float32Array(plan["tiles"].length * 3 * n);
+            // a window past the frame reads its edge pixel again, as the
+            // GPU's clamping sampler does
             plan["tiles"].forEach(function(tile, index) {
                 const base = index * 3 * n;
                 for (let y = 0; y < tileHeight; y++) {
+                    const row = Math.min(height - 1, Math.max(0, tile["iy"] + y)) * width;
                     for (let x = 0; x < tileWidth; x++) {
-                        const source = ((tile["iy"] + y) * width + tile["ix"] + x) * 4;
+                        const source = (row + Math.min(width - 1, Math.max(0, tile["ix"] + x))) * 4;
                         const i = base + y * tileWidth + x;
                         data[i] = pixels[source] / 255;
                         data[n + i] = pixels[source + 1] / 255;

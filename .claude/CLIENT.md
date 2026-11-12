@@ -1311,19 +1311,33 @@ room screen keeps it beside `settings` rather than in it.
 `media/models/upscale.onnx` is the told upscaler (see The QP of a
 frame), exported by the desktop-streamer-ai repository's notebook 23: on its
 validation patches +0.024 SSIM-Y and +1.5 dB luma over bicubic, a 3×3 stem,
-two residual blocks at 24 channels and a frozen bicubic skip, 60 KB. Its time
-on a GPU in a browser is not measured yet. The frame generators are that
-repository's tile searches - one motion per tile, found from the cost of
-every offset within ±8 px on half-resolution luma, nothing learned in the
-search: `interpolate.onnx` moves the last frame and this one half of it
-towards each other (`src/frame_gen_intra/`, notebook 1), and `extrapolate.onnx`
+two residual blocks at 24 channels and a frozen bicubic skip, 60 KB. In
+Chrome's WebGPU on an RTX 3090 the graph takes 9.4 ms for a 960×540 frame and
+70 ms for a 1080p one, so a 1080p stream upscaled to 4K keeps about 13 of its
+30 frames, and with all three on - three pictures upscaled a frame - about 6.
+What it gains depends on how the host scaled the frame down: on a desktop
+scene scaled the way swscale and a GPU scaler do it (antialiased) it is
++1.2 to +1.7 dB luma over bicubic on text and code, after a box filter
+nothing, and on soft photographic regions it is 1.2 to 4.6 dB *below*
+bicubic, sharpening what it was not trained on. The frame generators are
+that repository's tile searches - one motion per tile, found from the cost of
+every offset within ±4 px on half-resolution luma, which is ±8 px of motion a
+frame (240 px a second at 30 fps), nothing learned in the search; within it
+a pan or a scroll comes back exact, past it the search finds nothing to
+follow and the picture is close to a blend (interpolation) or the frame
+repeated (extrapolation), never far below either. `interpolate.onnx` moves
+the last frame and this one half of it towards each other
+(`src/frame_gen_intra/`, notebook 1), and `extrapolate.onnx`
 carries the last motion half an interval on, or repeats the frame where a
 400-weight network on the search's own costs says it would do better
 (`src/frame_gen_extra/`, notebook 13). On that repository's validation clips
 cut into these tiles, interpolation is +2.4 dB over the mean of the two
 frames on the tiles that move and extrapolation +1.4 over repeating the
 frame - most of it on scrolls and pans, half a dB on recorded screens - for
-3.3 and 2.75 ms a 1080p frame in Chrome's WebGPU on an RTX 3090. Before them
+3.3 and 2.75 ms a 1080p frame in Chrome's WebGPU on an RTX 3090 (a run through
+the runtime with the GPU waited on is 7 to 9 ms there, and the enhancer's own
+reading, arrival to last picture drawn, 9 ms for one generator and 16 for
+both). Before them
 all three were mocks, each one ONNX graph written by
 `model/mock/make_mock_models.py` - which now writes a mock only over the
 graphs it is named (`--upscale`, `--interpolate`, `--extrapolate`):
@@ -1386,12 +1400,24 @@ provider wants anyway. `planTiles()` is pure and tested: a 320×180 step, which
 divides every 16:9 resolution exactly (720p is 4×4 of it, 1080p 6×6, 4K
 12×12), and a halo of 4 pixels every model is given beyond it - the geometry
 `model/upscale/webexport.py` measured as the cheapest, and one halo for the
-whole chain, so a tile out of one model is a tile into the next. A tile near
-an edge is not cut short: its input window is slid back into the frame, so
+whole chain, so a tile out of one model is a tile into the next. **The
+frame's own edge has the halo too**: a window reaches up to 4 pixels past the
+frame, where its edge pixels are read again (the GPU path's
+`textureSampleBaseClampToEdge` does that by itself, the WebGL path clamps its
+reads). The windows used to be slid back inside the frame instead, which
+left a kept pixel at the edge next to the model's own padding - and the
+upscaler pads with zeros, its frozen bicubic skip included, so the outermost
+row and column of every upscaled picture came out a fifth darker: 48/255 on
+a light title bar, a dark line round the whole stream. A tile kept short at
+the far edge (1366 is four steps and 86 pixels) slides its window back, so
 every tile of a frame has the same input size and the kept region moves
 inside the window instead; a frame smaller than a tile is one tile of its own
-size. A model exported for the client has to be right on a 328×188 tile and
-read no further than the halo.
+size and the halo. A model exported for the client has to be right on a
+328×188 tile and read no further than the halo - `tests/enhance.test.js` runs
+the graphs through the vendored runtime's CPU provider and holds them to it:
+tiled is the whole frame with its edges repeated, a flat picture stays flat
+out to its edges, and each frame generator shows the moment `schedule()`
+presents it at.
 
 **The picture stays on the GPU on WebGPU, and goes through a pixel array on
 WebGL.** On WebGPU a decoded frame is imported as an external texture and one
