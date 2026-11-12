@@ -30,7 +30,7 @@
 
 // first-party dependencies
 import { HEADER_SIZE, FLAG_KEY, FLAG_AUDIO, FLAG_CONFIG, packFrame, packConfig, readConfig, createReassembler } from "./frame.js";
-import { buildLines, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines } from "./stream-ffmpeg.js";
+import { buildLines, parseEncoders, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines } from "./stream-ffmpeg.js";
 import { createInput } from "./stream-input.js";
 import { cursorFingerprint, packCursor } from "./cursor.js";
 import { createClipboard } from "./clipboard.js";
@@ -67,6 +67,13 @@ const RESTART_DEBOUNCE = 500;
 // how long an ffmpeg line is given to produce its first frame before the next
 // line is tried
 const ENCODER_START_TIMEOUT = 6000;
+
+// a line that stops this soon after its first frame is taken for one that
+// will do it again, and the restart goes past it to the next
+const LINE_SETTLE_TIME = 10000;
+
+// how long ffmpeg is given to list the encoders it was built with
+const ENCODER_LIST_TIMEOUT = 5000;
 
 // the sound: Opus at what every browser encodes it at, and how far ahead of
 // the clock a frame is scheduled so the next one is there before it is due
@@ -679,6 +686,54 @@ const createSystemAudio = function(ctx, api, isWanted) {
     };
 };
 
+// the video encoders the bundled ffmpeg was built with, asked once: a line
+// whose encoder is not among them could only fail. Null where the listing
+// could not be had, and then every line is tried - a failed listing is asked
+// again by the next start.
+let videoEncoders = null;
+const listVideoEncoders = function(desktop) {
+    if (videoEncoders !== null) {
+        return videoEncoders;
+    }
+    const listing = new Promise(function(resolve) {
+        let text = "";
+        let child = null;
+        try {
+            const exe = desktop["path"].join(desktop["ffmpegPath"], (desktop["os"].platform() === "win32" ? "ffmpeg.exe" : "ffmpeg"));
+            child = desktop["spawn"](exe, ["-hide_banner", "-encoders"], {"cwd": desktop["ffmpegPath"], "windowsVerbatimArguments": true});
+        } catch (error) {
+            console.warn("Cannot list the video encoders:", error?.message ?? error);
+            resolve(null);
+            return;
+        }
+        const timeoutId = setTimeout(function() {
+            child.kill();
+        }, ENCODER_LIST_TIMEOUT);
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", function(data) {
+            text += data;
+        });
+        child.on("error", function(error) {
+            clearTimeout(timeoutId);
+            console.warn("Cannot list the video encoders:", error?.message ?? error);
+            resolve(null);
+        });
+        // a listing cut short by the timeout would leave encoders out
+        child.on("close", function(code) {
+            clearTimeout(timeoutId);
+            const encoders = parseEncoders(text);
+            resolve(code === 0 && encoders.size > 0 ? encoders : null);
+        });
+    });
+    videoEncoders = listing;
+    listing.then(function(encoders) {
+        if (encoders === null && videoEncoders === listing) {
+            videoEncoders = null;
+        }
+    });
+    return listing;
+};
+
 //
 // the desktop host's encoder: ffmpeg, the first line that works
 //
@@ -689,6 +744,10 @@ const createDesktopEncoder = function(ctx) {
     let settings = null;
     let restartId = -1;
     let generation = 0;
+    // the lines that stopped soon after they started, which a restart goes
+    // past: a GPU encoder another remote desktop application has taken fails
+    // the same way the next time
+    const broken = new Set();
 
     // the callbacks the stream fills in, on the object it is handed back
     const api = {
@@ -773,12 +832,21 @@ const createDesktopEncoder = function(ctx) {
             "framerate": settings["framerate"],
             "isCursor": (isCursorSupported(ctx) === false)
         });
+        const encoders = await listVideoEncoders(desktop);
+        const lines = built["lines"].filter(function(line) {
+            return (encoders === null || encoders.has(line["encoder"]) === true) && broken.has(line["name"]) === false;
+        });
 
         let started = null;
+        let adopted = null;
         let lastError = null;
-        for (const line of built["lines"]) {
+        for (const line of lines) {
+            if (own !== generation) {
+                break;
+            }
             try {
                 started = await startLine(line);
+                adopted = line;
                 console.log("Stream encoder: " + line["name"]);
                 break;
             } catch (error) {
@@ -791,7 +859,7 @@ const createDesktopEncoder = function(ctx) {
             return;
         }
         if (started === null) {
-            throw (lastError ?? new Error("No encoder started"));
+            throw (lastError ?? new Error("No video encoder left to try"));
         }
         encoder = started;
         api.onConfig({"codec": built["codec"], "codedWidth": built["size"]["width"], "codedHeight": built["size"]["height"]});
@@ -802,13 +870,44 @@ const createDesktopEncoder = function(ctx) {
             api.onChunk(chunk);
         }
         started.pending = [];
+        // a line that stops on its own is replaced rather than ending the
+        // share: the GPU encoder it runs on can be taken from under it, by
+        // another remote desktop application starting or by a driver reset
+        const adoptedAt = performance.now();
         encoder.onEnd = function(error) {
             if (encoder !== started) {
                 return;
             }
             encoder = null;
-            api.onEnd(error);
+            if (performance.now() - adoptedAt < LINE_SETTLE_TIME) {
+                broken.add(adopted["name"]);
+            }
+            const words = started.lastWords?.() ?? "";
+            console.warn("Stream encoder " + adopted["name"] + " stopped (" + error + ")" + (words !== "" ? ": " + words : "") + ", restarting");
+            restart();
         };
+    };
+
+    // a new line on the settings there are now, the running one ended first;
+    // a line that cannot be had ends the share
+    const restart = async function() {
+        clearTimeout(restartId);
+        restartId = -1;
+        const own = generation;
+        const running = encoder;
+        encoder = null;
+        if (running !== null) {
+            running.onEnd = function() {};
+            await running.end();
+        }
+        if (own !== generation) {
+            return;         // stopped while the old line was ending
+        }
+        try {
+            await start(settings);
+        } catch (error) {
+            api.onEnd(error);
+        }
     };
 
     const stop = async function() {
@@ -843,24 +942,7 @@ const createDesktopEncoder = function(ctx) {
                 return;
             }
             clearTimeout(restartId);
-            restartId = setTimeout(async function() {
-                restartId = -1;
-                const own = generation;
-                const running = encoder;
-                encoder = null;
-                if (running !== null) {
-                    running.onEnd = function() {};
-                    await running.end();
-                }
-                if (own !== generation) {
-                    return;         // stopped while the old line was ending
-                }
-                try {
-                    await start(settings);
-                } catch (error) {
-                    api.onEnd(error);
-                }
-            }, RESTART_DEBOUNCE);
+            restartId = setTimeout(restart, RESTART_DEBOUNCE);
         },
 
         // a keyframe every second is the whole answer here: ffmpeg cannot be

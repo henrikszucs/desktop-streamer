@@ -12,9 +12,11 @@ import { readFile } from "node:fs/promises";
 import { createBits, createSliceReader } from "../src/client/web/src/room/stream-h264.js";
 
 // The slice header reader is pure - an access unit's bytes in, the frame's QP,
-// type and loop filter out - so it is held to real streams: the host's x264 and
-// NVENC lines, and an x264 stream with what neither of them writes (B frames,
-// weighted prediction, reordered references, two slices at two QPs). Every
+// type and loop filter out - so it is held to real streams: the host's x264,
+// NVENC, OpenH264 and Media Foundation lines (the last two with the picture
+// order count of type 2, which carries no field in the slice header), and an
+// x264 stream with what none of them writes (B frames, weighted prediction,
+// reordered references, two slices at two QPs). Every
 // expected value is ffmpeg's trace_headers, a reader that is not this one; the
 // command that made each stream is in fixtures/h264/expected.json.
 

@@ -5,11 +5,17 @@
 // share runs on. Pure - platform and settings in, argument arrays out - so
 // tests/stream-ffmpeg.test.js can hold it to what the stream needs of it:
 // raw Annex B out of the pipe, a delimiter on every access unit, no B frames,
-// a keyframe every second and the bitrate the peer asked for.
+// a keyframe every second and the bitrate the peer asked for. Each line names
+// the encoder it needs, and a build without that encoder never runs it
+// (parseEncoders).
 
-// what every line starts with: no probing, no buffering, packets out as they
-// are made
+// what every line starts with: only the errors on stderr, which is what a
+// line that fails is reported with; no probing, no buffering, packets out as
+// they are made
 const INPUT_FLAGS = [
+    "-hide_banner",
+    "-nostats",
+    "-loglevel", "error",
     "-fflags", "+nobuffer+flush_packets",
     "-flags", "+low_delay",
     "-analyzeduration", "0",
@@ -17,10 +23,13 @@ const INPUT_FLAGS = [
     "-thread_queue_size", "8"
 ];
 
-// and what every line ends with: raw H.264 with an access unit delimiter in
-// front of every frame, which is what the splitter in encoder-ffmpeg.js cuts on
+// and what every line ends with: raw H.264 with one access unit delimiter in
+// front of every frame, which is what the splitter in encoder-ffmpeg.js cuts
+// on. Whatever delimiters the encoder wrote itself are taken out first: Media
+// Foundation writes its own, and an insert in front of it is a second one -
+// an empty frame to the splitter.
 const OUTPUT_FLAGS = [
-    "-bsf:v", "h264_metadata=aud=insert",
+    "-bsf:v", "h264_metadata=aud=remove,h264_metadata=aud=insert",
     "-f", "h264",
     "-flush_packets", "1",
     "pipe:1"
@@ -79,13 +88,22 @@ const buildLines = function(platform, screen, settings) {
 
     if (platform === "win32") {
         // the capture is a D3D11 texture and it stays one into the hardware
-        // encoders: no download to system memory and no upload after it
-        const capture = "gfxcapture=monitor_idx=" + screen["index"] + ":capture_cursor=" + (isCursor === true ? "true" : "false") + ":max_framerate=" + framerate;
+        // encoders: no download to system memory and no upload after it. A
+        // smaller picture is scaled by the capture itself - scale_d3d11 after
+        // it cannot make its output texture from the capture's frames.
+        const capture = "gfxcapture=monitor_idx=" + screen["index"] + ":capture_cursor=" + (isCursor === true ? "true" : "false") + ":max_framerate=" + framerate
+            + (isScaled === true ? ":width=" + size["width"] + ":height=" + size["height"] + ":resize_mode=scale:scale_mode=bicubic" : "");
+        // the encoders that work in system memory get the picture downloaded,
+        // in the 4:2:0 layout each of them takes
+        const downloaded = function(format) {
+            return capture + ",hwdownload,format=bgra,format=" + format;
+        };
         lines.push({
             "name": "h264_nvenc",
+            "encoder": "h264_nvenc",
             "params": [
                 ...INPUT_FLAGS,
-                "-filter_complex", capture + (isScaled === true ? ",scale_d3d11=w=" + size["width"] + ":h=" + size["height"] : ""),
+                "-filter_complex", capture,
                 "-c:v", "h264_nvenc",
                 "-preset", "p1",
                 "-tune", "ull",
@@ -100,9 +118,10 @@ const buildLines = function(platform, screen, settings) {
         });
         lines.push({
             "name": "h264_amf",
+            "encoder": "h264_amf",
             "params": [
                 ...INPUT_FLAGS,
-                "-filter_complex", capture + (isScaled === true ? ",scale_d3d11=w=" + size["width"] + ":h=" + size["height"] : ""),
+                "-filter_complex", capture,
                 "-c:v", "h264_amf",
                 "-usage", "ultralowlatency",
                 "-quality", "speed",
@@ -112,13 +131,35 @@ const buildLines = function(platform, screen, settings) {
                 ...OUTPUT_FLAGS
             ]
         });
-        // the software line is the one that always exists: the texture comes
-        // down to system memory for it, since that is where x264 works
+        // whatever GPU encoder Windows itself knows of - Intel's, or one whose
+        // vendor library is missing - through Media Foundation. NV12 is the
+        // input every hardware H.264 encoder takes; the encoder has no named
+        // profiles, so High is its number.
         lines.push({
-            "name": "libx264",
+            "name": "h264_mf hardware",
+            "encoder": "h264_mf",
             "params": [
                 ...INPUT_FLAGS,
-                "-filter_complex", capture + ",hwdownload,format=bgra" + (isScaled === true ? ",scale=w=" + size["width"] + ":h=" + size["height"] : "") + ",format=yuv420p",
+                "-filter_complex", downloaded("nv12"),
+                "-c:v", "h264_mf",
+                "-hw_encoding", "1",
+                "-scenario", "display_remoting",
+                "-rate_control", "cbr",
+                "-profile:v", "100",
+                ...rate,
+                ...OUTPUT_FLAGS
+            ]
+        });
+        // the software lines, for when every GPU encoder is missing or taken
+        // - another remote desktop application holding the GPU's sessions is
+        // enough. x264 where the build has it, which the one shipped for
+        // Windows does not.
+        lines.push({
+            "name": "libx264",
+            "encoder": "libx264",
+            "params": [
+                ...INPUT_FLAGS,
+                "-filter_complex", downloaded("yuv420p"),
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-tune", "zerolatency",
@@ -127,6 +168,7 @@ const buildLines = function(platform, screen, settings) {
                 ...OUTPUT_FLAGS
             ]
         });
+        lines.push(openH264Line(["-filter_complex", downloaded("yuv420p")], rate));
     } else if (platform === "darwin") {
         // avfoundation counts screens after the cameras, so the one to grab
         // is named rather than numbered
@@ -139,6 +181,7 @@ const buildLines = function(platform, screen, settings) {
         const scale = (isScaled === true ? ["-vf", "scale=w=" + size["width"] + ":h=" + size["height"]] : []);
         lines.push({
             "name": "h264_videotoolbox",
+            "encoder": "h264_videotoolbox",
             "params": [
                 ...INPUT_FLAGS,
                 ...input,
@@ -154,6 +197,7 @@ const buildLines = function(platform, screen, settings) {
         });
         lines.push({
             "name": "libx264",
+            "encoder": "libx264",
             "params": [
                 ...INPUT_FLAGS,
                 ...input,
@@ -167,6 +211,7 @@ const buildLines = function(platform, screen, settings) {
                 ...OUTPUT_FLAGS
             ]
         });
+        lines.push(openH264Line([...input, ...scale, "-pix_fmt", "yuv420p"], rate));
     } else {
         const input = [
             "-f", "x11grab",
@@ -178,6 +223,7 @@ const buildLines = function(platform, screen, settings) {
         const scale = (isScaled === true ? ["-vf", "scale=w=" + size["width"] + ":h=" + size["height"]] : []);
         lines.push({
             "name": "libx264",
+            "encoder": "libx264",
             "params": [
                 ...INPUT_FLAGS,
                 ...input,
@@ -191,9 +237,42 @@ const buildLines = function(platform, screen, settings) {
                 ...OUTPUT_FLAGS
             ]
         });
+        lines.push(openH264Line([...input, ...scale, "-pix_fmt", "yuv420p"], rate));
     }
 
     return {"lines": lines, "size": size, "codec": CODEC};
+};
+
+// the last line on every platform: OpenH264, a software encoder made for
+// calls, which every build this repo ships carries - the one shipped for
+// Windows has no x264. `source` is the capture, and the picture in 4:2:0.
+const openH264Line = function(source, rate) {
+    return {
+        "name": "libopenh264",
+        "encoder": "libopenh264",
+        "params": [
+            ...INPUT_FLAGS,
+            ...source,
+            "-c:v", "libopenh264",
+            "-profile:v", "high",
+            "-rc_mode", "bitrate",
+            ...rate,
+            ...OUTPUT_FLAGS
+        ]
+    };
+};
+
+// the video encoders a build has, out of `ffmpeg -encoders`: one line each,
+// six capability letters with V first, then the name
+const parseEncoders = function(text) {
+    const encoders = new Set();
+    for (const line of String(text).split(/\r?\n/)) {
+        const match = line.match(/^\s*V[A-Z.]{5}\s+(\S+)/);
+        if (match !== null && match[1] !== "=") {
+            encoders.add(match[1]);
+        }
+    }
+    return encoders;
 };
 
 //
@@ -315,5 +394,5 @@ const buildAudioLines = function(platform, devices = []) {
     return lines;
 };
 
-export { buildLines, outputSize, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines };
-export default { buildLines, outputSize, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines };
+export { buildLines, outputSize, parseEncoders, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines };
+export default { buildLines, outputSize, parseEncoders, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines };

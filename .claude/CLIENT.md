@@ -1028,12 +1028,33 @@ and picture from two sources.
 libs cuts the pipe): raw Annex B H.264 with an access unit delimiter in front of
 every frame, which is what the splitter cuts on, so there is no container to
 parse and the SPS/PPS ride in-band the way a WebCodecs decoder with no
-`description` expects. The lines are tried in order - `h264_nvenc`, `h264_amf`,
-then `libx264` on Windows with the D3D11 capture staying on the GPU into the
-hardware encoders; `h264_videotoolbox` then `libx264` on macOS - and the first
-to produce a frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every
-second, no B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows,
-at the frame rate the bar asked for.
+`description` expects. The lines are tried in order - on Windows `h264_nvenc`
+and `h264_amf` with the D3D11 capture staying on the GPU into them, then
+`h264_mf` with `-hw_encoding 1` (whatever GPU encoder Windows itself knows,
+Intel's above all), then `libx264` and `libopenh264`; on macOS
+`h264_videotoolbox`, `libx264`, `libopenh264` - and the first to produce a
+frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every second, no
+B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows, at the
+frame rate the bar asked for. A smaller picture is scaled by `gfxcapture`
+itself (`resize_mode=scale`): `scale_d3d11` after it cannot make its output
+texture from the capture's frames (`E_INVALIDARG` in the build shipped), so
+every GPU line asked to scale used to fail on the spot.
+**A line the build cannot run is never tried.** Each line names its encoder and
+the host asks the bundled ffmpeg for `-encoders` once (`parseEncoders`). The
+Windows build is LGPL and has no x264, which used to be the last line there: a
+share whose GPU encoder was missing or taken - another remote desktop
+application holding NVENC's sessions is enough - fell through to `Unknown
+encoder 'libx264'` and ended. OpenH264 is in every build shipped, so it is the
+line that always exists. **A line that stops under a running share is
+replaced** rather than ending it (`restart`, the same path a settings change
+takes): one that stopped within `LINE_SETTLE_TIME` of its first frame is gone
+past for the rest of the share, since an encoder taken from under it fails the
+same way again, and one that ran longer is tried first again. ffmpeg's stderr
+is kept rather than printed - the lines run at `-loglevel error` - and a line
+that fails is logged with its last lines. Every line ends in
+`h264_metadata=aud=remove,h264_metadata=aud=insert`: Media Foundation writes
+delimiters of its own, and an insert in front of one is a second - an empty
+access unit to the splitter.
 ffmpeg's video lines carry no sound: the desktop host's is `createSystemAudio`,
 the first of two sources that gives any. First a `getDisplayMedia` that
 `main.js` answers through `setDisplayMediaRequestHandler` with the first screen
@@ -1589,8 +1610,10 @@ the model trained on both lines scored *below* a blind one on NVENC's middle
 QPs, since the same number means a smoother picture there; told the loop
 filter as well, it is the best of the three on both (notebook 22). In the
 host's lines the flag is the encoder - x264 never filters, NVENC always does -
-and AMF, VideoToolbox and the browser host's WebCodecs encoder filter, so they
-are read as NVENC is, which nothing has measured yet. I frame or not is told
+and AMF, VideoToolbox, Media Foundation, OpenH264 and the browser host's
+WebCodecs encoder filter, so they are read as NVENC is, which nothing has
+measured yet. On Windows that is every line now: the build shipped there has
+no x264, and its software line is OpenH264. I frame or not is told
 too and measured as worth nothing; it costs nothing either.
 
 **What the enhancer hands the graph.** The worker passes each decoded frame to
