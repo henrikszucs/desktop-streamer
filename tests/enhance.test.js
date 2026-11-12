@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 // first-party dependencies
-import { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, bytesOf, patchInputDims, readInputDims } from "../src/client/web/src/room/stream-enhance.js";
+import { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames } from "../src/client/web/src/room/stream-enhance.js";
 
 const modelsPath = path.resolve(import.meta.dirname, "..", "src", "client", "web", "media", "models");
 
@@ -87,6 +87,29 @@ test("every schedule presents the real frame once and in order", () => {
     }
 });
 
+test("a picture's place is counted from the frame's first picture, not from when it was made", () => {
+    // all three on at 30 fps, every step costing 26 ms: the first picture is
+    // drawn at 26, so the real frame belongs at 26 + 11 and the predicted one
+    // at 26 + 22 - whatever the steps between cost
+    const interval = 33;
+    const anchor = 26;
+    const at = schedule({"upscale": true, "interpolate": true, "extrapolate": true}, true).map((step) => step["at"]);
+    assert.equal(presentDelay(at[0], interval, anchor, anchor), 0);
+    // made at 30, due at 37: it waits the 7 left, not a third of the interval
+    assert.equal(presentDelay(at[1], interval, anchor, 30), 7);
+    // made at 40, due at 48
+    assert.equal(presentDelay(at[2], interval, anchor, 40), 8);
+    // made after its place has passed: drawn at once, never a negative wait
+    assert.equal(presentDelay(at[2], interval, anchor, 78), 0);
+    // so every picture is due inside the interval of its frame, however long
+    // its steps took
+    for (let now = anchor; now < anchor + 3 * interval; now++) {
+        for (const place of at) {
+            assert.equal(now + presentDelay(place, interval, anchor, now) <= Math.max(now, anchor + place * interval), true);
+        }
+    }
+});
+
 test("only the models that are on are loaded, and both frame generators as their 3x pair", () => {
     assert.deepEqual(modelsFor(OFF), []);
     assert.deepEqual(modelsFor({"upscale": true, "interpolate": false, "extrapolate": true}), ["upscale", "extrapolate"]);
@@ -135,6 +158,20 @@ test("every graph is there and takes a batch of tiles of any size, one frame per
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
         assert.deepEqual(readInputDims(bytes), INPUT_DIMS[kind], kind + " takes " + (kind === "upscale" ? "one frame and its condition" : "two frames"));
     }
+});
+
+test("every graph is fed by the input names it declares, its pictures oldest first", async () => {
+    for (const graph of GRAPHS) {
+        const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, graph + ".onnx")));
+        const declared = readInputNames(bytes).filter((name) => name !== CONDITION_NAME);
+        const pictures = declared.map((name, index) => ({"index": index}));
+        const feeds = feedsOf(graph, pictures);
+        assert.deepEqual(Object.keys(feeds), declared, graph + " is fed what it declares");
+        assert.deepEqual(Object.values(feeds), pictures, graph + " is fed its pictures in order");
+    }
+    assert.deepEqual(Object.keys(feedsOf("interpolate", [{}, {}])), ["previous", "current"]);
+    assert.throws(() => feedsOf("upscale", [{}, {}]), /takes 1 pictures, not 2/);
+    assert.throws(() => feedsOf("extrapolate", [{}]), /takes 2 pictures, not 1/);
 });
 
 test("the symbolic dimensions of every input are written as the batch's, and nothing else moves", async () => {

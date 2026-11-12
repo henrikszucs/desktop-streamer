@@ -1332,7 +1332,10 @@ elementwise arithmetic they are. **A two-frame model takes two inputs**,
 `previous` and `current`, never one stacked six channel tensor: stacked, the
 enhancer paid a copy to stack them and the graph a `Slice` to take them apart
 again - 11 of the 17 ms an interpolated 1080p frame cost - where two inputs
-are two buffers handed over as the tensors they already are. The shapes were chosen by what the runtime's
+are two buffers handed over as the tensors they already are. The names are
+`MODELS`'s, not the code's: `feedsOf()` hands a step's pictures, oldest first,
+to the inputs the table names, and `tests/enhance.test.js` holds the table to
+the names each graph declares. The shapes were chosen by what the runtime's
 WebGPU provider runs well, and the measurements are in the generator's
 docstring: its generic `Conv` has no vectorised path for a channel count that
 is not a multiple of four and took 25 ms on a 1080p frame where the depthwise
@@ -1438,9 +1441,17 @@ each step runs, and both on runs the 3x pair, `interpolate3x.onnx` and
 interpolated frame mixed ⅓ : ⅔ by nearness. Neither placement is measured -
 the research's run set holds 2x samples only. Upscaling is not a step - it
 runs over every picture the steps produce. The interval is measured from the stream's own timestamps rather than
-assumed. Whatever is still held when the next real frame arrives is drawn
-ahead of it, in order, rather than dropped: a generated frame never covers a
-real one, and none is lost.
+assumed. **A place is counted from the frame's first picture**, not from when
+the picture in it was made (`presentDelay()`, pure and tested): counted from
+the second, every step's own cost was added to the gap after it, and with the
+upscaler on the predicted frame landed after the next real frame had arrived
+and was drawn back to back with it - the judder the steps are there to remove.
+The first picture drawn is drawn at once and fixes where the interval started,
+so a step skipped ahead of it moves nothing; a picture already past its place
+is drawn at once. Whatever is still held when the next real frame arrives is
+drawn ahead of it, in order, rather than dropped - that frame enhanced or,
+once every switch is off, passed straight through: a generated frame never
+covers a real one, and none is lost.
 
 **One frame at a time, and the newest waits - and a frame is not done until
 the GPU is.** A frame that arrives while one is being enhanced waits, and a
@@ -1468,7 +1479,25 @@ peer's `auto` resolution does on every bandwidth step - so the previous picture
 is dropped when the new one is not the same frame size (`isSameShape`, tested):
 a two-frame graph handed two sizes throws, and the enhancer would switch itself
 off for a bandwidth click. The picture a frame is made into is given back on
-every way out of `process` but the one that keeps it as the next previous.
+every way out of `process` but the one that keeps it as the next previous. The
+WebGPU storage buffers it is given back to are pooled for one frame size only:
+a new size empties the pool and starts an epoch, and a buffer of an older one
+is destroyed when it comes back - pooled by size for the life of the room, each
+bandwidth step left ~50 MB of a 1080p frame's buffers on the GPU for a size
+that might never return.
+
+**A lost GPU turns the enhancer off for the rest of the page.** A driver reset
+or the system taking the GPU back loses the runtime's device, and this build
+of the runtime makes that device once per module - its backend is initialised
+once and bound to it - while the module lives as long as the worker and the
+worker as long as the room's canvas, which hands its surface over once. So
+nothing short of a reload makes a new one, and the enhancer does not pretend
+otherwise: it listens to `device.lost` rather than waiting for a run to throw
+(on a lost device most calls are quiet no-ops, and the picture would go black
+instead), turns everything off once with the reason in the snackbar, lets the
+pictures in flight go, and refuses every later switch with the same reason.
+Before, the next frame's failure turned it off, a click turned it back on over
+the dead session it still held, and the frame after that turned it off again.
 
 **What the bar shows is what the worker said, not what was clicked.** A click
 draws the wish at once and greys the rows until the worker answers; the
