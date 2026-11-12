@@ -1457,7 +1457,12 @@ with all three on), the
 queue is bounded, and the drop count says what the GPU could not keep up
 with. A `reset` (the stream over, or restarted) bumps a generation,
 and a frame still in flight across it is let go rather than becoming the first
-frame of the next stream's pair. A change of size is not a reset - the host
+frame of the next stream's pair - asked again once the GPU is done with it,
+since on WebGPU that wait is most of a frame and so where a `share-end` is
+likeliest to land. Turning the last frame generator off lets the previous
+picture go at once, even while a frame is between its steps, so a two-frame
+step that finds none is skipped rather than run on nothing (which threw, and
+the throw took the upscaler off with it). A change of size is not a reset - the host
 restarts its encoder at a new resolution inside the same stream, which the
 peer's `auto` resolution does on every bandwidth step - so the previous picture
 is dropped when the new one is not the same frame size (`isSameShape`, tested):

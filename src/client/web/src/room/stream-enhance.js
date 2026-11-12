@@ -952,6 +952,11 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 let picture = current;
                 if (step["kind"] !== "frame") {
                     const session = await loadSession(step["graph"], current["dims"]);
+                    // the frame generators turned off while this frame ran: setOptions
+                    // let the previous picture go, and their step goes with it
+                    if (previous === null) {
+                        continue;
+                    }
                     picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["graph"]]["scale"], condition);
                 }
                 if (options["upscale"] === true) {
@@ -967,7 +972,7 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 if (generation !== startGeneration) {
                     // reset while running: the stream this picture was of is gone
                     if (picture !== current) {
-                        engine.release(picture);
+                        engine?.release(picture);
                     }
                     return;
                 }
@@ -979,6 +984,11 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 present(out, delay);
             }
             await engine.sync();
+            if (generation !== startGeneration) {
+                // reset while the GPU finished it - most of a frame on WebGPU -
+                // so it is no previous picture of the next stream
+                return;
+            }
 
             dropPrevious();
             previous = current;
@@ -987,8 +997,9 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             runCount++;
             runMs += performance.now() - started;
         } finally {
+            // a close() across the frame has taken the engine, and its pool
             if (isKept === false) {
-                engine.release(current);
+                engine?.release(current);
             }
         }
     };
