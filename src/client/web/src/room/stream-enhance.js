@@ -29,7 +29,7 @@ const ORT_WASM_PATH = new URL("/libs/onnxruntime/", import.meta.url).href;
 // The frame generators come twice: one picture an interval (2x), and, with
 // both on, the pair that places theirs by thirds (3x, see schedule).
 const MODELS = {
-    "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
+    "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "half": new URL("/media/models/upscale_fp16.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
     "interpolate": {"url": new URL("/media/models/interpolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
     "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
     "interpolate3x": {"url": new URL("/media/models/interpolate3x.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
@@ -913,10 +913,24 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         ...(backend === "webgpu" ? {"preferredOutputLocation": "gpu-buffer"} : {})
     };
 
+    // a graph's float16 twin where the GPU computes in float16 (see The
+    // enhancer in CLIENT.md), asked of the adapter the runtime will take
+    let isHalf = null;
+    const urlOf = async function(name) {
+        if (backend !== "webgpu" || typeof MODELS[name]["half"] === "undefined") {
+            return MODELS[name]["url"];
+        }
+        if (isHalf === null) {
+            const adapter = await navigator.gpu.requestAdapter().catch(() => null);
+            isHalf = (adapter?.features.has("shader-f16") === true);
+        }
+        return (isHalf === true ? MODELS[name]["half"] : MODELS[name]["url"]);
+    };
+
     // the graph's bytes, fetched once per graph
     const loadGraph = async function(name) {
         if (graphs.has(name) === false) {
-            const response = await fetch(MODELS[name]["url"]);
+            const response = await fetch(await urlOf(name));
             if (response.ok === false) {
                 throw new Error("Cannot fetch the " + name + " model (" + response.status + ")");
             }

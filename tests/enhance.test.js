@@ -560,3 +560,18 @@ test("a graph patched for WebGL still loads, and answers what the original does"
     assert.deepEqual(fixed["dims"], dynamic["dims"]);
     assert.equal(maxDifference(fixed["data"], dynamic["data"]) < 1e-6, true);
 });
+
+// the WASM provider has no float16 Conv and runs it through casts, so this
+// holds the file to the float32 graph's inputs and answers, not the GPU's math
+test("the float16 upscaler takes what the float32 one does, and answers it within an 8-bit step", async () => {
+    const half = await sessionOf("upscale_fp16");
+    assert.deepEqual(half.inputNames, (await sessionOf("upscale")).inputNames);
+    const batch = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 0, 0), render(TILE_WIDTH, TILE_HEIGHT, 400, 100)]);
+    for (const condition of [DEFAULT_CONDITION, [18 / 51, 0, 1], [40 / 51, 1, 0]]) {
+        const full = await runGraph("upscale", [batch], condition);
+        const fp16 = await runGraph("upscale", [batch], condition, half);
+        assert.deepEqual(fp16["dims"], full["dims"]);
+        const worst = maxDifference(fp16["data"], full["data"]);
+        assert.equal(worst < 1 / 255, true, "told " + condition.join(",") + " is off by " + (worst * 255).toFixed(2) + "/255");
+    }
+});

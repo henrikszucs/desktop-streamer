@@ -1390,6 +1390,26 @@ drawn picture could be built and timed before a trained model existed, and a
 trained one replaced each mock by being exported under the same name.
 `model/` is where those are trained; nothing there runs in the client.
 
+**The upscaler runs in float16 where the GPU can.** `upscale_fp16.onnx`
+beside `upscale.onnx` is the same graph, exported by the same notebook 23,
+with float16 weights and arithmetic and a `Cast` at each end, so it takes and
+gives the float32 tiles the two shaders already write and read. `urlOf()`
+fetches it on WebGPU when the adapter has `shader-f16`, which is when the
+runtime asks for that feature too. Everywhere else the client uses the float32
+graph: the WebGL provider has no float16. On a GTX 1660 Ti, with the host on
+the same GPU, it took a 1280×720 stream's frame from 65.5 ms to 41 (15 to 24
+frames of 30 shown), an 852×480 one from 37.6 to 24 (it keeps up now) and a
+1080p one from 215 to 86, within 0.17/255 of the float32 graph. Of the 24.5 ms
+saved at 720p, about 15 is the convolutions themselves (their GPU time went
+from 49 to 34 ms). The other ~10 ms is the runtime's buffer cache. Its free
+list keeps a few buffers of each size class (six of the 128 MiB class the
+float32 graph's 94.7 MB activations fall in at 16 tiles), and with the float32
+graph at 16 tiles one 128 MiB buffer was destroyed and made again on every
+frame: 11.7 ms for a fresh one against 0.9 for one kept, half of it Dawn's
+zero-fill. With the float16 graph no buffer is made after the first frame at
+any size up to 1080p. A GPU on the float32 graph still pays it. The
+measurements are desktop-streamer-ai's `src/upscale/bottlenecks_gtx1660ti.md`.
+
 **The runtime is fetched when the first switch is turned on, not at boot.**
 ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
 draws the picture as it comes never needs it. What the worker does at boot is
