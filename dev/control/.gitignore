@@ -1,3 +1,12 @@
-tmp
-build
-build_swift
+node_modules/
+build/
+build_swift/
+build_wdk/
+tmp/
+.vscode/
+.DS_Store
+
+# keys and certificates never go into git
+*.key
+*.pfx
+*.p12

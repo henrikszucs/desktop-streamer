@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import zlib from "node:zlib";
 
 // first-party dependencies
-import { cursorFingerprint, iconStride, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor } from "../src/client/web/src/room/cursor.js";
+import { cursorFingerprint, hasPicture, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor } from "../src/client/web/src/room/cursor.js";
 import { pictureBox } from "../src/client/web/src/room/stream-input.js";
 import { createStream } from "../src/client/web/src/room/stream.js";
 
@@ -31,22 +31,8 @@ const icon = function(width, height, fill = 1, xOffset = 0, yOffset = 0) {
     return {"width": width, "height": height, "data": data, "xOffset": xOffset, "yOffset": yOffset};
 };
 
-// and the way the addon vendored under src/client/native reports one, which
-// predates that source: one packed pixel per entry, with the alpha byte left
-// empty. `shape` says which pixels are the pointer.
-const packedIcon = function(width, height, shape, colour = 0xffffff, alpha = 0) {
-    const data = [];
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            data.push(shape(x, y) === true ? ((alpha << 24) | colour) >>> 0 : 0);
-        }
-    }
-    return {"width": width, "height": height, "data": data, "xOffset": 0, "yOffset": 0};
-};
-
-const alphaOf = function(rgba, width, x, y) {
-    return rgba[(y * width + x) * 4 + 3];
-};
+// and a pointer the host has hidden, as the addon reports one
+const HIDDEN = {"width": 0, "height": 0, "data": new Uint8Array(0), "xOffset": 0, "yOffset": 0};
 
 const SCREEN = {"width": 2560, "height": 1440, "x": 0, "y": 0, "index": 0, "scaleFactor": 1};
 
@@ -63,78 +49,57 @@ test("the fingerprint is the shape, and nothing else is the same shape", () => {
 });
 
 test("a pointer the host is not showing has no fingerprint at all", () => {
-    assert.equal(cursorFingerprint({"width": 0, "height": 0, "data": [], "xOffset": 0, "yOffset": 0}), "");
+    assert.equal(cursorFingerprint(HIDDEN), "");
     assert.equal(cursorFingerprint(undefined), "");
     assert.equal(cursorFingerprint({"width": 8, "height": 8, "data": [1, 2, 3]}), "");
 });
 
 //
-// the two layouts: the client is not what builds the addon, so it reads either
+// the picture: RGBA bytes, the same on every platform
 //
-test("an icon is read whether it arrives as bytes or as packed pixels", () => {
-    assert.equal(iconStride(icon(16, 16)), 4);
-    assert.equal(iconStride(packedIcon(16, 16, () => true)), 1);
-    // fewer entries than it has pixels is not a picture, whichever it meant
-    assert.equal(iconStride({"width": 16, "height": 16, "data": [1, 2, 3]}), 0);
-
-    // the same shape in the two layouts is not the same fingerprint, and
-    // neither is one of them against itself with a pixel moved
-    const packed = packedIcon(8, 8, (x, y) => x === y);
-    assert.notEqual(cursorFingerprint(packed), cursorFingerprint(icon(8, 8)));
-    assert.notEqual(cursorFingerprint(packed), cursorFingerprint(packedIcon(8, 8, (x) => x === 0)));
+test("an icon is a picture only when it holds the bytes its size says", () => {
+    assert.equal(hasPicture(icon(16, 16)), true);
+    // what the addon actually hands over is a Uint8Array
+    assert.equal(hasPicture({...icon(4, 4), "data": new Uint8Array(4 * 4 * 4)}), true);
+    // one byte a pixel is not a picture, nor is a hidden pointer
+    assert.equal(hasPicture({"width": 16, "height": 16, "data": new Uint8Array(16 * 16)}), false);
+    assert.equal(hasPicture(HIDDEN), false);
+    assert.equal(readIcon(HIDDEN), null);
 });
 
-test("a packed pixel is ARGB, and its alpha is used when the addon fills one", () => {
-    const withAlpha = packedIcon(2, 2, (x) => x === 0, 0x10203f, 0x80);
-    const rgba = readIcon(withAlpha);
-    assert.deepEqual([...rgba.subarray(0, 4)], [0x10, 0x20, 0x3f, 0x80]);
-    assert.deepEqual([...rgba.subarray(4, 8)], [0, 0, 0, 0]);
-});
-
-test("a silhouette is given the outline the addon did not report", () => {
-    // the Windows arrow arrives from that build as one white shape - no alpha
-    // and no black edge - and a white pointer on a white document is one
-    // nobody can see, so the empty pixels around the shape become its contrast
-    const square = packedIcon(5, 5, (x, y) => (x >= 2 && x <= 3 && y >= 2 && y <= 3));
-    const rgba = readIcon(square);
-    assert.equal(alphaOf(rgba, 5, 2, 2), 255, "the shape itself is opaque");
-    assert.equal(alphaOf(rgba, 5, 1, 2), 255, "the pixel beside it is the outline");
-    assert.deepEqual([...rgba.subarray((2 * 5 + 1) * 4, (2 * 5 + 1) * 4 + 3)], [0, 0, 0], "black around a light shape");
-    assert.equal(alphaOf(rgba, 5, 0, 0), 0, "and a corner that touches nothing stays empty");
-
-    // a dark pointer is outlined the other way round
-    const dark = readIcon(packedIcon(5, 5, (x, y) => (x === 2 && y === 2), 0x101010));
-    assert.deepEqual([...dark.subarray((2 * 5 + 1) * 4, (2 * 5 + 1) * 4 + 3)], [255, 255, 255], "white around a dark shape");
-
-    // and a picture that came with an alpha channel is never touched
-    const given = readIcon(packedIcon(5, 5, (x, y) => (x === 2 && y === 2), 0xffffff, 0xff));
-    assert.equal(alphaOf(given, 5, 1, 2), 0);
+test("the pixels are read as they arrive, a byte a channel", () => {
+    const data = new Uint8Array([0x10, 0x20, 0x3f, 0x80, 0, 0, 0, 0]);
+    const rgba = readIcon({"width": 2, "height": 1, "data": data, "xOffset": 0, "yOffset": 0});
+    assert.deepEqual([...rgba], [...data]);
+    // a copy, so a buffer the addon reuses cannot change a shape already packed
+    assert.notEqual(rgba.buffer, data.buffer);
 });
 
 //
 // the size: fractions, since the peer knows the display only as a rectangle
 //
 test("the size is the shape as a fraction of the display, and the hotspot of the shape", () => {
-    const size = normalizeCursor(icon(32, 64, 1, 8, 16), SCREEN, "win32");
+    const size = normalizeCursor(icon(32, 64, 1, 8, 16), SCREEN);
     assert.equal(size["width"], 32 / 2560);
     assert.equal(size["height"], 64 / 1440);
     assert.equal(size["hotspotX"], 8 / 32);
     assert.equal(size["hotspotY"], 16 / 64);
 });
 
-test("a scaled Windows display is divided out, and nothing else is", () => {
-    // Windows hands the cursor over at the size it is drawn on screen, which
-    // follows the display's scaling, while the display is reported in logical
-    // pixels: a 48 pixel pointer at 150% is 32 of the 1706 the screen is wide
+test("the display's scale is divided out, since the shape is in physical pixels", () => {
+    // the display is reported in logical pixels and the shape in physical
+    // ones: a 48 pixel pointer at 150% on Windows is 32 of the 1706 the screen
+    // is wide
     const scaled = {"width": 1706, "height": 960, "scaleFactor": 1.5};
-    assert.equal(cursorScale("win32", scaled), 1.5);
-    assert.equal(normalizeCursor(icon(48, 48), scaled, "win32")["width"], 32 / 1706);
-    // a macOS NSImage is in points already, and the X11 scale is read off the
-    // monitor's millimetres rather than off any scaling the desktop applies
-    assert.equal(cursorScale("darwin", {"scaleFactor": 2}), 1);
-    assert.equal(cursorScale("linux", {"scaleFactor": 1.15}), 1);
-    // and a display that reports no scale at all is not one to guess at
-    assert.equal(cursorScale("win32", {"width": 1920, "height": 1080}), 1);
+    assert.equal(cursorScale(scaled), 1.5);
+    assert.equal(normalizeCursor(icon(48, 48), scaled)["width"], 32 / 1706);
+    // and a Retina Mac's 64 pixel pointer is 32 of the 1440 points it is wide
+    const retina = {"width": 1440, "height": 900, "scaleFactor": 2};
+    assert.equal(normalizeCursor(icon(64, 64), retina)["width"], 32 / 1440);
+    // X11 has no logical size, so its scale is 1 - and a display that reports
+    // none at all is not one to guess at
+    assert.equal(cursorScale({"scaleFactor": 1}), 1);
+    assert.equal(cursorScale({"width": 1920, "height": 1080}), 1);
 });
 
 //
@@ -166,7 +131,7 @@ test("the shape is a PNG with the right header and the pixels it was given", asy
 });
 
 test("the shape travels as a data URL, and a hidden pointer as nothing", async () => {
-    const packed = await packCursor(icon(16, 16, 1, 4, 8), SCREEN, "win32");
+    const packed = await packCursor(icon(16, 16, 1, 4, 8), SCREEN);
     assert.match(packed["image"], /^data:image\/png;base64,[A-Za-z0-9+/=]+$/);
     assert.equal(packed["width"], 16 / 2560);
     // the shape's own pixels go with it: that is what the hotspot is in when
@@ -176,13 +141,7 @@ test("the shape travels as a data URL, and a hidden pointer as nothing", async (
     assert.equal(packed["hotspotY"] * packed["imageHeight"], 8);
     assert.equal(toDataURL(new Uint8Array([0, 1, 2])).startsWith("data:image/png;base64,"), true);
 
-    // a packed icon travels the same way, which is what the addon in the tree
-    // actually reports
-    const silhouette = await packCursor(packedIcon(32, 32, (x, y) => x + y < 20), SCREEN, "win32");
-    assert.match(silhouette["image"], /^data:image\/png;base64,/);
-    assert.equal(silhouette["imageWidth"], 32);
-
-    const hidden = await packCursor({"width": 0, "height": 0, "data": []}, SCREEN, "win32");
+    const hidden = await packCursor(HIDDEN, SCREEN);
     assert.equal(hidden["image"], null);
 });
 
@@ -208,9 +167,11 @@ const wait = function(ms) {
     });
 };
 
-// a host whose pointer is whatever the test says it is
+// a host whose pointer is whatever the test says it is. `looks` counts the
+// shape's id being asked, every tick, and `reads` the picture being read,
+// which is only worth doing when that id changed
 const fakeHost = function() {
-    const state = {"shape": 1, "x": 480, "y": 270, "reads": 0};
+    const state = {"shape": 1, "x": 480, "y": 270, "looks": 0, "reads": 0};
     const sent = [];
     const target = new EventTarget();
     const room = {
@@ -241,12 +202,17 @@ const fakeHost = function() {
                     return [{"width": 1920, "height": 1080, "x": 0, "y": 0, "isPrimary": true, "scaleFactor": 1}];
                 }},
                 "Mouse": {
+                    "getIconId": function() {
+                        state["looks"]++;
+                        return state["shape"];
+                    },
                     "getIcon": function() {
                         state["reads"]++;
                         return icon(16, 16, state["shape"]);
                     },
-                    "getX": function() { return state["x"]; },
-                    "getY": function() { return state["y"]; }
+                    "getPosition": function() {
+                        return {"x": state["x"], "y": state["y"]};
+                    }
                 }
             },
             // the line never runs: what is being timed here is the pointer
@@ -272,20 +238,23 @@ test("a pointer that has not changed is looked at, not sent", async () => {
     // the shape and the position each crossed once, however many ticks fit
     assert.equal(fake.count("cursor"), 1, "the shape the peer did not have");
     assert.equal(fake.count("cursor-move"), 1, "and where it was");
-    assert.ok(fake.state["reads"] >= 3, "but the pointer was read every tick: " + fake.state["reads"]);
+    assert.ok(fake.state["looks"] >= 3, "but the pointer was looked at every tick: " + fake.state["looks"]);
+    assert.equal(fake.state["reads"], 1, "and its picture read once, since its id never changed");
 
     // moving it is the position's news alone - the shape is the same shape
-    const reads = fake.state["reads"];
+    const looks = fake.state["looks"];
     fake.state["x"] = 960;
     await wait(150);
     assert.equal(fake.count("cursor"), 1, "the shape did not change, so it did not go again");
     assert.equal(fake.count("cursor-move"), 2);
-    assert.ok(fake.state["reads"] > reads, "and it went on being read");
+    assert.ok(fake.state["looks"] > looks, "and it went on being looked at");
+    assert.equal(fake.state["reads"], 1);
 
     // and crossing something that changes it is the shape's
     fake.state["shape"] = 7;
     await wait(150);
     assert.equal(fake.count("cursor"), 2);
+    assert.equal(fake.state["reads"], 2, "a new id is the one picture read");
     assert.equal(fake.count("cursor-move"), 2, "standing still is still nothing to say");
 
     // a shape it has been given before is not packed again, but it is said
@@ -295,10 +264,10 @@ test("a pointer that has not changed is looked at, not sent", async () => {
     assert.equal(fake.count("cursor"), 3);
 
     await stream.stop();
-    const after = fake.state["reads"];
+    const after = fake.state["looks"];
     const said = fake.sent.length;
     await wait(120);
-    assert.equal(fake.state["reads"], after, "a share that ended looks at nothing");
+    assert.equal(fake.state["looks"], after, "a share that ended looks at nothing");
     assert.equal(fake.sent.length, said);
 });
 

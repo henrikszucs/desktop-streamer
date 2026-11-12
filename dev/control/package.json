@@ -1,6 +1,7 @@
 {
     "name": "easy-control",
-    "version": "0.8.6",
+    "version": "0.14.0",
+    "private": true,
     "description": "Simple and easy to use node.js module to simulate mouse, keyboard and controller input for Windows, MacOS and Linux.",
     "keywords": [
         "GUI",
@@ -20,7 +21,7 @@
         "macos",
         "linux"
     ],
-    "license": "GPL-2.0 license",
+    "license": "LGPL-3.0-only",
     "repository": {
         "type": "git",
         "url": "https://github.com/henrikszucs/easy-control"
@@ -33,16 +34,47 @@
         }
     ],
     "scripts": {
-        "install" : "npm install -g node-gyp",
         "build": "node index.js",
-        "test": "node dev/test.js",
-        "uninstall": "node index.js -- --uninstall"
+        "build:js": "node src/build.js",
+        "build:gamepad": "node src/build-gamepad-win.js",
+        "test": "node --test \"test/unit/*.test.js\"",
+        "test:types": "tsc -p test/types",
+        "test:native": "node test/native/run.js",
+        "test:gamepad-stub": "node test/gamepad-stub/run.js",
+        "test:mac": "node test/mac/run.js",
+        "test:e2e": "node test/e2e/run.cjs",
+        "test:driver": "node --test test/driver/driver.test.js",
+        "clean": "node index.js --clean"
+    },
+    "engines": {
+        "node": ">=22"
     },
     "type": "module",
+    "gypfile": false,
+    "main": "./dist/easy-control.cjs",
+    "module": "./dist/easy-control.mjs",
+    "types": "./dist/easy-control.d.cts",
     "exports": {
-        ".": "./dist/easy-control.cjs"
+        ".": {
+            "import": {
+                "types": "./dist/easy-control.d.mts",
+                "default": "./dist/easy-control.mjs"
+            },
+            "require": {
+                "types": "./dist/easy-control.d.cts",
+                "default": "./dist/easy-control.cjs"
+            }
+        },
+        "./package.json": "./package.json"
     },
-    "dependencies": {
-        "node-addon-api": "^8.5.0"
+    "files": [
+        "dist"
+    ],
+    "devDependencies": {
+        "electron": "^44.5.1",
+        "esbuild": "^0.28.2",
+        "node-addon-api": "^8.5.0",
+        "node-gyp": "^13.1.0",
+        "typescript": "^7.0.2"
     }
 }

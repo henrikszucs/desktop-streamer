@@ -9,7 +9,7 @@
 // Events out, batched per animation frame so a fast mouse is one message:
 //     {"t": "move", "x": 0..1, "y": 0..1}
 //     {"t": "down" | "up", "b": "left" | "middle" | "right" | "back" | "forward"}
-//     {"t": "scroll", "x": lines, "y": lines}
+//     {"t": "scroll", "x": notches, "y": notches}     (fractions of one included)
 //     {"t": "key", "c": KeyboardEvent.code, "d": isDown}
 //
 // The way out is a shortcut held for its delay - Escape for a second in a
@@ -49,8 +49,8 @@ const pictureBox = function(canvas, size) {
     };
 };
 
-// how many lines one notch of the wheel is worth on the host, whichever unit
-// the browser reported the wheel in
+// how many pixels one notch of the wheel is worth, for a browser that reports
+// the wheel in pixels - about what Chromium scrolls a notch on Windows
 const WHEEL_LINE = 100;
 
 // the shortcuts every client has, before the settings add any
@@ -161,13 +161,15 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     const onPointerCancel = function() {
         releaseButtons();
     };
+    // to the hundredth of a notch: the host scrolls fractions, and a
+    // touchpad's steps are a few pixels each
     const onWheel = function(event) {
         event.preventDefault();
         const unit = (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? WHEEL_LINE : 1);
         push({
             "t": "scroll",
-            "x": Math.round(event.deltaX / unit * 10) / 10,
-            "y": Math.round(event.deltaY / unit * 10) / 10
+            "x": Math.round(event.deltaX / unit * 100) / 100,
+            "y": Math.round(event.deltaY / unit * 100) / 100
         });
     };
     const onContextMenu = function(event) {

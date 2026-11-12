@@ -1,0 +1,98 @@
+;
+; easy-control virtual gamepad - the XUSB device of a pad: the one XInput and
+; Windows.Gaming.Input read (see src/native/windows-gamepad/common/easycontrol_pad.h).
+; The HID device of a pad is installed by easycontrol_gamepad.inf; both use
+; the same UMDF 2 driver. src/build-gamepad-win.js fills in the $...$ values.
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %Provider%
+DriverVer   = 11/07/2026,0.14.0.3
+CatalogFile = easycontrol_xusb.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+easycontrol_gamepad.dll = 1
+
+[Manufacturer]
+%Manufacturer% = EasyControl, NTamd64.10.0...18362
+
+[EasyControl.NTamd64.10.0...18362]
+%XusbDesc% = XusbPad_Install, EasyControl\VID_045E&PID_028E&XI_00
+; where Windows has no xinputhid.sys (Windows Server), the service makes the
+; device with this ID instead: the same driver, without the filter
+%XusbDesc% = XusbPadPlain_Install, EasyControl\XusbPad
+
+[UMDriverCopy]
+easycontrol_gamepad.dll
+
+[XusbPad_Install.NT]
+CopyFiles = UMDriverCopy
+Include   = WUDFRD.inf
+Needs     = WUDFRD.NT
+
+[XusbPad_Install.NT.hw]
+Include = WUDFRD.inf
+Needs   = WUDFRD.NT.hw
+AddReg  = XusbPad_AddReg
+
+; Windows.Gaming.Input takes a device for an Xbox pad when Microsoft's
+; xinputhid filter sits on it (it passes these requests through); games read
+; it as the signed-in user: system and administrators get full access,
+; everyone read and write
+[XusbPad_AddReg]
+HKR,,"UpperFilters",0x00010008,"xinputhid"
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;WD)"
+
+[XusbPad_Install.NT.Services]
+Include = WUDFRD.inf
+Needs   = WUDFRD.NT.Services
+
+[XusbPad_Install.NT.Wdf]
+UmdfService              = EasyControlGamepad, EasyControlGamepad_Install
+UmdfServiceOrder         = EasyControlGamepad
+UmdfHostProcessSharing   = ProcessSharingDisabled
+
+;
+; the same without the xinputhid filter
+;
+[XusbPadPlain_Install.NT]
+CopyFiles = UMDriverCopy
+Include   = WUDFRD.inf
+Needs     = WUDFRD.NT
+
+[XusbPadPlain_Install.NT.hw]
+Include = WUDFRD.inf
+Needs   = WUDFRD.NT.hw
+AddReg  = XusbPadPlain_AddReg
+
+[XusbPadPlain_AddReg]
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;WD)"
+
+[XusbPadPlain_Install.NT.Services]
+Include = WUDFRD.inf
+Needs   = WUDFRD.NT.Services
+
+[XusbPadPlain_Install.NT.Wdf]
+UmdfService              = EasyControlGamepad, EasyControlGamepad_Install
+UmdfServiceOrder         = EasyControlGamepad
+UmdfHostProcessSharing   = ProcessSharingDisabled
+
+[EasyControlGamepad_Install]
+UmdfLibraryVersion = 2.15.0
+ServiceBinary      = %13%\easycontrol_gamepad.dll
+
+[Strings]
+Provider     = "easy-control"
+Manufacturer = "easy-control"
+DiskName     = "easy-control Virtual Gamepad Driver"
+XusbDesc     = "easy-control Virtual Gamepad (XInput)"

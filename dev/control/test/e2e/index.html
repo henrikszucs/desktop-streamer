@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8"/>
+        <title>easy-control e2e</title>
+        <style>
+            html, body {
+                margin: 0;
+                height: 100%;
+                overflow: hidden;
+                font: 14px sans-serif;
+                user-select: none;
+            }
+            body {
+                display: grid;
+                grid-template-columns: 1fr 200px;
+                grid-template-rows: 1fr 90px;
+                cursor: default;
+            }
+            #pad {
+                background: #f2f4f7;
+                padding: 12px;
+            }
+            #cross {
+                background: #dde3ea;
+                cursor: crosshair;
+            }
+            #text {
+                grid-column: 1 / 3;
+                margin: 0;
+                border: 0;
+                padding: 8px;
+                font: 18px monospace;
+                resize: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="pad">easy-control end-to-end test - do not touch the mouse or keyboard until it closes.</div>
+        <div id="cross"></div>
+        <textarea id="text" spellcheck="false"></textarea>
+        <script src="renderer.cjs"></script>
+    </body>
+</html>

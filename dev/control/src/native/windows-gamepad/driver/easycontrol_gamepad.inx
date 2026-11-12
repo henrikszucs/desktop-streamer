@@ -1,0 +1,80 @@
+;
+; easy-control virtual gamepad - the HID device of a pad, for DirectInput and Raw Input
+; (see src/native/windows-gamepad/common/easycontrol_pad.h). The XUSB device of a pad is
+; installed by easycontrol_xusb.inf; both use the same UMDF 2 driver.
+; src/build-gamepad-win.js fills in the $...$ values.
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = HIDClass
+ClassGuid   = {745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+Provider    = %Provider%
+DriverVer   = $DRIVERVER$
+CatalogFile = easycontrol_gamepad.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+easycontrol_gamepad.dll = 1
+
+[Manufacturer]
+%Manufacturer% = EasyControl, NT$ARCH$.10.0...18362
+
+[EasyControl.NT$ARCH$.10.0...18362]
+%HidDesc% = HidPad_Install, EasyControl\HidPad&IG_00
+
+[UMDriverCopy]
+easycontrol_gamepad.dll
+
+
+;
+; HID device: mshidumdf.sys is the function driver, ours a filter below it
+;
+[HidPad_Install.NT]
+CopyFiles = UMDriverCopy
+Include   = MsHidUmdf.inf
+Needs     = MsHidUmdf.NT
+Include   = WUDFRD.inf
+Needs     = WUDFRD_LowerFilter.NT
+
+[HidPad_Install.NT.hw]
+Include = MsHidUmdf.inf
+Needs   = MsHidUmdf.NT.hw
+Include = WUDFRD.inf
+Needs   = WUDFRD_LowerFilter.NT.hw
+
+[HidPad_Install.NT.Services]
+Include = MsHidUmdf.inf
+Needs   = MsHidUmdf.NT.Services
+Include = WUDFRD.inf
+Needs   = WUDFRD_LowerFilter.NT.Services
+
+[HidPad_Install.NT.Filters]
+Include = WUDFRD.inf
+Needs   = WUDFRD_LowerFilter.NT.Filters
+
+[HidPad_Install.NT.Wdf]
+UmdfService              = EasyControlGamepad, EasyControlGamepad_Install
+UmdfServiceOrder         = EasyControlGamepad
+UmdfKernelModeClientPolicy = AllowKernelModeClients
+UmdfFileObjectPolicy     = AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction  = Copy
+UmdfFsContextUsePolicy   = CanUseFsContext2
+
+
+[EasyControlGamepad_Install]
+UmdfLibraryVersion = $UMDFVERSION$
+ServiceBinary      = %13%\easycontrol_gamepad.dll
+
+
+[Strings]
+Provider     = "easy-control"
+Manufacturer = "easy-control"
+DiskName     = "easy-control Virtual Gamepad Driver"
+HidDesc      = "easy-control Virtual Gamepad"

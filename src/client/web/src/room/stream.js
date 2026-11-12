@@ -1099,8 +1099,6 @@ const createWebEncoder = function() {
 const createControl = function(ctx) {
     const control = ctx["desktop"]?.["Control"];
     let screen = null;
-    const downButtons = new Set();
-    const downKeys = new Set();
 
     const apply = function(event) {
         if (control === undefined || screen === null) {
@@ -1110,42 +1108,30 @@ const createControl = function(ctx) {
         const keyboard = control["Keyboard"];
         switch (event["t"]) {
             case "move":
-                mouse.setX(Math.round(screen["x"] + event["x"] * screen["width"]));
-                mouse.setY(Math.round(screen["y"] + event["y"] * screen["height"]));
+                // in one step, fractions kept: a scaled display has more
+                // pixels than its whole logical ones reach
+                mouse.setPosition(screen["x"] + event["x"] * screen["width"], screen["y"] + event["y"] * screen["height"]);
                 break;
             case "down":
                 mouse.buttonDown(event["b"]);
-                downButtons.add(event["b"]);
                 break;
             case "up":
                 mouse.buttonUp(event["b"]);
-                downButtons.delete(event["b"]);
                 break;
-            case "scroll": {
-                const y = Number(event["y"]) || 0;
-                const x = Number(event["x"]) || 0;
-                if (y > 0) {
-                    mouse.scrollDown(Math.max(1, Math.round(y)), false);
-                } else if (y < 0) {
-                    mouse.scrollUp(Math.max(1, Math.round(-y)), false);
-                }
-                if (x > 0) {
-                    mouse.scrollDown(Math.max(1, Math.round(x)), true);
-                } else if (x < 0) {
-                    mouse.scrollUp(Math.max(1, Math.round(-x)), true);
-                }
+            case "scroll":
+                // wheel notches with WheelEvent's signs, a fraction carried
+                // into the next call - a touchpad's small steps add up rather
+                // than each being a notch of its own
+                mouse.scroll(Number(event["x"]) || 0, Number(event["y"]) || 0);
                 break;
-            }
             case "key":
                 if (typeof event["c"] !== "string" || keyboard.isKeySupported(event["c"]) !== true) {
                     break;
                 }
                 if (event["d"] === true) {
                     keyboard.keyDown(event["c"]);
-                    downKeys.add(event["c"]);
                 } else {
                     keyboard.keyUp(event["c"]);
-                    downKeys.delete(event["c"]);
                 }
                 break;
         }
@@ -1166,24 +1152,29 @@ const createControl = function(ctx) {
                 try {
                     apply(event);
                 } catch (error) {
-                    console.error("Cannot apply an input event:", error);
+                    // the system refusing input - a UAC prompt, the lock
+                    // screen - is a state rather than a fault, and would be a
+                    // line for every event the peer sends while it lasts
+                    if (error?.["code"] !== "EASYCONTROL_INPUT_BLOCKED") {
+                        console.error("Cannot apply an input event:", error);
+                    }
                 }
             }
         },
-        // a peer that lets go leaves nothing pressed behind it
+        // a peer that lets go leaves nothing pressed behind it: the addon
+        // keeps every button and key it pressed and did not release yet
         "release": function() {
-            try {
-                for (const button of downButtons) {
-                    control?.["Mouse"].buttonUp(button);
-                }
-                for (const code of downKeys) {
-                    control?.["Keyboard"].keyUp(code);
-                }
-            } catch (error) {
-                // the addon is gone with the shell
+            if (control === undefined) {
+                return;
             }
-            downButtons.clear();
-            downKeys.clear();
+            for (const device of ["Mouse", "Keyboard"]) {
+                try {
+                    control[device].releaseAll();
+                } catch (error) {
+                    // what could not be let go stays held for the next
+                    // release, or the addon is gone with the shell
+                }
+            }
         },
         "stop": function() {
             this.release();
@@ -1210,39 +1201,46 @@ const createControl = function(ctx) {
 //
 const createCursorWatch = function(ctx, say) {
     const mouse = ctx["desktop"]?.["Control"]?.["Mouse"];
-    const platform = ctx["desktop"]?.["os"]?.platform?.() ?? "";
     const packed = new Map();       // fingerprint -> the message body
     let screen = null;              // the display being shared, or none while stopped
     let pollTimerId = -1;
     let startedAt = 0;              // what the tick keeps its rate against
     let shape = "";                 // the fingerprint the peer was last given
+    let shapeId = null;             // and the addon's id of the shape it was read from
     let position = "";              // and the position, as it was last said
     let isControlled = false;
     let isPacking = false;
 
-    // the shape, if it is one the peer has not been given. The fingerprint is
-    // what answers that, and it costs a thousandth of the reading in front of
-    // it - so the question is asked on every tick and the answer is almost
-    // always no.
+    // the shape, if it is one the peer has not been given. The addon's id of
+    // the shape is asked first and the picture only read when that changed -
+    // on Windows and Linux the id is a handle and costs next to nothing, on a
+    // Mac it is a hash of the picture - and the fingerprint is what decides
+    // after it, since one id can come back to a shape the peer already has.
     const readShape = async function() {
         if (isPacking === true || screen === null) {
             return;
         }
+        let id = null;
         let icon = null;
         try {
+            id = mouse.getIconId();
+            if (id === shapeId) {
+                return;
+            }
             icon = mouse.getIcon();
         } catch (error) {
             return;     // the addon is gone with the shell
         }
         const fingerprint = cursorFingerprint(icon);
         if (fingerprint === shape) {
+            shapeId = id;
             return;
         }
         let body = packed.get(fingerprint);
         if (typeof body === "undefined") {
             isPacking = true;
             try {
-                body = await packCursor(icon, screen, platform);
+                body = await packCursor(icon, screen);
             } catch (error) {
                 console.error("Cannot pack the pointer:", error);
                 return;
@@ -1258,6 +1256,7 @@ const createCursorWatch = function(ctx, say) {
             return;     // stopped while the picture was being made
         }
         shape = fingerprint;
+        shapeId = id;
         say({"kind": "cursor", ...body});
     };
 
@@ -1269,11 +1268,14 @@ const createCursorWatch = function(ctx, say) {
         if (screen === null || isControlled === true) {
             return;
         }
+        // one read, so both halves are the same moment - and it throws
+        // where the pointer cannot be read, the Windows secure desktop
         let x = 0;
         let y = 0;
         try {
-            x = (mouse.getX() - screen["x"]) / screen["width"];
-            y = (mouse.getY() - screen["y"]) / screen["height"];
+            const at = mouse.getPosition();
+            x = (at["x"] - screen["x"]) / screen["width"];
+            y = (at["y"] - screen["y"]) / screen["height"];
         } catch (error) {
             return;
         }
@@ -1337,6 +1339,7 @@ const createCursorWatch = function(ctx, say) {
             pollTimerId = -1;
             screen = null;
             shape = "";
+            shapeId = null;
             position = "";
             isControlled = false;
         }

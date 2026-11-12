@@ -9,15 +9,11 @@
 // "The pointer".
 //
 // What the addon hands over (Mouse.getIcon()) is
-//     {"width", "height", "data": [...], "xOffset", "yOffset"}
-// and `data` is one of two pictures, depending on the build of easy-control
-// behind it. `width * height * 4` entries are RGBA, a byte per channel, the
-// way `dev/control/src/mouse.cpp` writes them today. `width * height` entries
-// are one packed pixel each, `0xAARRGGBB`, which is what the addon vendored
-// under `src/client/native/` reports - it predates that source and fills no
-// alpha at all, so its picture is a silhouette: the pointer's own shape in one
-// colour and nothing around it. Both are read here, because the client is not
-// what builds the addon and either may be the one it is running against.
+//     {"width", "height", "data": Uint8Array, "xOffset", "yOffset"}
+// the same on every platform: `width * height * 4` bytes of RGBA, straight
+// alpha, row by row from the top, in physical pixels - two per point on a
+// Retina Mac - with the hotspot in those same pixels. A pointer the host has
+// hidden is 0 by 0 with nothing in `data`.
 //
 // What goes on the wire is that picture as a data URL, its size and its
 // hotspot as fractions - of the shared display for the size, of the picture
@@ -30,148 +26,61 @@
 // CompressionStream rather than through a canvas, so tests/cursor.test.js can
 // run the whole of it under Node.
 
-// how many entries of `data` make one pixel of the icon, or 0 for an icon
-// there is nothing to draw of - a pointer the host has hidden, or a shape the
-// addon could not read and reported empty
-const iconStride = function(icon) {
+// whether the icon is a picture at all: not a pointer the host has hidden, and
+// not a shape with fewer bytes than its size says
+const hasPicture = function(icon) {
     const data = icon?.["data"];
     const width = icon?.["width"] ?? 0;
     const height = icon?.["height"] ?? 0;
     const isPixels = (Array.isArray(data) === true || ArrayBuffer.isView(data) === true);
-    if (isPixels === false || width <= 0 || height <= 0) {
-        return 0;
-    }
-    if (data.length >= width * height * 4) {
-        return 4;       // RGBA, a byte per channel
-    }
-    if (data.length >= width * height) {
-        return 1;       // one packed pixel each
-    }
-    return 0;           // fewer pixels than it claims to be: not a picture
+    return (isPixels === true && width > 0 && height > 0 && data.length >= width * height * 4);
 };
 
 // the fingerprint of a shape, for telling one cursor from the next without
-// encoding either: FNV-1a over the pixels as they arrive, with the size, the
-// hotspot and the layout in front of it. 32 bits is a hash two shapes could
-// collide in, and the cost of that is one stale pointer picture out of the
-// handful of shapes a session crosses.
+// encoding either: FNV-1a over the pixels as they arrive, with the size and
+// the hotspot in front of it. 32 bits is a hash two shapes could collide in,
+// and the cost of that is one stale pointer picture out of the handful of
+// shapes a session crosses.
 const cursorFingerprint = function(icon) {
-    const stride = iconStride(icon);
-    if (stride === 0) {
+    if (hasPicture(icon) === false) {
         return "";      // nothing to draw: the pointer is hidden
     }
     const data = icon["data"];
     let hash = 0x811c9dc5;
-    for (let i = 0, length = icon["width"] * icon["height"] * stride; i < length; i++) {
+    for (let i = 0, length = icon["width"] * icon["height"] * 4; i < length; i++) {
         hash = Math.imul(hash ^ (data[i] | 0), 0x01000193) >>> 0;
     }
     return icon["width"] + "x" + icon["height"] + "+" + (icon["xOffset"] ?? 0) + "," + (icon["yOffset"] ?? 0)
-        + "/" + stride + ":" + hash.toString(16);
+        + ":" + hash.toString(16);
 };
 
-// the outline a silhouette is given before it is sent. An addon that reports
-// no alpha reports no border either - the Windows arrow arrives as one white
-// shape where it is really white inside a black edge - and a white pointer on
-// a white document is a pointer nobody can see. So every empty pixel touching
-// the shape becomes its contrast: black around a light pointer, white around a
-// dark one. Nothing is invented about the shape itself, only about the edge it
-// lost, and a picture that came with an alpha channel never goes through here.
-const outlineSilhouette = function(rgba, width, height) {
-    let light = 0;
-    let solid = 0;
-    for (let i = 0; i < width * height; i++) {
-        if (rgba[i * 4 + 3] === 0) {
-            continue;
-        }
-        solid++;
-        light += (rgba[i * 4] * 299 + rgba[i * 4 + 1] * 587 + rgba[i * 4 + 2] * 114) / 1000;
-    }
-    if (solid === 0) {
-        return rgba;
-    }
-    const edge = (light / solid > 127 ? 0 : 255);
-    const drawn = rgba.slice();
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const at = (y * width + x) * 4;
-            if (rgba[at + 3] !== 0) {
-                continue;
-            }
-            const isEdge = ((x > 0 && rgba[at - 4 + 3] !== 0)
-                || (x < width - 1 && rgba[at + 4 + 3] !== 0)
-                || (y > 0 && rgba[at - width * 4 + 3] !== 0)
-                || (y < height - 1 && rgba[at + width * 4 + 3] !== 0));
-            if (isEdge === false) {
-                continue;
-            }
-            drawn[at] = edge;
-            drawn[at + 1] = edge;
-            drawn[at + 2] = edge;
-            drawn[at + 3] = 255;
-        }
-    }
-    return drawn;
-};
-
-// the icon's pixels as RGBA, whichever of the two ways the addon reported them
+// the icon's pixels as RGBA bytes, or null for one with nothing to draw
 const readIcon = function(icon) {
-    const stride = iconStride(icon);
-    if (stride === 0) {
+    if (hasPicture(icon) === false) {
         return null;
     }
-    const width = icon["width"];
-    const height = icon["height"];
     const data = icon["data"];
-    const count = width * height;
-    const rgba = new Uint8Array(count * 4);
-    if (stride === 4) {
-        for (let i = 0; i < count * 4; i++) {
-            rgba[i] = data[i] & 0xff;
-        }
-        return rgba;
+    const rgba = new Uint8Array(icon["width"] * icon["height"] * 4);
+    for (let i = 0, length = rgba.length; i < length; i++) {
+        rgba[i] = data[i] & 0xff;
     }
-
-    // packed, so the alpha byte is the question: a build that fills it is read
-    // as it is, and one that leaves it empty the whole way through is a
-    // silhouette, where anything that is not blank is the pointer
-    let isAlpha = false;
-    for (let i = 0; i < count; i++) {
-        if (((data[i] >>> 24) & 0xff) !== 0) {
-            isAlpha = true;
-            break;
-        }
-    }
-    for (let i = 0; i < count; i++) {
-        const pixel = data[i] >>> 0;
-        rgba[i * 4] = (pixel >>> 16) & 0xff;
-        rgba[i * 4 + 1] = (pixel >>> 8) & 0xff;
-        rgba[i * 4 + 2] = pixel & 0xff;
-        rgba[i * 4 + 3] = (isAlpha === true
-            ? (pixel >>> 24) & 0xff
-            : ((pixel & 0xffffff) !== 0 ? 255 : 0));
-    }
-    return (isAlpha === true ? rgba : outlineSilhouette(rgba, width, height));
+    return rgba;
 };
 
-// how many of the icon's own pixels go into one of the display's. Windows
-// hands the cursor over at the size it is drawn on screen, which follows the
-// display's scaling, while Screen.list() reports that display in logical
-// pixels - so the two are the same units only after the scale is divided out.
-// The other platforms report both in the same units already: a macOS NSImage
-// is in points, and the X11 scale is read off the monitor's millimetres rather
-// than off any scaling the desktop applies.
-const cursorScale = function(platform, screen) {
-    if (platform !== "win32") {
-        return 1;
-    }
+// how many of the icon's own pixels go into one of the display's. The icon is
+// in physical pixels on every platform while Screen.list() reports the display
+// in logical ones - the scaled size on Windows and Wayland, points on a Mac -
+// so the two are the same units only after the scale is divided out. X11 has
+// no logical size, and its scale is always 1.
+const cursorScale = function(screen) {
     const scale = Number(screen?.["scaleFactor"]);
     return (Number.isFinite(scale) === true && scale > 0 ? scale : 1);
 };
 
 // the size and the hotspot as the peer is told them: the picture as a fraction
 // of the display being shared, the hotspot as a fraction of the picture
-const normalizeCursor = function(icon, screen, platform) {
-    const scale = cursorScale(platform, screen);
+const normalizeCursor = function(icon, screen) {
+    const scale = cursorScale(screen);
     const screenWidth = (Number(screen?.["width"]) || 1);
     const screenHeight = (Number(screen?.["height"]) || 1);
     const width = (Number(icon?.["width"]) || 1);
@@ -278,7 +187,7 @@ const toDataURL = function(png) {
 // pointer is inside it. Nothing for a cursor the host is not showing at all -
 // a game that hid it, a text field that swallowed it - which is the peer
 // drawing none either.
-const packCursor = async function(icon, screen, platform) {
+const packCursor = async function(icon, screen) {
     const rgba = readIcon(icon);
     if (rgba === null) {
         return {"image": null, "width": 0, "height": 0, "hotspotX": 0, "hotspotY": 0,
@@ -287,7 +196,7 @@ const packCursor = async function(icon, screen, platform) {
     const png = await encodePNG(icon["width"], icon["height"], rgba);
     return {
         "image": toDataURL(png),
-        ...normalizeCursor(icon, screen, platform),
+        ...normalizeCursor(icon, screen),
         // the shape's own pixels, which is what the hotspot is in when the
         // peer hands the picture to its browser as a CSS cursor
         "imageWidth": icon["width"],
@@ -295,5 +204,5 @@ const packCursor = async function(icon, screen, platform) {
     };
 };
 
-export { cursorFingerprint, iconStride, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
-export default { cursorFingerprint, iconStride, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
+export { cursorFingerprint, hasPicture, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
+export default { cursorFingerprint, hasPicture, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };

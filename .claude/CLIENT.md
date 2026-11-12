@@ -1160,10 +1160,14 @@ a second, the rate the picture beside it moves at - sending `{"kind":
 `{"kind": "cursor-move"}` only when the position has actually moved (0..1 in
 the shared display, `null` when the pointer has walked onto another one). **The
 deciding is local**: a pointer sitting still is looked at thirty times a second
-and mentioned none. The looking is the cost - reading the shape is ~1.5 ms
+and mentioned none. The looking is the cost - reading the shape was ~1.5 ms
 inside the addon against ~1 us for the position, about a twentieth of a core at
-this rate - which is what the fingerprint in front of the packing is worth, and
-why the two halves share one tick with the cheap one first. That tick schedules
+this rate - so the tick asks `Mouse.getIconId()` first and reads the picture
+only when that id has changed. The id is cheap on Windows and Linux; on a Mac
+it is a hash of the picture and costs about what the read does, which is no
+worse than reading every tick. The fingerprint stays in front of the packing,
+since an id can come back to a shape the peer already has, and the two halves
+share one tick with the cheap one first. That tick schedules
 itself against the clock the run started on rather than against the tick before
 it, so the read inside it is not added to the gap after it - an interval of the
 same length drifts to 25 a second on a read of a millisecond and a half. The
@@ -1182,25 +1186,19 @@ the shape only crosses the line when it changes at all.
 display being shared and its hotspot against the shape, because the peer knows
 that display only as the rectangle it drew it in - so a pointer covering a
 button on the host covers the same button on the peer, at any window size.
-Windows is the one platform whose scaling has to be divided out (`cursorScale`):
-it hands the cursor over at the size it is drawn on screen while
-`Screen.list()` reports that display in logical pixels, where a macOS `NSImage`
-is in points already and the X11 figure is read off the monitor's millimetres
-rather than off any scaling the desktop applies.
+The display's scale is divided out (`cursorScale`) on every platform:
+`Mouse.getIcon()` reports the shape in physical pixels - two per point on a
+Retina Mac, the size it is drawn at on a scaled Windows display - while
+`Screen.list()` reports the display in logical ones. X11 has no logical size
+and reports a scale of 1, so nothing changes there.
 
-**Two layouts, because the client is not what builds the addon.**
-`Mouse.getIcon()` hands over `width * height * 4` bytes of RGBA where
-`dev/control/src/mouse.cpp` stands today, and `width * height` packed
-`0xAARRGGBB` pixels from the build vendored under `src/client/native/`, which
-predates that source. `iconStride` is what tells them apart and `readIcon`
-reads either. The vendored one fills no alpha at all, so what it reports is a
-silhouette - the Windows arrow arrives as one white shape where it is really
-white inside a black edge - and a white pointer on a white document is a
-pointer nobody can see: `outlineSilhouette` gives the empty pixels touching the
-shape its contrast, black around a light pointer and white around a dark one.
-Nothing is invented about the shape, only about the edge it lost, and a picture
-that came with an alpha channel never goes through there. Rebuilding the addon
-from `dev/control/` is what replaces the guess with the real thing.
+**One layout.** `Mouse.getIcon()` hands over `width * height * 4` bytes of
+straight-alpha RGBA, the same on every platform from easy-control 0.10 on, and
+a hidden pointer as 0 by 0 with nothing in `data`; Windows draws the inverting
+pixels of a black-and-white cursor (the text I-beam) by the screen under them,
+and the addon reports those mid-grey. The build vendored before 0.14.0 reported
+packed `0xAARRGGBB` with no alpha, and `cursor.js` used to guess an outline for
+that silhouette; the guess went with that build.
 
 **A shape is encoded once.** The fingerprint - FNV-1a over the pixels with the
 size and the hotspot in front of it - is what says the peer already has this
@@ -1216,7 +1214,11 @@ hand and what it sees. The host stops sending positions the moment the peer
 takes the keyboard and the mouse (`setControlled`), since what it would say is
 a round trip behind that hand, and sends again the moment it is let go. The
 hotspot is in the shape's own pixels, which is why those go over beside the
-fractions. Chromium ignores a cursor image over 128 pixels, so the `auto`
+fractions. Those pixels are the host's physical ones, so the shape from a
+scaled host - a Retina Mac, Windows above 100% - is handed to the browser that
+much larger than it looks on the host; handing it over through `image-set()`
+at the host's scale is what would fix that, and is not done yet. Chromium
+ignores a cursor image over 128 pixels, so the `auto`
 behind it is what a pointer that large falls through to; and the `cursor: none`
 still in the stylesheet is what is left for a host that sends no shape at all -
 a browser sharing through `getDisplayMedia` draws its own into the picture, and
