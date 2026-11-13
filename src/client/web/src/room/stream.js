@@ -1465,7 +1465,7 @@ const createStream = function(ctx) {
     // and what it asked of its own picture: the enhancements the worker runs
     // (src/room/stream-enhance.js) - kept here, since they are this viewer's
     // and never the host's - and what the worker last said of them
-    let enhanceWanted = {"upscale": false, "interpolate": false, "extrapolate": false};
+    let enhanceWanted = {"upscale": false, "interpolate": false, "extrapolate": false, "upscaler": "auto"};
     let enhanceState = {"backend": "", "kinds": [], "isKnown": false, "options": {...enhanceWanted}};
 
     // the peer's side
@@ -2066,7 +2066,8 @@ const createStream = function(ctx) {
             enhanceWanted = {
                 "upscale": wanted?.["upscale"] === true,
                 "interpolate": wanted?.["interpolate"] === true,
-                "extrapolate": wanted?.["extrapolate"] === true
+                "extrapolate": wanted?.["extrapolate"] === true,
+                "upscaler": (typeof wanted?.["upscaler"] === "string" ? wanted["upscaler"] : "auto")
             };
             viewer?.enhance({...enhanceWanted});
         },

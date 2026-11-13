@@ -42,6 +42,10 @@ const DEFAULT_FRAMERATE = 30;
 // short name is what the bar shows while one is.
 const ENHANCEMENTS = ["upscale", "interpolate", "extrapolate"];
 
+// which upscaler: "auto" runs the quality one and falls back to the fast one
+// while the GPU cannot keep up, the two others are that one alone
+const UPSCALERS = ["auto", "quality", "fast"];
+
 // the entry that takes whatever the line allows and follows it down when the
 // bandwidth moves - which is what a peer that has not thought about it wants
 const AUTO = "auto";
@@ -149,7 +153,7 @@ const RoomScreen = class extends Screen {
     // until it has said), which of them it can run, and which are running.
     // They are this client's and not the host's, so they are no part of
     // `settings` and outlive a room.
-    enhance = {"upscale": false, "interpolate": false, "extrapolate": false};
+    enhance = {"upscale": false, "interpolate": false, "extrapolate": false, "upscaler": "auto"};
     enhanceBackend = "";
     enhanceKinds = [];
     isEnhanceKnown = false;
@@ -391,7 +395,9 @@ const RoomScreen = class extends Screen {
     // be on, then one row that is not a choice: the state of the enhancer -
     // why the rows above are greyed when they are, or what they cost when
     // they run. It is one row and it is always there: a row that appears or
-    // goes moves the rows under the pointer of an open menu.
+    // goes moves the rows under the pointer of an open menu. Under the
+    // upscaler, one row per choice of which one, there whether it is on or not
+    // for the same reason.
     buildEnhanceMenu() {
         const localization = this.ctx["localization"];
         this.enhanceMenu.innerHTML = "";
@@ -405,6 +411,21 @@ const RoomScreen = class extends Screen {
             });
             this.enhanceMenu.appendChild(item);
             item.dataset["enhance"] = kind;
+            if (kind !== "upscale") {
+                continue;
+            }
+            for (const upscaler of UPSCALERS) {
+                const choice = document.createElement("li");
+                choice.className = "room-menu-sub";
+                choice.appendChild(this.buildCheck());
+                choice.appendChild(this.buildText(localization.get("room.enhance.upscaler." + upscaler)));
+                choice.addEventListener("click", () => {
+                    this.blur(this.enhanceBtn);
+                    this.setUpscaler(upscaler);
+                });
+                this.enhanceMenu.appendChild(choice);
+                choice.dataset["upscaler"] = upscaler;
+            }
         }
         this.enhanceStatus = document.createElement("li");
         this.enhanceStatus.className = "room-menu-note";
@@ -817,6 +838,15 @@ const RoomScreen = class extends Screen {
         this.ctx["stream"].setEnhance({...this.enhance});
     };
 
+    // which upscaler, and upscaling on with it: choosing one is asking for it
+    setUpscaler(upscaler) {
+        if (UPSCALERS.includes(upscaler) === false || this.enhanceKinds.includes("upscale") === false) {
+            return;
+        }
+        this.enhance["upscaler"] = upscaler;
+        this.setEnhance("upscale", true);
+    };
+
     // what the enhancer says: the backend it found (once, after the canvas is
     // attached), and after every asking the options actually in force
     onStreamEnhance = (event) => {
@@ -828,6 +858,7 @@ const RoomScreen = class extends Screen {
         for (const kind of ENHANCEMENTS) {
             this.enhance[kind] = (state["options"]?.[kind] === true);
         }
+        this.enhance["upscaler"] = (UPSCALERS.includes(state["options"]?.["upscaler"]) === true ? state["options"]["upscaler"] : "auto");
         this.drawEnhance();
         const error = state["error"];
         if (typeof error === "string" && error !== "" && this.isOpen === true) {
@@ -953,6 +984,15 @@ const RoomScreen = class extends Screen {
         this.enhanceBtn.classList.toggle("room-tool-dim", this.isEnhanceKnown === true && isSupported === false);
 
         for (const item of this.enhanceMenu.children) {
+            // a choice of upscaler: its mark says which is chosen, upscaling on or not
+            const upscaler = item.dataset["upscaler"];
+            if (typeof upscaler !== "undefined") {
+                const isChosen = (this.enhance["upscaler"] === upscaler);
+                item.classList.toggle("active", isChosen === true && this.enhance["upscale"] === true);
+                item.classList.toggle("room-menu-blocked", this.enhanceKinds.includes("upscale") === false || this.isEnhanceLoading === true);
+                item.children.item(0).classList.toggle("room-menu-unchecked", isChosen === false);
+                continue;
+            }
             const kind = item.dataset["enhance"];
             if (typeof kind === "undefined") {
                 continue;
@@ -979,13 +1019,19 @@ const RoomScreen = class extends Screen {
     };
 
     // the reading of the status row: which backend, and what a frame costs
-    // from arriving to drawn while anything is on - or that it is ready
-    enhanceText(backend, ms) {
+    // from arriving to drawn while anything is on - and which upscaler runs,
+    // since "auto" may have fallen back - or that it is ready
+    enhanceText(backend, ms, upscaler = null) {
         const localization = this.ctx["localization"];
         const name = (backend === "webgpu" ? "WebGPU" : (backend === "webgl" ? "WebGL" : backend));
+        const isUpscaling = (ms !== null && (upscaler === "quality" || upscaler === "fast"));
         return localization.putParameters(
-            localization.get(ms === null ? "room.enhance.idle" : "room.enhance.reading"),
-            new Map([["backend", name], ["ms", String(ms ?? 0)]])
+            localization.get(ms === null ? "room.enhance.idle" : (isUpscaling === true ? "room.enhance.readingUpscaler" : "room.enhance.reading")),
+            new Map([
+                ["backend", name],
+                ["ms", String(ms ?? 0)],
+                ["upscaler", isUpscaling === true ? localization.get("room.enhance.upscaler." + upscaler) : ""]
+            ])
         );
     };
 
@@ -996,7 +1042,7 @@ const RoomScreen = class extends Screen {
             return;
         }
         const isRunning = (typeof stats["runs"] === "number" && stats["runs"] > 0);
-        this.enhanceReading = this.enhanceText(stats["backend"], isRunning === true ? stats["ms"] : null);
+        this.enhanceReading = this.enhanceText(stats["backend"], isRunning === true ? stats["ms"] : null, stats["upscaler"] ?? null);
         if (this.isEnhanceKnown === true && this.isEnhanceLoading === false) {
             this.enhanceStatus.innerText = this.enhanceReading;
         }

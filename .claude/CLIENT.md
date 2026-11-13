@@ -1324,9 +1324,11 @@ written at the next gesture.
 in the stream worker, and the bar's *enhance* entry is its whole UI: three
 switches - upscale, frame interpolation, frame extrapolation - that may be on
 in any combination, since a switch that excluded the others would be a choice
-between three things a person wants all of. What is on is this client's and
-not the host's: it never travels in `settings`, it outlives a room, and the
-room screen keeps it beside `settings` rather than in it.
+between three things a person wants all of, and under the upscale switch the
+choice of which upscaler: Auto, Quality or Fast (see Two upscalers below).
+What is on is this client's and not the host's: it never travels in
+`settings`, it outlives a room, and the room screen keeps it beside `settings`
+rather than in it.
 
 **All three graphs are trained, and the pipeline is real.**
 `media/models/upscale.onnx` is the told upscaler (see The QP of a
@@ -1409,6 +1411,38 @@ frame: 11.7 ms for a fresh one against 0.9 for one kept, half of it Dawn's
 zero-fill. With the float16 graph no buffer is made after the first frame at
 any size up to 1080p. A GPU on the float32 graph still pays it. The
 measurements are desktop-streamer-ai's `src/upscale/bottlenecks_gtx1660ti.md`.
+
+**Two upscalers, and "auto" between them.** The told upscaler is the quality
+one, and it does not keep up everywhere: 34.6 ms for a 1280×720 stream's 16
+tiles on a GTX 1660 Ti, where 60 frames a second leave the graph about 9.
+`upscaleFast.onnx` (and `upscaleFast_fp16.onnx`) is desktop-streamer-ai's
+notebook 24, built for that card: the same told contract - `input`,
+`condition`, `output`, the 4 px halo, a float16 twin - with its body at a
+quarter of the pixels (a 4×4 stride-2 stem makes one feature vector per 2×2
+cell, one residual block, a 1×1 tail writes the cell's 16 luma values) and a
+frozen 4×4 bicubic skip, so colour stays bicubic's. On that repository's
+validation patches it keeps about two thirds of the quality one's gain over
+bicubic (+0.0167 SSIM-Y and +0.92 dB luma, against +0.0243 and +1.52), and
+on an RTX 3090 its 16 tiles take 1.35 ms against 6.65. On the 1660 Ti it is
+*predicted* at 7.1-7.6 ms from the 3090's kernels and that card's per-kernel
+ratios - not measured there yet (that repository's `reference_60fps.md`).
+`UPSCALERS` maps the choice to the graph. **"auto"** (the default) starts on
+quality and falls back to fast once the GPU cannot keep up:
+`chooseUpscaler()`, pure and tested, leaves out the first `AUTO_SETTLE`
+frames after any change - a model's first runs compile its kernels - and
+falls back when the median of `AUTO_WINDOW` frames' cost, arrival to GPU
+done, is over `AUTO_LIMIT` (0.9) of their median interval. It goes back to
+quality only when the work changes - another frame size (the batch of
+tiles), another number of pictures a frame (a frame generator turned on or
+off) - or the switch or the choice does; not when the GPU frees up with the
+work the same, since every try that fails is a window of dropped frames, and
+not on a frame rate alone, since the measured interval jitters. Under auto
+both graphs are loaded, so falling back is not a load. **Quality** and
+**Fast** are that one alone. The three are rows under the upscale switch,
+there whether upscaling is on or not (a row that came and went would move
+the rows under the pointer), and choosing one turns upscaling on; the
+status row's reading names the upscaler running, which under auto is the one
+it fell back to.
 
 **The runtime is fetched when the first switch is turned on, not at boot.**
 ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
