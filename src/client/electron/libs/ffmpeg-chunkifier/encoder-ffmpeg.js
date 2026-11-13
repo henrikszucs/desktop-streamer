@@ -7,24 +7,40 @@ const path = globalThis?.require("path");
 // never in cwd, everywhere but windows
 const FFMPEG_EXE = (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 
+// how much of stderr is kept, and how many of its last lines say why ffmpeg
+// stopped
+const LOG_TAIL = 4096;
+const LOG_WORDS = 4;
+
 const FFmpegProcess = class {
     constructor() {
         // callbacks
         this.onData = function(data) {};
         this.onEnd = function(error) {};
-            
+
         // process state
         this.process = null;
         this.isRunning = false;
         this.error = 0;
+        this.log = "";
+    };
+
+    // the last lines ffmpeg said on stderr, as one
+    lastWords() {
+        return this.log.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "").slice(-LOG_WORDS).join(" / ");
     };
 
     async start(ffmpegPath, params) {
         // wait start
         await new Promise((resolve, reject) => {
+            this.log = "";
             this.process = spawn(path.join(ffmpegPath, FFMPEG_EXE), params, {"cwd": ffmpegPath, "windowsVerbatimArguments": true});
+            // stderr is kept rather than printed: a line that fails is not an
+            // error while another one can take its place, and its end is what
+            // the failure is reported with
+            this.process.stderr.setEncoding("utf8");
             this.process.stderr.on("data", (data) => {
-                console.error(`FFmpeg stderr: ${data}`);
+                this.log = (this.log + data).slice(-LOG_TAIL);
             });
             const startResolver = (data) => {
                 this.onData(data);
@@ -37,7 +53,8 @@ const FFmpegProcess = class {
                 this.code = code;
                 this.process.stdout.removeListener("data", startResolver);
                 this.process.removeListener("error", startFailer);
-                reject(new Error("FFmpeg process exited before starting." + code));
+                const words = this.lastWords();
+                reject(new Error("FFmpeg exited before starting (" + code + ")" + (words !== "" ? ": " + words : "")));
             };
             // a binary that cannot be spawned at all emits error, not close
             const startFailer = (error) => {
@@ -52,19 +69,23 @@ const FFmpegProcess = class {
 
         // create permanent listeners
         this.process.stdout.on("data", this.onData);
-        this.process.stderr.on("data", (data) => {
-            //console.error(`FFmpeg stderr: ${data}`);
-        });
-        this.process.on("close", (code) => {
-            this.error = code;
+        // a process a signal ended has no exit code, so the signal stands in
+        this.process.on("close", (code, signal) => {
+            this.error = code ?? signal;
             this.end();
         });
+    };
+
+    // whether the process is still there: one a signal ended has a signal
+    // code and no exit code
+    isAlive() {
+        return this.process !== null && this.process.exitCode === null && this.process.signalCode === null;
     };
 
     // the process gone whatever state it is in: what a start that is being
     // given up on calls, since end() only knows a process that produced data
     kill() {
-        if (this.process !== null && this.process.exitCode === null) {
+        if (this.isAlive() === true) {
             this.process.kill("SIGINT");
         }
     };
@@ -74,7 +95,9 @@ const FFmpegProcess = class {
             return;
         }
         this.isRunning = false;
-        if (this.process.exitCode === null) {
+        // waiting for the close of a process that is already gone would be
+        // waiting for ever, and onEnd would never be called
+        if (this.isAlive() === true) {
             this.process.removeAllListeners("close");
             await new Promise((resolve) => {
                 this.process.once("close", () => {
@@ -778,6 +801,11 @@ const FFmpegVideoEncoder = class {
     // whatever state the start is in, the process goes
     kill() {
         this.process?.kill?.();
+    };
+
+    // the last lines ffmpeg said on stderr: why a running line stopped
+    lastWords() {
+        return this.process?.lastWords?.() ?? "";
     };
 
     async end() {

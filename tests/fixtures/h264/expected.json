@@ -1,0 +1,387 @@
+{
+    "x264": {
+        "command": "ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 12 -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high -b:v 300k -maxrate 300k -bufsize 100k -g 30 -keyint_min 30 -r 30 -bf 0 -bsf:v h264_metadata=aud=insert -f h264 x264.h264",
+        "frames": [
+            {
+                "qp": 25.0,
+                "type": "I",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 32.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 31.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 31.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 32.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 31.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 32.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 32.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 33.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 33.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            },
+            {
+                "qp": 33.0,
+                "type": "P",
+                "isDeblocked": false,
+                "slices": 3
+            }
+        ]
+    },
+    "nvenc": {
+        "command": "ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 12 -c:v h264_nvenc -preset p1 -tune ull -rc cbr -zerolatency 1 -delay 0 -forced-idr 1 -profile:v high -b:v 300k -maxrate 300k -bufsize 100k -g 30 -keyint_min 30 -r 30 -bf 0 -bsf:v h264_metadata=aud=insert -f h264 nvenc.h264",
+        "frames": [
+            {
+                "qp": 23.0,
+                "type": "I",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 28.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 28.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            }
+        ]
+    },
+    "x264-full": {
+        "command": "ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 12 -c:v libx264 -preset medium -profile:v high -b:v 300k -g 8 -bf 2 -refs 3 -weightp 2 -x264-params slices=2:b-pyramid=normal:aq-mode=2 -bsf:v h264_metadata=aud=insert -f h264 x264-full.h264",
+        "frames": [
+            {
+                "qp": 29.5,
+                "type": "I",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 31.5,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 33.5,
+                "type": "B",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 34.5,
+                "type": "B",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 33.5,
+                "type": "B",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 34.0,
+                "type": "B",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 36.5,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 29.0,
+                "type": "I",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 34.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 33.5,
+                "type": "B",
+                "isDeblocked": true,
+                "slices": 2
+            },
+            {
+                "qp": 34.0,
+                "type": "B",
+                "isDeblocked": true,
+                "slices": 2
+            }
+        ]
+    },
+    "openh264": {
+        "command": "ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 12 -flags +low_delay -pix_fmt yuv420p -c:v libopenh264 -profile:v high -rc_mode bitrate -b:v 300k -maxrate 300k -bufsize 100k -g 30 -keyint_min 30 -r 30 -bf 0 -bsf:v h264_metadata=aud=remove,h264_metadata=aud=insert -f h264 openh264.h264",
+        "frames": [
+            {
+                "qp": 30.0,
+                "type": "I",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 30.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 32.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 34.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 36.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 36.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 36.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 38.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 34.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 33.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 31.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 33.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            }
+        ]
+    },
+    "mf": {
+        "command": "ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 12 -flags +low_delay -pix_fmt nv12 -c:v h264_mf -hw_encoding 1 -scenario display_remoting -rate_control cbr -profile:v 100 -b:v 300k -maxrate 300k -bufsize 100k -g 30 -keyint_min 30 -r 30 -bf 0 -bsf:v h264_metadata=aud=remove,h264_metadata=aud=insert -f h264 mf.h264",
+        "frames": [
+            {
+                "qp": 23.0,
+                "type": "I",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            },
+            {
+                "qp": 29.0,
+                "type": "P",
+                "isDeblocked": true,
+                "slices": 1
+            }
+        ]
+    }
+}

@@ -1,0 +1,3 @@
+# the gamepad driver is signed as it is: its catalogs (.cat) hash the .inf
+# files byte for byte, so they keep the CRLF they were built with
+src/client/native/*/libs/easy-control/gamepad/** -text

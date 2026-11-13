@@ -1028,12 +1028,33 @@ and picture from two sources.
 libs cuts the pipe): raw Annex B H.264 with an access unit delimiter in front of
 every frame, which is what the splitter cuts on, so there is no container to
 parse and the SPS/PPS ride in-band the way a WebCodecs decoder with no
-`description` expects. The lines are tried in order - `h264_nvenc`, `h264_amf`,
-then `libx264` on Windows with the D3D11 capture staying on the GPU into the
-hardware encoders; `h264_videotoolbox` then `libx264` on macOS - and the first
-to produce a frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every
-second, no B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows,
-at the frame rate the bar asked for.
+`description` expects. The lines are tried in order - on Windows `h264_nvenc`
+and `h264_amf` with the D3D11 capture staying on the GPU into them, then
+`h264_mf` with `-hw_encoding 1` (whatever GPU encoder Windows itself knows,
+Intel's above all), then `libx264` and `libopenh264`; on macOS
+`h264_videotoolbox`, `libx264`, `libopenh264` - and the first to produce a
+frame within `ENCODER_START_TIMEOUT` is the share; a keyframe every second, no
+B frames, a constant bitrate of `VIDEO_SHARE` of what the bar allows, at the
+frame rate the bar asked for. A smaller picture is scaled by `gfxcapture`
+itself (`resize_mode=scale`): `scale_d3d11` after it cannot make its output
+texture from the capture's frames (`E_INVALIDARG` in the build shipped), so
+every GPU line asked to scale used to fail on the spot.
+**A line the build cannot run is never tried.** Each line names its encoder and
+the host asks the bundled ffmpeg for `-encoders` once (`parseEncoders`). The
+Windows build is LGPL and has no x264, which used to be the last line there: a
+share whose GPU encoder was missing or taken - another remote desktop
+application holding NVENC's sessions is enough - fell through to `Unknown
+encoder 'libx264'` and ended. OpenH264 is in every build shipped, so it is the
+line that always exists. **A line that stops under a running share is
+replaced** rather than ending it (`restart`, the same path a settings change
+takes): one that stopped within `LINE_SETTLE_TIME` of its first frame is gone
+past for the rest of the share, since an encoder taken from under it fails the
+same way again, and one that ran longer is tried first again. ffmpeg's stderr
+is kept rather than printed - the lines run at `-loglevel error` - and a line
+that fails is logged with its last lines. Every line ends in
+`h264_metadata=aud=remove,h264_metadata=aud=insert`: Media Foundation writes
+delimiters of its own, and an insert in front of one is a second - an empty
+access unit to the splitter.
 ffmpeg's video lines carry no sound: the desktop host's is `createSystemAudio`,
 the first of two sources that gives any. First a `getDisplayMedia` that
 `main.js` answers through `setDisplayMediaRequestHandler` with the first screen
@@ -1160,10 +1181,14 @@ a second, the rate the picture beside it moves at - sending `{"kind":
 `{"kind": "cursor-move"}` only when the position has actually moved (0..1 in
 the shared display, `null` when the pointer has walked onto another one). **The
 deciding is local**: a pointer sitting still is looked at thirty times a second
-and mentioned none. The looking is the cost - reading the shape is ~1.5 ms
+and mentioned none. The looking is the cost - reading the shape was ~1.5 ms
 inside the addon against ~1 us for the position, about a twentieth of a core at
-this rate - which is what the fingerprint in front of the packing is worth, and
-why the two halves share one tick with the cheap one first. That tick schedules
+this rate - so the tick asks `Mouse.getIconId()` first and reads the picture
+only when that id has changed. The id is cheap on Windows and Linux; on a Mac
+it is a hash of the picture and costs about what the read does, which is no
+worse than reading every tick. The fingerprint stays in front of the packing,
+since an id can come back to a shape the peer already has, and the two halves
+share one tick with the cheap one first. That tick schedules
 itself against the clock the run started on rather than against the tick before
 it, so the read inside it is not added to the gap after it - an interval of the
 same length drifts to 25 a second on a read of a millisecond and a half. The
@@ -1182,25 +1207,19 @@ the shape only crosses the line when it changes at all.
 display being shared and its hotspot against the shape, because the peer knows
 that display only as the rectangle it drew it in - so a pointer covering a
 button on the host covers the same button on the peer, at any window size.
-Windows is the one platform whose scaling has to be divided out (`cursorScale`):
-it hands the cursor over at the size it is drawn on screen while
-`Screen.list()` reports that display in logical pixels, where a macOS `NSImage`
-is in points already and the X11 figure is read off the monitor's millimetres
-rather than off any scaling the desktop applies.
+The display's scale is divided out (`cursorScale`) on every platform:
+`Mouse.getIcon()` reports the shape in physical pixels - two per point on a
+Retina Mac, the size it is drawn at on a scaled Windows display - while
+`Screen.list()` reports the display in logical ones. X11 has no logical size
+and reports a scale of 1, so nothing changes there.
 
-**Two layouts, because the client is not what builds the addon.**
-`Mouse.getIcon()` hands over `width * height * 4` bytes of RGBA where
-`dev/control/src/mouse.cpp` stands today, and `width * height` packed
-`0xAARRGGBB` pixels from the build vendored under `src/client/native/`, which
-predates that source. `iconStride` is what tells them apart and `readIcon`
-reads either. The vendored one fills no alpha at all, so what it reports is a
-silhouette - the Windows arrow arrives as one white shape where it is really
-white inside a black edge - and a white pointer on a white document is a
-pointer nobody can see: `outlineSilhouette` gives the empty pixels touching the
-shape its contrast, black around a light pointer and white around a dark one.
-Nothing is invented about the shape, only about the edge it lost, and a picture
-that came with an alpha channel never goes through there. Rebuilding the addon
-from `dev/control/` is what replaces the guess with the real thing.
+**One layout.** `Mouse.getIcon()` hands over `width * height * 4` bytes of
+straight-alpha RGBA, the same on every platform from easy-control 0.10 on, and
+a hidden pointer as 0 by 0 with nothing in `data`; Windows draws the inverting
+pixels of a black-and-white cursor (the text I-beam) by the screen under them,
+and the addon reports those mid-grey. The build vendored before 0.14.0 reported
+packed `0xAARRGGBB` with no alpha, and `cursor.js` used to guess an outline for
+that silhouette; the guess went with that build.
 
 **A shape is encoded once.** The fingerprint - FNV-1a over the pixels with the
 size and the hotspot in front of it - is what says the peer already has this
@@ -1216,7 +1235,11 @@ hand and what it sees. The host stops sending positions the moment the peer
 takes the keyboard and the mouse (`setControlled`), since what it would say is
 a round trip behind that hand, and sends again the moment it is let go. The
 hotspot is in the shape's own pixels, which is why those go over beside the
-fractions. Chromium ignores a cursor image over 128 pixels, so the `auto`
+fractions. Those pixels are the host's physical ones, so the shape from a
+scaled host - a Retina Mac, Windows above 100% - is handed to the browser that
+much larger than it looks on the host; handing it over through `image-set()`
+at the host's scale is what would fix that, and is not done yet. Chromium
+ignores a cursor image over 128 pixels, so the `auto`
 behind it is what a pointer that large falls through to; and the `cursor: none`
 still in the stylesheet is what is left for a host that sends no shape at all -
 a browser sharing through `getDisplayMedia` draws its own into the picture, and
@@ -1305,8 +1328,40 @@ between three things a person wants all of. What is on is this client's and
 not the host's: it never travels in `settings`, it outlives a room, and the
 room screen keeps it beside `settings` rather than in it.
 
-**The models are mocks, and the pipeline is real.** Each enhancement is one
-ONNX graph under `media/models/`, written by `model/mock/make_mock_models.py`:
+**All three graphs are trained, and the pipeline is real.**
+`media/models/upscale.onnx` is the told upscaler (see The QP of a
+frame), exported by the desktop-streamer-ai repository's notebook 23: on its
+validation patches +0.024 SSIM-Y and +1.5 dB luma over bicubic, a 3×3 stem,
+two residual blocks at 24 channels and a frozen bicubic skip, 60 KB. In
+Chrome's WebGPU on an RTX 3090 the graph takes 9.4 ms for a 960×540 frame and
+70 ms for a 1080p one, so a 1080p stream upscaled to 4K keeps about 13 of its
+30 frames, and with all three on - three pictures upscaled a frame - about 6.
+What it gains depends on how the host scaled the frame down: on a desktop
+scene scaled the way swscale and a GPU scaler do it (antialiased) it is
++1.2 to +1.7 dB luma over bicubic on text and code, after a box filter
+nothing, and on soft photographic regions it is 1.2 to 4.6 dB *below*
+bicubic, sharpening what it was not trained on. The frame generators are
+that repository's tile searches - one motion per tile, found from the cost of
+every offset within ±4 px on half-resolution luma, which is ±8 px of motion a
+frame (240 px a second at 30 fps), nothing learned in the search; within it
+a pan or a scroll comes back exact, past it the search finds nothing to
+follow and the picture is close to a blend (interpolation) or the frame
+repeated (extrapolation), never far below either. `interpolate.onnx` moves
+the last frame and this one half of it towards each other
+(`src/frame_gen_intra/`, notebook 1), and `extrapolate.onnx`
+carries the last motion half an interval on, or repeats the frame where a
+400-weight network on the search's own costs says it would do better
+(`src/frame_gen_extra/`, notebook 13). On that repository's validation clips
+cut into these tiles, interpolation is +2.4 dB over the mean of the two
+frames on the tiles that move and extrapolation +1.4 over repeating the
+frame - most of it on scrolls and pans, half a dB on recorded screens - for
+3.3 and 2.75 ms a 1080p frame in Chrome's WebGPU on an RTX 3090 (a run through
+the runtime with the GPU waited on is 7 to 9 ms there, and the enhancer's own
+reading, arrival to last picture drawn, 9 ms for one generator and 16 for
+both). Before them
+all three were mocks, each one ONNX graph written by
+`model/mock/make_mock_models.py` - which now writes a mock only over the
+graphs it is named (`--upscale`, `--interpolate`, `--extrapolate`):
 a depthwise identity 3×3 convolution followed by a bilinear ×2 (the
 convolution before the resize, at the input resolution, the way a real
 upscaler computes low and upsamples last), and the two blends as the
@@ -1314,7 +1369,10 @@ elementwise arithmetic they are. **A two-frame model takes two inputs**,
 `previous` and `current`, never one stacked six channel tensor: stacked, the
 enhancer paid a copy to stack them and the graph a `Slice` to take them apart
 again - 11 of the 17 ms an interpolated 1080p frame cost - where two inputs
-are two buffers handed over as the tensors they already are. The shapes were chosen by what the runtime's
+are two buffers handed over as the tensors they already are. The names are
+`MODELS`'s, not the code's: `feedsOf()` hands a step's pictures, oldest first,
+to the inputs the table names, and `tests/enhance.test.js` holds the table to
+the names each graph declares. The shapes were chosen by what the runtime's
 WebGPU provider runs well, and the measurements are in the generator's
 docstring: its generic `Conv` has no vectorised path for a channel count that
 is not a multiple of four and took 25 ms on a 1080p frame where the depthwise
@@ -1325,12 +1383,32 @@ NCHW↔NHWC `Transpose` pair the provider puts around a graph's convolutions is
 are index-bound, not bandwidth- or arithmetic-bound. A trained model will pay
 those prices for whatever it is built from. Where a 1080p frame's ~26 ms go
 with the upscaler on: `Resize` 11, the transposes 4, the draw onto the canvas
-~4, the frame into planes ~2.5, the convolution 1.4. They are the
+~4, the frame into planes ~2.5, the convolution 1.4. They were the
 *shape* of the real thing - the same input and output, real GPU work in
 between, a picture that stays right - so the whole path from decoded frame to
-drawn picture can be built and timed before a trained model exists, and a
-trained one replaces a mock by being exported under the same name. `model/`
-is where those are trained; nothing there runs in the client.
+drawn picture could be built and timed before a trained model existed, and a
+trained one replaced each mock by being exported under the same name.
+`model/` is where those are trained; nothing there runs in the client.
+
+**The upscaler runs in float16 where the GPU can.** `upscale_fp16.onnx`
+beside `upscale.onnx` is the same graph, exported by the same notebook 23,
+with float16 weights and arithmetic and a `Cast` at each end, so it takes and
+gives the float32 tiles the two shaders already write and read. `urlOf()`
+fetches it on WebGPU when the adapter has `shader-f16`, which is when the
+runtime asks for that feature too. Everywhere else the client uses the float32
+graph: the WebGL provider has no float16. On a GTX 1660 Ti, with the host on
+the same GPU, it took a 1280×720 stream's frame from 65.5 ms to 41 (15 to 24
+frames of 30 shown), an 852×480 one from 37.6 to 24 (it keeps up now) and a
+1080p one from 215 to 86, within 0.17/255 of the float32 graph. Of the 24.5 ms
+saved at 720p, about 15 is the convolutions themselves (their GPU time went
+from 49 to 34 ms). The other ~10 ms is the runtime's buffer cache. Its free
+list keeps a few buffers of each size class (six of the 128 MiB class the
+float32 graph's 94.7 MB activations fall in at 16 tiles), and with the float32
+graph at 16 tiles one 128 MiB buffer was destroyed and made again on every
+frame: 11.7 ms for a fresh one against 0.9 for one kept, half of it Dawn's
+zero-fill. With the float16 graph no buffer is made after the first frame at
+any size up to 1080p. A GPU on the float32 graph still pays it. The
+measurements are desktop-streamer-ai's `src/upscale/bottlenecks_gtx1660ti.md`.
 
 **The runtime is fetched when the first switch is turned on, not at boot.**
 ONNX Runtime Web is 800 KB of script and 26 MB of WebAssembly, and a room that
@@ -1341,7 +1419,12 @@ to the bar before anything is asked for, so the entry is greyed with the reason
 in its menu rather than left to fail on the click. There is no third backend
 on purpose: the runtime has a CPU one, and a CPU cannot keep up with a stream,
 so a browser with neither GPU path is told it needs one instead of being given
-a picture that arrives a second late.
+a picture that arrives a second late. **The frame generators run on WebGPU
+only**: their search reads with `GridSample`, which the WebGL provider has not
+got, so `kindsFor()` (pure, tested) says which enhancements a backend can run,
+the worker reports it beside the backend, the bar greys the two rows with
+"(needs WebGPU)" in the rows themselves, and the enhancer refuses them in
+`setOptions` too.
 
 **A model never sees a whole frame, and every tile of a frame is one run.**
 Every picture is cut into tiles of one size, the tiles go through the model as
@@ -1358,12 +1441,24 @@ provider wants anyway. `planTiles()` is pure and tested: a 320×180 step, which
 divides every 16:9 resolution exactly (720p is 4×4 of it, 1080p 6×6, 4K
 12×12), and a halo of 4 pixels every model is given beyond it - the geometry
 `model/upscale/webexport.py` measured as the cheapest, and one halo for the
-whole chain, so a tile out of one model is a tile into the next. A tile near
-an edge is not cut short: its input window is slid back into the frame, so
+whole chain, so a tile out of one model is a tile into the next. **The
+frame's own edge has the halo too**: a window reaches up to 4 pixels past the
+frame, where its edge pixels are read again (the GPU path's
+`textureSampleBaseClampToEdge` does that by itself, the WebGL path clamps its
+reads). The windows used to be slid back inside the frame instead, which
+left a kept pixel at the edge next to the model's own padding - and the
+upscaler pads with zeros, its frozen bicubic skip included, so the outermost
+row and column of every upscaled picture came out a fifth darker: 48/255 on
+a light title bar, a dark line round the whole stream. A tile kept short at
+the far edge (1366 is four steps and 86 pixels) slides its window back, so
 every tile of a frame has the same input size and the kept region moves
 inside the window instead; a frame smaller than a tile is one tile of its own
-size. A model exported for the client has to be right on a 328×188 tile and
-read no further than the halo.
+size and the halo. A model exported for the client has to be right on a
+328×188 tile and read no further than the halo - `tests/enhance.test.js` runs
+the graphs through the vendored runtime's CPU provider and holds them to it:
+tiled is the whole frame with its edges repeated, a flat picture stays flat
+out to its edges, and each frame generator shows the moment `schedule()`
+presents it at.
 
 **The picture stays on the GPU on WebGPU, and goes through a pixel array on
 WebGL.** On WebGPU a decoded frame is imported as an external texture and one
@@ -1395,7 +1490,8 @@ WebGL provider runs static shapes only: a dimension the graph leaves symbolic
 so for WebGL the graph's bytes are patched - the symbolic input dimensions
 written as the frame's, a small protobuf rewrite of the fields on that path
 alone - and a session made per resolution. `tests/enhance.test.js` proves the
-patch against the mock files.
+patch against the graphs in `media/models/`, the told upscaler's fixed
+`condition` input left as it is.
 
 **A generated frame has a place in the interval, and the real one moves to
 make room.** `schedule()` is pure: for one arriving frame it says which
@@ -1404,11 +1500,27 @@ The interpolated frame stands in *before* the real one (it is the picture
 between this frame and the last) and the extrapolated one *after* it, so with
 interpolation on the real frame is drawn at half the interval, with
 extrapolation on the predicted frame is, and with both on the three are spaced
-by thirds. Upscaling is not a step - it runs over every picture the steps
-produce. The interval is measured from the stream's own timestamps rather than
-assumed. Whatever is still held when the next real frame arrives is drawn
-ahead of it, in order, rather than dropped: a generated frame never covers a
-real one, and none is lost.
+by thirds. **Both on is not the 2x graphs twice**: spaced by thirds, the
+interpolated frame is two thirds of the way from the last frame to this one
+and the extrapolated one a third of an interval past it, where the 2x graphs
+make half way and half past - the last frame's extrapolation and this
+interpolation would show the same moment. So `schedule()` names the graph
+each step runs, and both on runs the 3x pair, `interpolate3x.onnx` and
+`extrapolate3x.onnx`: the same searches with the motion carried by thirds, the
+interpolated frame mixed ⅓ : ⅔ by nearness. Neither placement is measured -
+the research's run set holds 2x samples only. Upscaling is not a step - it
+runs over every picture the steps produce. The interval is measured from the stream's own timestamps rather than
+assumed. **A place is counted from the frame's first picture**, not from when
+the picture in it was made (`presentDelay()`, pure and tested): counted from
+the second, every step's own cost was added to the gap after it, and with the
+upscaler on the predicted frame landed after the next real frame had arrived
+and was drawn back to back with it - the judder the steps are there to remove.
+The first picture drawn is drawn at once and fixes where the interval started,
+so a step skipped ahead of it moves nothing; a picture already past its place
+is drawn at once. Whatever is still held when the next real frame arrives is
+drawn ahead of it, in order, rather than dropped - that frame enhanced or,
+once every switch is off, passed straight through: a generated frame never
+covers a real one, and none is lost.
 
 **One frame at a time, and the newest waits - and a frame is not done until
 the GPU is.** A frame that arrives while one is being enhanced waits, and a
@@ -1425,13 +1537,36 @@ with all three on), the
 queue is bounded, and the drop count says what the GPU could not keep up
 with. A `reset` (the stream over, or restarted) bumps a generation,
 and a frame still in flight across it is let go rather than becoming the first
-frame of the next stream's pair. A change of size is not a reset - the host
+frame of the next stream's pair - asked again once the GPU is done with it,
+since on WebGPU that wait is most of a frame and so where a `share-end` is
+likeliest to land. Turning the last frame generator off lets the previous
+picture go at once, even while a frame is between its steps, so a two-frame
+step that finds none is skipped rather than run on nothing (which threw, and
+the throw took the upscaler off with it). A change of size is not a reset - the host
 restarts its encoder at a new resolution inside the same stream, which the
 peer's `auto` resolution does on every bandwidth step - so the previous picture
 is dropped when the new one is not the same frame size (`isSameShape`, tested):
 a two-frame graph handed two sizes throws, and the enhancer would switch itself
 off for a bandwidth click. The picture a frame is made into is given back on
-every way out of `process` but the one that keeps it as the next previous.
+every way out of `process` but the one that keeps it as the next previous. The
+WebGPU storage buffers it is given back to are pooled for one frame size only:
+a new size empties the pool and starts an epoch, and a buffer of an older one
+is destroyed when it comes back - pooled by size for the life of the room, each
+bandwidth step left ~50 MB of a 1080p frame's buffers on the GPU for a size
+that might never return.
+
+**A lost GPU turns the enhancer off for the rest of the page.** A driver reset
+or the system taking the GPU back loses the runtime's device, and this build
+of the runtime makes that device once per module - its backend is initialised
+once and bound to it - while the module lives as long as the worker and the
+worker as long as the room's canvas, which hands its surface over once. So
+nothing short of a reload makes a new one, and the enhancer does not pretend
+otherwise: it listens to `device.lost` rather than waiting for a run to throw
+(on a lost device most calls are quiet no-ops, and the picture would go black
+instead), turns everything off once with the reason in the snackbar, lets the
+pictures in flight go, and refuses every later switch with the same reason.
+Before, the next frame's failure turned it off, a click turned it back on over
+the dead session it still held, and the frame after that turned it off again.
 
 **What the bar shows is what the worker said, not what was clicked.** A click
 draws the wish at once and greys the rows until the worker answers; the
@@ -1445,6 +1580,71 @@ stream's `stats` while a picture is being received, or the backend alone until
 there has been one. It is **one row that is always there** and only ever
 changes its text: a row that appears or goes moves the rows under the pointer
 of an open menu, which is what it did first.
+
+## The QP of a frame
+
+The trained upscaler is **told each frame's QP** (the desktop-streamer-ai
+repository, `src/upscale/`, notebooks 17 to 23): one model, handed beside the
+picture a `condition` of three numbers - the slice QP / 51, the loop filter
+and I frame as 0 or 1 - which only ever moves its biases (`b + W c`, 72
+numbers a frame, computed inside the graph), so the per-pixel work is the
+blind model's. It has to be the frame's own QP: told 3 steps off, the model
+gives back much of what being told won, and 6 off it is no better than one
+never told. So the client reads it, per frame, from the stream itself.
+
+**Nothing in the browser hands it over.** A decoded `VideoFrame` carries no
+QP; WebRTC's `qpSum` exists for RTP media tracks, which this stream is never
+(see The stream), and is a sum over a second anyway. The host cannot say it
+either: ffmpeg writes raw H.264 down the pipe and nothing about it, x264
+prints a frame's QP only at the debug log level, and NVENC, AMF and
+VideoToolbox not at all. What every encoder does write is the QP itself, in
+the slice header: `26 + pic_init_qp_minus26 + slice_qp_delta`. The worker
+holds every access unit before `decode()`, so `stream-h264.js` reads it
+there - the SPS and PPS as they come in-band with a keyframe, then each slice
+header as far as its loop filter field, through the emulation prevention
+bytes and without a copy, about 0.02-0.04 ms a 960×540 frame - and the
+picture is matched to its decoded frame by `timestamp`. A frame with no
+parameter sets behind it yet (a peer that joined after the last keyframe)
+reads as null rather than as a guess.
+
+**The slice QP is the frame's starting QP, not its mean.** Rate control moves
+the QP between macroblocks inside a frame, and the model was trained on the
+mean over them. Measured on the host's own lines (30 clips, 6 bitrates, the
+mean read back from the decoder's macroblock table), on settled P frames:
+
+| line | mean minus slice QP | mean / 90th percentile gap | I frames |
+| --- | --- | --- | --- |
+| x264 | +0.93, never below | 0.93 / 2.06 | +3.1 |
+| NVENC | -0.80 (-1.27 on screens) | 1.21 / 2.49 | +3.9 |
+
+So the slice QP is what the model is **trained on** - the number the
+client has, by construction - rather than corrected by an offset here. A
+frame of several slices (x264 cuts 5-8 under sliced threads, the same QP in
+each) reads as the mean over its macroblocks.
+
+**The loop filter comes with it.** The host's x264 line (`ultrafast`) codes
+with H.264's deblocking filter off, its NVENC line with it on, and the same
+QP leaves different artifacts behind each; `isDeblocked` is read from the same
+headers, and the model is told which. It earns its place: told the QP alone,
+the model trained on both lines scored *below* a blind one on NVENC's middle
+QPs, since the same number means a smoother picture there; told the loop
+filter as well, it is the best of the three on both (notebook 22). In the
+host's lines the flag is the encoder - x264 never filters, NVENC always does -
+and AMF, VideoToolbox, Media Foundation, OpenH264 and the browser host's
+WebCodecs encoder filter, so they are read as NVENC is, which nothing has
+measured yet. On Windows that is every line now: the build shipped there has
+no x264, and its software line is OpenH264. I frame or not is told
+too and measured as worth nothing; it costs nothing either.
+
+**What the enhancer hands the graph.** The worker passes each decoded frame to
+the enhancer with what was read of it, and `conditionOf()` (pure, tested)
+turns that into the three numbers; a frame the reader could not read is given
+the last one that it could, and a stream's first frames before any the middle
+`DEFAULT_CONDITION` (QP 30, filtered, P). The condition goes in as a CPU
+tensor beside the picture's GPU buffer - three numbers for the runtime to
+upload - and only to a graph that declares a `condition` input, so the frame
+generators, and a blind upscaler, run as they did. Every tile of a frame
+shares its condition, which is why it has no batch dimension.
 
 ## The registry
 
@@ -1648,9 +1848,8 @@ display capture, then ffmpeg from a loopback device or Linux's PulseAudio
 monitor - both paths run on Windows in Electron 42; macOS and Linux are built
 to what Electron and Chromium document and are untested). What `dev/plans/room-media.md` still lists as open: a desktop host cannot answer a keyframe request
 over a pipe, the access unit splitter is one frame behind the encoder (a unit is
-only known whole when the next delimiter arrives), and the enhancer runs mock
-graphs - the pipeline is there, the trained models are not (see The
-enhancer). The previous client implementation is at commit `da3921d`, and it read
+only known whole when the next delimiter arrives), and the trained frame
+generators have not been watched in a live session yet (see The enhancer). The previous client implementation is at commit `da3921d`, and it read
 message types the server no longer serves — do not paste it back untouched.
 
 Two modules are markup with nothing behind them. `management/search`: the field

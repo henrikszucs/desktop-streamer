@@ -30,7 +30,7 @@
 
 // first-party dependencies
 import { HEADER_SIZE, FLAG_KEY, FLAG_AUDIO, FLAG_CONFIG, packFrame, packConfig, readConfig, createReassembler } from "./frame.js";
-import { buildLines, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines } from "./stream-ffmpeg.js";
+import { buildLines, parseEncoders, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines } from "./stream-ffmpeg.js";
 import { createInput } from "./stream-input.js";
 import { cursorFingerprint, packCursor } from "./cursor.js";
 import { createClipboard } from "./clipboard.js";
@@ -67,6 +67,13 @@ const RESTART_DEBOUNCE = 500;
 // how long an ffmpeg line is given to produce its first frame before the next
 // line is tried
 const ENCODER_START_TIMEOUT = 6000;
+
+// a line that stops this soon after its first frame is taken for one that
+// will do it again, and the restart goes past it to the next
+const LINE_SETTLE_TIME = 10000;
+
+// how long ffmpeg is given to list the encoders it was built with
+const ENCODER_LIST_TIMEOUT = 5000;
 
 // the sound: Opus at what every browser encodes it at, and how far ahead of
 // the clock a frame is scheduled so the next one is there before it is due
@@ -679,6 +686,54 @@ const createSystemAudio = function(ctx, api, isWanted) {
     };
 };
 
+// the video encoders the bundled ffmpeg was built with, asked once: a line
+// whose encoder is not among them could only fail. Null where the listing
+// could not be had, and then every line is tried - a failed listing is asked
+// again by the next start.
+let videoEncoders = null;
+const listVideoEncoders = function(desktop) {
+    if (videoEncoders !== null) {
+        return videoEncoders;
+    }
+    const listing = new Promise(function(resolve) {
+        let text = "";
+        let child = null;
+        try {
+            const exe = desktop["path"].join(desktop["ffmpegPath"], (desktop["os"].platform() === "win32" ? "ffmpeg.exe" : "ffmpeg"));
+            child = desktop["spawn"](exe, ["-hide_banner", "-encoders"], {"cwd": desktop["ffmpegPath"], "windowsVerbatimArguments": true});
+        } catch (error) {
+            console.warn("Cannot list the video encoders:", error?.message ?? error);
+            resolve(null);
+            return;
+        }
+        const timeoutId = setTimeout(function() {
+            child.kill();
+        }, ENCODER_LIST_TIMEOUT);
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", function(data) {
+            text += data;
+        });
+        child.on("error", function(error) {
+            clearTimeout(timeoutId);
+            console.warn("Cannot list the video encoders:", error?.message ?? error);
+            resolve(null);
+        });
+        // a listing cut short by the timeout would leave encoders out
+        child.on("close", function(code) {
+            clearTimeout(timeoutId);
+            const encoders = parseEncoders(text);
+            resolve(code === 0 && encoders.size > 0 ? encoders : null);
+        });
+    });
+    videoEncoders = listing;
+    listing.then(function(encoders) {
+        if (encoders === null && videoEncoders === listing) {
+            videoEncoders = null;
+        }
+    });
+    return listing;
+};
+
 //
 // the desktop host's encoder: ffmpeg, the first line that works
 //
@@ -689,6 +744,10 @@ const createDesktopEncoder = function(ctx) {
     let settings = null;
     let restartId = -1;
     let generation = 0;
+    // the lines that stopped soon after they started, which a restart goes
+    // past: a GPU encoder another remote desktop application has taken fails
+    // the same way the next time
+    const broken = new Set();
 
     // the callbacks the stream fills in, on the object it is handed back
     const api = {
@@ -773,12 +832,21 @@ const createDesktopEncoder = function(ctx) {
             "framerate": settings["framerate"],
             "isCursor": (isCursorSupported(ctx) === false)
         });
+        const encoders = await listVideoEncoders(desktop);
+        const lines = built["lines"].filter(function(line) {
+            return (encoders === null || encoders.has(line["encoder"]) === true) && broken.has(line["name"]) === false;
+        });
 
         let started = null;
+        let adopted = null;
         let lastError = null;
-        for (const line of built["lines"]) {
+        for (const line of lines) {
+            if (own !== generation) {
+                break;
+            }
             try {
                 started = await startLine(line);
+                adopted = line;
                 console.log("Stream encoder: " + line["name"]);
                 break;
             } catch (error) {
@@ -791,7 +859,7 @@ const createDesktopEncoder = function(ctx) {
             return;
         }
         if (started === null) {
-            throw (lastError ?? new Error("No encoder started"));
+            throw (lastError ?? new Error("No video encoder left to try"));
         }
         encoder = started;
         api.onConfig({"codec": built["codec"], "codedWidth": built["size"]["width"], "codedHeight": built["size"]["height"]});
@@ -802,13 +870,44 @@ const createDesktopEncoder = function(ctx) {
             api.onChunk(chunk);
         }
         started.pending = [];
+        // a line that stops on its own is replaced rather than ending the
+        // share: the GPU encoder it runs on can be taken from under it, by
+        // another remote desktop application starting or by a driver reset
+        const adoptedAt = performance.now();
         encoder.onEnd = function(error) {
             if (encoder !== started) {
                 return;
             }
             encoder = null;
-            api.onEnd(error);
+            if (performance.now() - adoptedAt < LINE_SETTLE_TIME) {
+                broken.add(adopted["name"]);
+            }
+            const words = started.lastWords?.() ?? "";
+            console.warn("Stream encoder " + adopted["name"] + " stopped (" + error + ")" + (words !== "" ? ": " + words : "") + ", restarting");
+            restart();
         };
+    };
+
+    // a new line on the settings there are now, the running one ended first;
+    // a line that cannot be had ends the share
+    const restart = async function() {
+        clearTimeout(restartId);
+        restartId = -1;
+        const own = generation;
+        const running = encoder;
+        encoder = null;
+        if (running !== null) {
+            running.onEnd = function() {};
+            await running.end();
+        }
+        if (own !== generation) {
+            return;         // stopped while the old line was ending
+        }
+        try {
+            await start(settings);
+        } catch (error) {
+            api.onEnd(error);
+        }
     };
 
     const stop = async function() {
@@ -843,24 +942,7 @@ const createDesktopEncoder = function(ctx) {
                 return;
             }
             clearTimeout(restartId);
-            restartId = setTimeout(async function() {
-                restartId = -1;
-                const own = generation;
-                const running = encoder;
-                encoder = null;
-                if (running !== null) {
-                    running.onEnd = function() {};
-                    await running.end();
-                }
-                if (own !== generation) {
-                    return;         // stopped while the old line was ending
-                }
-                try {
-                    await start(settings);
-                } catch (error) {
-                    api.onEnd(error);
-                }
-            }, RESTART_DEBOUNCE);
+            restartId = setTimeout(restart, RESTART_DEBOUNCE);
         },
 
         // a keyframe every second is the whole answer here: ffmpeg cannot be
@@ -1099,8 +1181,6 @@ const createWebEncoder = function() {
 const createControl = function(ctx) {
     const control = ctx["desktop"]?.["Control"];
     let screen = null;
-    const downButtons = new Set();
-    const downKeys = new Set();
 
     const apply = function(event) {
         if (control === undefined || screen === null) {
@@ -1110,42 +1190,30 @@ const createControl = function(ctx) {
         const keyboard = control["Keyboard"];
         switch (event["t"]) {
             case "move":
-                mouse.setX(Math.round(screen["x"] + event["x"] * screen["width"]));
-                mouse.setY(Math.round(screen["y"] + event["y"] * screen["height"]));
+                // in one step, fractions kept: a scaled display has more
+                // pixels than its whole logical ones reach
+                mouse.setPosition(screen["x"] + event["x"] * screen["width"], screen["y"] + event["y"] * screen["height"]);
                 break;
             case "down":
                 mouse.buttonDown(event["b"]);
-                downButtons.add(event["b"]);
                 break;
             case "up":
                 mouse.buttonUp(event["b"]);
-                downButtons.delete(event["b"]);
                 break;
-            case "scroll": {
-                const y = Number(event["y"]) || 0;
-                const x = Number(event["x"]) || 0;
-                if (y > 0) {
-                    mouse.scrollDown(Math.max(1, Math.round(y)), false);
-                } else if (y < 0) {
-                    mouse.scrollUp(Math.max(1, Math.round(-y)), false);
-                }
-                if (x > 0) {
-                    mouse.scrollDown(Math.max(1, Math.round(x)), true);
-                } else if (x < 0) {
-                    mouse.scrollUp(Math.max(1, Math.round(-x)), true);
-                }
+            case "scroll":
+                // wheel notches with WheelEvent's signs, a fraction carried
+                // into the next call - a touchpad's small steps add up rather
+                // than each being a notch of its own
+                mouse.scroll(Number(event["x"]) || 0, Number(event["y"]) || 0);
                 break;
-            }
             case "key":
                 if (typeof event["c"] !== "string" || keyboard.isKeySupported(event["c"]) !== true) {
                     break;
                 }
                 if (event["d"] === true) {
                     keyboard.keyDown(event["c"]);
-                    downKeys.add(event["c"]);
                 } else {
                     keyboard.keyUp(event["c"]);
-                    downKeys.delete(event["c"]);
                 }
                 break;
         }
@@ -1166,24 +1234,29 @@ const createControl = function(ctx) {
                 try {
                     apply(event);
                 } catch (error) {
-                    console.error("Cannot apply an input event:", error);
+                    // the system refusing input - a UAC prompt, the lock
+                    // screen - is a state rather than a fault, and would be a
+                    // line for every event the peer sends while it lasts
+                    if (error?.["code"] !== "EASYCONTROL_INPUT_BLOCKED") {
+                        console.error("Cannot apply an input event:", error);
+                    }
                 }
             }
         },
-        // a peer that lets go leaves nothing pressed behind it
+        // a peer that lets go leaves nothing pressed behind it: the addon
+        // keeps every button and key it pressed and did not release yet
         "release": function() {
-            try {
-                for (const button of downButtons) {
-                    control?.["Mouse"].buttonUp(button);
-                }
-                for (const code of downKeys) {
-                    control?.["Keyboard"].keyUp(code);
-                }
-            } catch (error) {
-                // the addon is gone with the shell
+            if (control === undefined) {
+                return;
             }
-            downButtons.clear();
-            downKeys.clear();
+            for (const device of ["Mouse", "Keyboard"]) {
+                try {
+                    control[device].releaseAll();
+                } catch (error) {
+                    // what could not be let go stays held for the next
+                    // release, or the addon is gone with the shell
+                }
+            }
         },
         "stop": function() {
             this.release();
@@ -1210,39 +1283,46 @@ const createControl = function(ctx) {
 //
 const createCursorWatch = function(ctx, say) {
     const mouse = ctx["desktop"]?.["Control"]?.["Mouse"];
-    const platform = ctx["desktop"]?.["os"]?.platform?.() ?? "";
     const packed = new Map();       // fingerprint -> the message body
     let screen = null;              // the display being shared, or none while stopped
     let pollTimerId = -1;
     let startedAt = 0;              // what the tick keeps its rate against
     let shape = "";                 // the fingerprint the peer was last given
+    let shapeId = null;             // and the addon's id of the shape it was read from
     let position = "";              // and the position, as it was last said
     let isControlled = false;
     let isPacking = false;
 
-    // the shape, if it is one the peer has not been given. The fingerprint is
-    // what answers that, and it costs a thousandth of the reading in front of
-    // it - so the question is asked on every tick and the answer is almost
-    // always no.
+    // the shape, if it is one the peer has not been given. The addon's id of
+    // the shape is asked first and the picture only read when that changed -
+    // on Windows and Linux the id is a handle and costs next to nothing, on a
+    // Mac it is a hash of the picture - and the fingerprint is what decides
+    // after it, since one id can come back to a shape the peer already has.
     const readShape = async function() {
         if (isPacking === true || screen === null) {
             return;
         }
+        let id = null;
         let icon = null;
         try {
+            id = mouse.getIconId();
+            if (id === shapeId) {
+                return;
+            }
             icon = mouse.getIcon();
         } catch (error) {
             return;     // the addon is gone with the shell
         }
         const fingerprint = cursorFingerprint(icon);
         if (fingerprint === shape) {
+            shapeId = id;
             return;
         }
         let body = packed.get(fingerprint);
         if (typeof body === "undefined") {
             isPacking = true;
             try {
-                body = await packCursor(icon, screen, platform);
+                body = await packCursor(icon, screen);
             } catch (error) {
                 console.error("Cannot pack the pointer:", error);
                 return;
@@ -1258,6 +1338,7 @@ const createCursorWatch = function(ctx, say) {
             return;     // stopped while the picture was being made
         }
         shape = fingerprint;
+        shapeId = id;
         say({"kind": "cursor", ...body});
     };
 
@@ -1269,11 +1350,14 @@ const createCursorWatch = function(ctx, say) {
         if (screen === null || isControlled === true) {
             return;
         }
+        // one read, so both halves are the same moment - and it throws
+        // where the pointer cannot be read, the Windows secure desktop
         let x = 0;
         let y = 0;
         try {
-            x = (mouse.getX() - screen["x"]) / screen["width"];
-            y = (mouse.getY() - screen["y"]) / screen["height"];
+            const at = mouse.getPosition();
+            x = (at["x"] - screen["x"]) / screen["width"];
+            y = (at["y"] - screen["y"]) / screen["height"];
         } catch (error) {
             return;
         }
@@ -1337,6 +1421,7 @@ const createCursorWatch = function(ctx, say) {
             pollTimerId = -1;
             screen = null;
             shape = "";
+            shapeId = null;
             position = "";
             isControlled = false;
         }
@@ -1381,7 +1466,7 @@ const createStream = function(ctx) {
     // (src/room/stream-enhance.js) - kept here, since they are this viewer's
     // and never the host's - and what the worker last said of them
     let enhanceWanted = {"upscale": false, "interpolate": false, "extrapolate": false};
-    let enhanceState = {"backend": "", "isKnown": false, "options": {...enhanceWanted}};
+    let enhanceState = {"backend": "", "kinds": [], "isKnown": false, "options": {...enhanceWanted}};
 
     // the peer's side
     let canvas = null;
@@ -1701,6 +1786,7 @@ const createStream = function(ctx) {
                 // an option it refused is off here too
                 enhanceState = {
                     "backend": message["backend"] ?? "",
+                    "kinds": [...(message["kinds"] ?? [])],
                     "isKnown": true,
                     "options": {...message["options"]}
                 };
@@ -1757,7 +1843,8 @@ const createStream = function(ctx) {
                 "fps": workerStats?.["fps"] ?? 0,
                 "dropped": droppedFrames + (workerStats?.["dropped"] ?? 0),
                 "drawer": workerStats?.["drawer"] ?? "",
-                "enhance": workerStats?.["enhance"] ?? null
+                "enhance": workerStats?.["enhance"] ?? null,
+                "qp": workerStats?.["qp"] ?? null
             };
             sentBytes = 0;
             sentFrames = 0;

@@ -4,7 +4,8 @@
 // the models the bar ticked run over it in ONNX Runtime Web, and what comes
 // out is handed on as frames the drawer draws like any other. Three
 // enhancements - upscale, frame interpolation, frame extrapolation - each a
-// graph under /media/models, all three mocks today (model/mock/). Runs in the
+// graph under /media/models: the upscaler trained and told each frame's QP,
+// the two others the desktop-streamer-ai repository's tile searches. Runs in the
 // worker beside the decoder and never touches the document. The reasoning is
 // .claude/CLIENT.md, "The enhancer".
 //
@@ -25,13 +26,27 @@ const ORT_WASM_PATH = new URL("/libs/onnxruntime/", import.meta.url).href;
 // inputs rather than one stacked six channel one, since stacking was a copy
 // here and a Slice in the graph to take them apart again, more than half of
 // what an interpolated frame cost.
+// The frame generators come twice: one picture an interval (2x), and, with
+// both on, the pair that places theirs by thirds (3x, see schedule).
 const MODELS = {
-    "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
+    "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "half": new URL("/media/models/upscale_fp16.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
     "interpolate": {"url": new URL("/media/models/interpolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
-    "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1}
+    "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
+    "interpolate3x": {"url": new URL("/media/models/interpolate3x.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
+    "extrapolate3x": {"url": new URL("/media/models/extrapolate3x.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1}
 };
-const KINDS = Object.keys(MODELS);
+const KINDS = ["upscale", "interpolate", "extrapolate"];
+const GRAPHS = Object.keys(MODELS);
 const OUTPUT_NAME = "output";
+
+// what a told graph is told of a frame, beside the picture: `condition`, the
+// slice QP / 51, the loop filter and I frame as 0 or 1, read by
+// ./stream-h264.js. A graph that does not declare the input is not handed it.
+const CONDITION_NAME = "condition";
+const QP_MAX = 51;
+// before the first frame the reader could read: a middle QP, the loop filter
+// on as most hosts' encoders have it, a P frame
+const DEFAULT_CONDITION = Object.freeze([30 / QP_MAX, 1, 0]);
 
 // the frame interval a generated frame is placed inside when the stream has
 // not said one yet, and the range a measured one is trusted in
@@ -60,41 +75,93 @@ const isAnyOn = function(options) {
     });
 };
 
-// what one arriving frame turns into and when, as fractions of the frame
-// interval: the interpolated frame stands in *before* the real one and the
-// extrapolated one *after* it, so the real frame moves to make room for
-// whichever of the two is on. Upscaling is not a step - it is applied to
-// every picture the steps produce. Pure, and tested in tests/enhance.test.js.
+// what one arriving frame turns into, when, and through which graph, as
+// fractions of the frame interval: the interpolated frame stands in *before*
+// the real one and the extrapolated one *after* it, so the real frame moves to
+// make room for whichever of the two is on - and with both on, the 3x graphs.
+// Upscaling is not a step. Pure, and tested in tests/enhance.test.js.
 const schedule = function(options, hasPrevious) {
     const isInterpolate = (options["interpolate"] === true && hasPrevious === true);
     const isExtrapolate = (options["extrapolate"] === true && hasPrevious === true);
     if (isInterpolate === true && isExtrapolate === true) {
         return [
-            {"kind": "interpolate", "at": 0},
+            {"kind": "interpolate", "graph": "interpolate3x", "at": 0},
             {"kind": "frame", "at": 1 / 3},
-            {"kind": "extrapolate", "at": 2 / 3}
+            {"kind": "extrapolate", "graph": "extrapolate3x", "at": 2 / 3}
         ];
     }
     if (isInterpolate === true) {
         return [
-            {"kind": "interpolate", "at": 0},
+            {"kind": "interpolate", "graph": "interpolate", "at": 0},
             {"kind": "frame", "at": 1 / 2}
         ];
     }
     if (isExtrapolate === true) {
         return [
             {"kind": "frame", "at": 0},
-            {"kind": "extrapolate", "at": 1 / 2}
+            {"kind": "extrapolate", "graph": "extrapolate", "at": 1 / 2}
         ];
     }
     return [{"kind": "frame", "at": 0}];
 };
 
-// the models a set of options needs loaded
+// how long a picture waits before it is drawn: its place in the interval
+// counted from the frame's own start (`anchor`), not from when this one
+// finished - otherwise every step's own cost is added to the gap after it, and
+// the last picture lands on top of the next real frame. A picture already past
+// its place is drawn at once. Pure, and tested.
+const presentDelay = function(at, interval, anchor, now) {
+    return Math.max(0, anchor + at * interval - now);
+};
+
+// a frame's condition out of what ./stream-h264.js read of it, or null for a
+// frame it could not read. Pure, and tested in tests/enhance.test.js.
+const conditionOf = function(picture) {
+    const qp = picture?.["qp"];
+    if (typeof qp !== "number" || Number.isFinite(qp) === false) {
+        return null;
+    }
+    return [
+        Math.min(QP_MAX, Math.max(0, qp)) / QP_MAX,
+        (picture["isDeblocked"] === true ? 1 : 0),
+        (picture["type"] === "I" ? 1 : 0)
+    ];
+};
+
+// the graphs a set of options needs loaded: with both frame generators on,
+// their 3x pair
 const modelsFor = function(options) {
+    const isBoth = (options["interpolate"] === true && options["extrapolate"] === true);
     return KINDS.filter(function(kind) {
         return options[kind] === true;
+    }).map(function(kind) {
+        return (isBoth === true && kind !== "upscale" ? kind + "3x" : kind);
     });
+};
+
+// the enhancements a backend can run: the frame generators read with
+// GridSample, which the WebGL provider has not got
+const kindsFor = function(backend) {
+    if (backend === "webgpu") {
+        return [...KINDS];
+    }
+    return (backend === "webgl" ? ["upscale"] : []);
+};
+
+// a graph's feeds out of the pictures a step hands it, oldest first, each to
+// the input MODELS names in its place - so a graph exported under other names
+// is fed by changing the table, not the code that runs it. Pure, and tested
+// against the names the graphs declare.
+const feedsOf = function(name, pictures) {
+    const inputs = MODELS[name]["inputs"];
+    if (pictures.length !== inputs.length) {
+        throw new Error("The " + name + " model takes " + inputs.length + " pictures, not " + pictures.length);
+    }
+    const feeds = {};
+    inputs.forEach(function(input, index) {
+        feeds[input] = pictures[index];
+    });
+    return feeds;
 };
 
 // bytes of one float32 NCHW picture, rounded to what the runtime reads in
@@ -277,6 +344,18 @@ const readInputDims = function(modelBytes) {
     return inputs;
 };
 
+// the name of every graph input, in order - ValueInfoProto.name(1)
+const readInputNames = function(modelBytes) {
+    const names = [];
+    for (const graph of decodeFields(modelBytes).filter((entry) => entry["field"] === 7)) {
+        for (const input of decodeFields(graph["body"]).filter((entry) => entry["field"] === 11)) {
+            const name = decodeFields(input["body"]).find((entry) => entry["field"] === 1);
+            names.push(typeof name !== "undefined" ? new TextDecoder().decode(name["body"]) : "");
+        }
+    }
+    return names;
+};
+
 //
 // which backend this browser has, asked before the runtime is loaded
 //
@@ -323,27 +402,31 @@ const probeBackend = async function() {
 // the one model/upscale/webexport.py measured: a 320x180 step, which divides
 // every 16:9 resolution exactly, and the halo every model reads beyond it -
 // shared by the whole chain, so a tile out of one model is a tile into the
-// next. A tile near an edge is not cut short: its input window is slid back
-// into the frame, so every tile of a frame has the same input size and the
+// next. The frame's own edge has the halo too: a window reaches up to it past
+// the frame, where the edge pixels are read again, since what a model puts
+// there itself is its padding - the upscaler's zeros made the outermost row
+// of every picture a fifth darker. A tile kept short at the far edge slides
+// its window back, so every tile of a frame has the same input size and the
 // kept region moves inside it instead. A frame smaller than a tile is one
-// tile of its own size.
+// tile of its own size and the halo.
 const TILE_STEP = {"width": 320, "height": 180};
 const HALO = 4;
 
 // {width, height, tileWidth, tileHeight, across, tiles: [{x, y, w, h, ix, iy, ox, oy}]}
 // - the kept region (x, y, w, h) in frame pixels, the input window's origin
-// (ix, iy), where the kept region sits inside the window (ox, oy), and how
-// many tiles a row of them is, so a frame pixel finds its tile by division
+// (ix, iy) - up to the halo outside the frame - where the kept region sits
+// inside the window (ox, oy), and how many tiles a row of them is, so a frame
+// pixel finds its tile by division
 const planTiles = function(width, height) {
-    const tileWidth = Math.min(width, TILE_STEP["width"] + 2 * HALO);
-    const tileHeight = Math.min(height, TILE_STEP["height"] + 2 * HALO);
+    const tileWidth = Math.min(width, TILE_STEP["width"]) + 2 * HALO;
+    const tileHeight = Math.min(height, TILE_STEP["height"]) + 2 * HALO;
     const tiles = [];
     for (let y = 0; y < height; y += TILE_STEP["height"]) {
         const h = Math.min(TILE_STEP["height"], height - y);
-        const iy = Math.min(Math.max(0, y - HALO), height - tileHeight);
+        const iy = Math.min(y - HALO, height + HALO - tileHeight);
         for (let x = 0; x < width; x += TILE_STEP["width"]) {
             const w = Math.min(TILE_STEP["width"], width - x);
-            const ix = Math.min(Math.max(0, x - HALO), width - tileWidth);
+            const ix = Math.min(x - HALO, width + HALO - tileWidth);
             tiles.push({"x": x, "y": y, "w": w, "h": h, "ix": ix, "iy": iy, "ox": x - ix, "oy": y - iy});
         }
     }
@@ -355,6 +438,16 @@ const planTiles = function(width, height) {
         "across": Math.ceil(width / TILE_STEP["width"]),
         "tiles": tiles
     };
+};
+
+// the frame's condition as a CPU tensor, for a session whose graph declares
+// one - three numbers, which the runtime uploads beside the picture's buffer
+const toldInputs = function(ort, session, condition) {
+    if (session.inputNames.includes(CONDITION_NAME) === false) {
+        return {};
+    }
+    const values = Float32Array.from(condition ?? DEFAULT_CONDITION);
+    return {[CONDITION_NAME]: new ort.Tensor("float32", values, [values.length])};
 };
 
 // whether two pictures are of the same frame size, which is what a two-frame
@@ -387,7 +480,7 @@ struct Info {
     frame: vec2u        // the frame, in pixels
 };
 @group(0) @binding(0) var<uniform> info: Info;
-@group(0) @binding(1) var<storage, read> origins: array<vec2u>;     // each tile's window in the frame
+@group(0) @binding(1) var<storage, read> origins: array<vec2i>;     // each tile's window in the frame, up to the halo outside it
 @group(0) @binding(2) var frameSampler: sampler;
 @group(0) @binding(3) var frameTexture: texture_external;
 @group(0) @binding(4) var<storage, read_write> planes: array<f32>;
@@ -397,7 +490,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if (id.x >= info.tile.x || id.y >= info.tile.y) {
         return;
     }
-    let uv = (vec2f(origins[id.z] + id.xy) + 0.5) / vec2f(info.frame);
+    // outside the frame the sample is clamped to its edge pixel
+    let uv = (vec2f(origins[id.z] + vec2i(id.xy)) + 0.5) / vec2f(info.frame);
     let color = textureSampleBaseClampToEdge(frameTexture, frameSampler, uv);
     let n = info.tile.x * info.tile.y;
     let base = id.z * 3u * n + id.y * info.tile.x + id.x;
@@ -437,11 +531,17 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
 }
 `;
 
-const createGPUBackend = async function(ort) {
+const createGPUBackend = async function(ort, onLost) {
     const device = await ort.env.webgpu.device;
     if (typeof device === "undefined" || device === null) {
         throw new Error("The runtime has no WebGPU device");
     }
+    // a device lost - a driver reset, the GPU taken back by the system - is
+    // said rather than found: on a lost device most calls are quiet no-ops,
+    // so a run need not throw, and the picture would go black instead
+    device.lost.then(function(info) {
+        onLost(info);
+    });
 
     const canvas = new OffscreenCanvas(2, 2);
     const context = canvas.getContext("webgpu");
@@ -488,20 +588,46 @@ const createGPUBackend = async function(ort) {
 
     // storage buffers by size: a frame's worth of tiles is asked for at every
     // frame, and buffers allocated and freed thirty times a second is what a
-    // pool is for
+    // pool is for. The pool is of one frame size: a new size - which `auto`
+    // resolution makes at every bandwidth step - empties it and starts an
+    // epoch, and a buffer of an older epoch is destroyed when it comes back
+    // rather than kept for a size that may never return.
     const pool = new Map();
+    const epochOf = new WeakMap();
+    let epoch = 0;
+    let frameKey = "";
+    const setFrameSize = function(width, height) {
+        const key = width + "x" + height;
+        if (key === frameKey) {
+            return;
+        }
+        frameKey = key;
+        epoch++;
+        for (const free of pool.values()) {
+            for (const buffer of free) {
+                buffer.destroy();
+            }
+        }
+        pool.clear();
+    };
     const acquire = function(dims) {
         const bytes = bytesOf(dims);
         const free = pool.get(bytes);
         if (typeof free !== "undefined" && free.length > 0) {
             return free.pop();
         }
-        return device.createBuffer({
+        const buffer = device.createBuffer({
             "size": bytes,
             "usage": GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
         });
+        epochOf.set(buffer, epoch);
+        return buffer;
     };
     const giveBack = function(buffer) {
+        if (epochOf.get(buffer) !== epoch) {
+            buffer.destroy();
+            return;
+        }
         const free = pool.get(buffer.size) ?? [];
         free.push(buffer);
         pool.set(buffer.size, free);
@@ -511,11 +637,12 @@ const createGPUBackend = async function(ort) {
         "fromFrame": function(frame) {
             const width = frame.displayWidth || frame.codedWidth;
             const height = frame.displayHeight || frame.codedHeight;
+            setFrameSize(width, height);
             const plan = planTiles(width, height);
             const count = plan["tiles"].length;
             const dims = [count, 3, plan["tileHeight"], plan["tileWidth"]];
             device.queue.writeBuffer(infoIn, 0, new Uint32Array([plan["tileWidth"], plan["tileHeight"], width, height]));
-            const origins = new Uint32Array(count * 2);
+            const origins = new Int32Array(count * 2);
             plan["tiles"].forEach(function(tile, index) {
                 origins[index * 2] = tile["ix"];
                 origins[index * 2 + 1] = tile["iy"];
@@ -542,9 +669,10 @@ const createGPUBackend = async function(ort) {
 
         // every tile of every picture through the session at once: the feeds
         // are the graph's input names to pictures, each handed over as the
-        // tensor its buffer already is, nothing copied
-        "run": async function(session, feeds, scale) {
-            const inputs = {};
+        // tensor its buffer already is, nothing copied, and the frame's
+        // condition beside them for a told graph
+        "run": async function(session, feeds, scale, condition) {
+            const inputs = toldInputs(ort, session, condition);
             let picture = null;
             for (const [name, fed] of Object.entries(feeds)) {
                 inputs[name] = ort.Tensor.fromGpuBuffer(fed["buffer"], {"dataType": "float32", "dims": fed["dims"]});
@@ -680,11 +808,14 @@ const createCPUBackend = function(ort) {
             const tileHeight = plan["tileHeight"];
             const n = tileWidth * tileHeight;
             const data = new Float32Array(plan["tiles"].length * 3 * n);
+            // a window past the frame reads its edge pixel again, as the
+            // GPU's clamping sampler does
             plan["tiles"].forEach(function(tile, index) {
                 const base = index * 3 * n;
                 for (let y = 0; y < tileHeight; y++) {
+                    const row = Math.min(height - 1, Math.max(0, tile["iy"] + y)) * width;
                     for (let x = 0; x < tileWidth; x++) {
-                        const source = ((tile["iy"] + y) * width + tile["ix"] + x) * 4;
+                        const source = (row + Math.min(width - 1, Math.max(0, tile["ix"] + x))) * 4;
                         const i = base + y * tileWidth + x;
                         data[i] = pixels[source] / 255;
                         data[n + i] = pixels[source + 1] / 255;
@@ -695,8 +826,8 @@ const createCPUBackend = function(ort) {
             return {"plan": plan, "scale": 1, "dims": [plan["tiles"].length, 3, tileHeight, tileWidth], "data": data};
         },
 
-        "run": async function(session, feeds, scale) {
-            const inputs = {};
+        "run": async function(session, feeds, scale, condition) {
+            const inputs = toldInputs(ort, session, condition);
             let picture = null;
             for (const [name, fed] of Object.entries(feeds)) {
                 inputs[name] = new ort.Tensor("float32", fed["data"], fed["dims"]);
@@ -755,8 +886,8 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     ort.env.wasm.numThreads = 1;    // no cross-origin isolation, so no threads to have
     ort.env.logLevel = "warning";
 
-    const sessions = new Map();     // kind (and, for WebGL, the size) -> InferenceSession
-    const graphs = new Map();       // kind -> the model bytes, for the WebGL patching
+    const sessions = new Map();     // graph (and, for WebGL, the size) -> InferenceSession
+    const graphs = new Map();       // graph -> the model bytes, for the WebGL patching
     let engine = null;              // made after the first session, on the runtime's device
 
     let options = {...OFF};
@@ -764,10 +895,12 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     let previousTimestamp = -1;
     let interval = DEFAULT_INTERVAL;
     let isBusy = false;
-    let pending = [];               // frames that arrived while busy, newest last
+    let pending = [];               // {frame, condition} that arrived while busy, newest last
+    let lastCondition = null;       // the last frame's the reader could read, for one it could not
     let scheduled = [];             // {frame, timerId} not yet drawn
     let isClosed = false;
     let generation = 0;             // bumped by reset(), so a frame in flight across it is let go
+    let lostReason = "";            // why the GPU is gone, once it is: nothing turns on after
 
     // counted between two stats readings
     let runCount = 0;
@@ -780,31 +913,48 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         ...(backend === "webgpu" ? {"preferredOutputLocation": "gpu-buffer"} : {})
     };
 
-    // the graph's bytes, fetched once per kind
-    const loadGraph = async function(kind) {
-        if (graphs.has(kind) === false) {
-            const response = await fetch(MODELS[kind]["url"]);
-            if (response.ok === false) {
-                throw new Error("Cannot fetch the " + kind + " model (" + response.status + ")");
-            }
-            graphs.set(kind, new Uint8Array(await response.arrayBuffer()));
+    // a graph's float16 twin where the GPU computes in float16 (see The
+    // enhancer in CLIENT.md), asked of the adapter the runtime will take
+    let isHalf = null;
+    const urlOf = async function(name) {
+        if (backend !== "webgpu" || typeof MODELS[name]["half"] === "undefined") {
+            return MODELS[name]["url"];
         }
-        return graphs.get(kind);
+        if (isHalf === null) {
+            const adapter = await navigator.gpu.requestAdapter().catch(() => null);
+            isHalf = (adapter?.features.has("shader-f16") === true);
+        }
+        return (isHalf === true ? MODELS[name]["half"] : MODELS[name]["url"]);
     };
 
-    // a session for a kind - and, on WebGL, for the batch it is about to run
+    // the graph's bytes, fetched once per graph
+    const loadGraph = async function(name) {
+        if (graphs.has(name) === false) {
+            const response = await fetch(await urlOf(name));
+            if (response.ok === false) {
+                throw new Error("Cannot fetch the " + name + " model (" + response.status + ")");
+            }
+            graphs.set(name, new Uint8Array(await response.arrayBuffer()));
+        }
+        return graphs.get(name);
+    };
+
+    // a session for a graph - and, on WebGL, for the batch it is about to run
     // on, since that provider takes one shape per session. One shape at a
-    // time per kind: only a change of resolution changes it.
-    const loadSession = async function(kind, dims) {
+    // time per graph: only a change of resolution changes it.
+    const loadSession = async function(name, dims) {
+        if (lostReason !== "") {
+            throw new Error(lostReason);
+        }
         const isStatic = (backend === "webgl");
-        const key = (isStatic === true ? kind + "|" + dims[0] + "x" + dims[2] + "x" + dims[3] : kind);
+        const key = (isStatic === true ? name + "|" + dims[0] + "x" + dims[2] + "x" + dims[3] : name);
         if (sessions.has(key) === true) {
             return sessions.get(key);
         }
-        let bytes = await loadGraph(kind);
+        let bytes = await loadGraph(name);
         if (isStatic === true) {
             for (const [held, session] of [...sessions]) {
-                if (held.startsWith(kind + "|") === true) {
+                if (held.startsWith(name + "|") === true) {
                     sessions.delete(held);
                     await session.release?.();
                 }
@@ -821,9 +971,31 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     // device, which exists once a session does; on WebGL it wants nothing
     const ensureEngine = async function() {
         if (engine === null) {
-            engine = (backend === "webgpu" ? await createGPUBackend(ort) : createCPUBackend(ort));
+            engine = (backend === "webgpu" ? await createGPUBackend(ort, lose) : createCPUBackend(ort));
         }
         return engine;
+    };
+
+    // the GPU gone from under the runtime: what is on goes off once and says
+    // why, the pictures in flight are let go, and nothing turns on again. This
+    // build of the runtime makes its device once per module and never again,
+    // and the module lives as long as the worker, which lives as long as the
+    // room's canvas - so only a reload brings it back.
+    const lose = function(info) {
+        if (isClosed === true || lostReason !== "") {
+            return;
+        }
+        console.error("The enhancer's GPU was lost:", info?.reason, info?.message);
+        lostReason = "the GPU was reset or taken away - reload to turn it on again";
+        options = {...OFF};
+        for (const entry of scheduled) {
+            clearTimeout(entry["timerId"]);
+            entry["frame"].close();
+        }
+        scheduled = [];
+        dropPrevious();
+        generation++;
+        onError(lostReason);
     };
 
     // a frame drawn now, or held for its place in the interval. Whatever is
@@ -863,8 +1035,9 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         previousTimestamp = -1;
     };
 
-    // one frame through the steps its options ask for
-    const process = async function(frame) {
+    // one frame through the steps its options ask for, a told graph told the
+    // frame's condition
+    const process = async function(frame, condition) {
         const started = performance.now();
         const timestamp = frame.timestamp;
         await ensureEngine();
@@ -893,16 +1066,22 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             flushScheduled();
 
             const steps = schedule(options, previous !== null);
+            let anchor = -1;        // when this frame's interval started, by the first picture drawn of it
             for (const step of steps) {
                 let picture = current;
                 if (step["kind"] !== "frame") {
-                    const session = await loadSession(step["kind"], current["dims"]);
-                    picture = await engine.run(session, {"previous": previous, "current": current}, MODELS[step["kind"]]["scale"]);
+                    const session = await loadSession(step["graph"], current["dims"]);
+                    // the frame generators turned off while this frame ran: setOptions
+                    // let the previous picture go, and their step goes with it
+                    if (previous === null) {
+                        continue;
+                    }
+                    picture = await engine.run(session, feedsOf(step["graph"], [previous, current]), MODELS[step["graph"]]["scale"], condition);
                 }
                 if (options["upscale"] === true) {
                     const source = picture;
                     try {
-                        picture = await engine.run(await loadSession("upscale", source["dims"]), {"input": source}, MODELS["upscale"]["scale"]);
+                        picture = await engine.run(await loadSession("upscale", source["dims"]), feedsOf("upscale", [source]), MODELS["upscale"]["scale"], condition);
                     } finally {
                         if (source !== current) {
                             engine.release(source);
@@ -912,18 +1091,29 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 if (generation !== startGeneration) {
                     // reset while running: the stream this picture was of is gone
                     if (picture !== current) {
-                        engine.release(picture);
+                        engine?.release(picture);
                     }
                     return;
                 }
-                const delay = step["at"] * interval;
-                const out = engine.toFrame(picture, Math.round(timestamp + delay * 1000));
+                const out = engine.toFrame(picture, Math.round(timestamp + step["at"] * interval * 1000));
                 if (picture !== current) {
                     engine.release(picture);
                 }
-                present(out, delay);
+                // the first picture drawn is drawn now and fixes where the
+                // interval started - so a skipped step ahead of it moves
+                // nothing - and the rest are placed from there
+                const now = performance.now();
+                if (anchor < 0) {
+                    anchor = now - step["at"] * interval;
+                }
+                present(out, presentDelay(step["at"], interval, anchor, now));
             }
             await engine.sync();
+            if (generation !== startGeneration) {
+                // reset while the GPU finished it - most of a frame on WebGPU -
+                // so it is no previous picture of the next stream
+                return;
+            }
 
             dropPrevious();
             previous = current;
@@ -932,8 +1122,9 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             runCount++;
             runMs += performance.now() - started;
         } finally {
+            // a close() across the frame has taken the engine, and its pool
             if (isKept === false) {
-                engine.release(current);
+                engine?.release(current);
             }
         }
     };
@@ -948,18 +1139,22 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         isBusy = true;
         try {
             while (pending.length > 0 && isClosed === false) {
-                const frame = pending.shift();
+                const entry = pending.shift();
                 if (isAnyOn(options) === false) {
-                    onPresent(frame);
+                    flushScheduled();
+                    onPresent(entry["frame"]);
                     continue;
                 }
                 try {
-                    await process(frame);
+                    await process(entry["frame"], entry["condition"]);
                 } catch (error) {
-                    console.error("The enhancer failed:", error);
                     options = {...OFF};
                     dropPrevious();
-                    onError(String(error?.message ?? error));
+                    // a lost GPU fails the frame in flight too, and was said once already
+                    if (lostReason === "") {
+                        console.error("The enhancer failed:", error);
+                        onError(String(error?.message ?? error));
+                    }
                 }
             }
         } finally {
@@ -972,16 +1167,24 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             return backend;
         },
 
-        // what is on. The models it needs are loaded here, so a graph that
-        // will not load refuses the option rather than the next frame - on
-        // WebGL only fetched, since a session there waits for a size.
+        // what is on - of what this backend can run. The models it needs are
+        // loaded here, so a graph that will not load refuses the option rather
+        // than the next frame - on WebGL only fetched, since a session there
+        // waits for a size.
         "setOptions": async function(wanted) {
             const next = normalizeOptions(wanted);
-            for (const kind of modelsFor(next)) {
+            const runnable = kindsFor(backend);
+            for (const kind of KINDS) {
+                next[kind] = (next[kind] === true && runnable.includes(kind) === true);
+            }
+            if (lostReason !== "" && isAnyOn(next) === true) {
+                throw new Error(lostReason);
+            }
+            for (const name of modelsFor(next)) {
                 if (backend === "webgl") {
-                    await loadGraph(kind);
+                    await loadGraph(name);
                 } else {
-                    await loadSession(kind, null);
+                    await loadSession(name, null);
                 }
             }
             const wasTwoFrame = (options["interpolate"] === true || options["extrapolate"] === true);
@@ -999,32 +1202,38 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             return isAnyOn(options);
         },
 
-        // a decoded frame, which is the enhancer's from here: drawn as it is
+        // a decoded frame, which is the enhancer's from here, and what
+        // ./stream-h264.js read of it (null for nothing): drawn as it is
         // while nothing is on, enhanced otherwise
-        "push": function(frame) {
+        "push": function(frame, picture = null) {
             if (isClosed === true) {
                 frame.close();
                 return;
             }
+            lastCondition = conditionOf(picture) ?? lastCondition;
             if (isAnyOn(options) === false && isBusy === false) {
+                // a generated picture still waiting from before the switch
+                // went off is older than this one, so it goes first
+                flushScheduled();
                 onPresent(frame);
                 return;
             }
             while (pending.length >= PENDING_MAX) {
-                pending.shift().close();
+                pending.shift()["frame"].close();
                 droppedCount++;
             }
-            pending.push(frame);
+            pending.push({"frame": frame, "condition": lastCondition});
             drain();
         },
 
         // the stream is over or restarted: nothing of the last picture carries
         // into the next one
         "reset": function() {
-            for (const frame of pending) {
-                frame.close();
+            for (const entry of pending) {
+                entry["frame"].close();
             }
             pending = [];
+            lastCondition = null;
             for (const entry of scheduled) {
                 clearTimeout(entry["timerId"]);
                 entry["frame"].close();
@@ -1067,5 +1276,5 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     };
 };
 
-export { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
-export default { KINDS, OFF, TILE_STEP, HALO, schedule, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, bytesOf, patchInputDims, readInputDims, probeBackend, createEnhancer };
+export { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames, probeBackend, createEnhancer };
+export default { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames, probeBackend, createEnhancer };
