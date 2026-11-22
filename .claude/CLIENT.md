@@ -1333,16 +1333,22 @@ rather than in it.
 **All three graphs are trained, and the pipeline is real.**
 `media/models/upscale.onnx` is the told upscaler (see The QP of a
 frame), exported by the desktop-streamer-ai repository's notebook 23: on its
-validation patches +0.024 SSIM-Y and +1.5 dB luma over bicubic, a 3×3 stem,
-two residual blocks at 24 channels and a frozen bicubic skip, 60 KB. In
+validation patches (video, desktop screens and photos) +0.0398 SSIM-Y and
++1.62 dB luma over bicubic, a 3×3 stem, two residual blocks at 24 channels and
+a frozen bicubic skip, 60 KB. On that repository's whole streamed clips it
+stays above plain H.264 with bicubic at the same bits on all three kinds at
+every bitrate measured (its notebook 15). In
 Chrome's WebGPU on an RTX 3090 the graph takes 9.4 ms for a 960×540 frame and
 70 ms for a 1080p one, so a 1080p stream upscaled to 4K keeps about 13 of its
-30 frames, and with all three on - three pictures upscaled a frame - about 6.
-What it gains depends on how the host scaled the frame down: on a desktop
+30 frames, and with all three on - three pictures upscaled a frame - about 6
+(timed on the earlier graph of the same shape). The earlier graph, trained on
+video alone, gained according to how the host scaled the frame down: on a desktop
 scene scaled the way swscale and a GPU scaler do it (antialiased) it is
 +1.2 to +1.7 dB luma over bicubic on text and code, after a box filter
 nothing, and on soft photographic regions it is 1.2 to 4.6 dB *below*
-bicubic, sharpening what it was not trained on. The frame generators are
+bicubic, sharpening what it was not trained on. The present graph is trained
+on photos and screens too, and has not been measured on that scene again. The
+frame generators are
 that repository's tile searches - one motion per tile, found from the cost of
 every offset within ±4 px on half-resolution luma, which is ±8 px of motion a
 frame (240 px a second at 30 fps), nothing learned in the search; within it
@@ -1401,7 +1407,8 @@ runtime asks for that feature too. Everywhere else the client uses the float32
 graph: the WebGL provider has no float16. On a GTX 1660 Ti, with the host on
 the same GPU, it took a 1280×720 stream's frame from 65.5 ms to 41 (15 to 24
 frames of 30 shown), an 852×480 one from 37.6 to 24 (it keeps up now) and a
-1080p one from 215 to 86, within 0.17/255 of the float32 graph. Of the 24.5 ms
+1080p one from 215 to 86 (the earlier graph of the same shape; the present
+float16 graph is within 0.36/255 of its float32 one). Of the 24.5 ms
 saved at 720p, about 15 is the convolutions themselves (their GPU time went
 from 49 to 34 ms). The other ~10 ms is the runtime's buffer cache. Its free
 list keeps a few buffers of each size class (six of the 128 MiB class the
@@ -1416,15 +1423,19 @@ measurements are desktop-streamer-ai's `src/upscale/bottlenecks_gtx1660ti.md`.
 one, and it does not keep up everywhere: 34.6 ms for a 1280×720 stream's 16
 tiles on a GTX 1660 Ti, where 60 frames a second leave the graph about 9.
 `upscaleFast.onnx` (and `upscaleFast_fp16.onnx`) is desktop-streamer-ai's
-notebook 24, built for that card: the same told contract - `input`,
+notebook 24's body, built for that card and trained and exported by its
+notebook 27: the same told contract - `input`,
 `condition`, `output`, the 4 px halo, a float16 twin - with its body at a
 quarter of the pixels (a 4×4 stride-2 stem makes one feature vector per 2×2
 cell, one residual block, a 1×1 tail writes the cell's 16 luma values) and a
-frozen 4×4 bicubic skip, so colour stays bicubic's. On that repository's
-validation patches it keeps about two thirds of the quality one's gain over
-bicubic (+0.0167 SSIM-Y and +0.92 dB luma, against +0.0243 and +1.52), and
+frozen 4×4 bicubic skip, so colour stays bicubic's. Its loss is the SSIM
+loss plus a tenth of that repository's JND loss: trained on the SSIM loss
+alone, the same body lifted a bright flat area by up to 2/255, past the 1/255
+`tests/enhance.test.js` allows; this one stays within 0.66/255 there. On that
+repository's validation patches it keeps 57% of the quality one's gain over
+bicubic (+0.0228 SSIM-Y and +0.79 dB luma, against +0.0398 and +1.62), and
 on an RTX 3090 its 16 tiles take 1.35 ms against 6.65. On the 1660 Ti it is
-*predicted* at 7.1-7.6 ms from the 3090's kernels and that card's per-kernel
+*predicted* at 7.1-7.8 ms from the 3090's kernels and that card's per-kernel
 ratios - not measured there yet (that repository's `reference_60fps.md`).
 `UPSCALERS` maps the choice to the graph. **"auto"** (the default) starts on
 quality and falls back to fast once the GPU cannot keep up:
