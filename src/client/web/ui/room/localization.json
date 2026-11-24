@@ -189,6 +189,20 @@
                 "en": "2×",
                 "hu": "2×"
             },
+            "upscaler": {
+                "auto": {
+                    "en": "Auto",
+                    "hu": "Automatikus"
+                },
+                "quality": {
+                    "en": "Quality",
+                    "hu": "Minőség"
+                },
+                "fast": {
+                    "en": "Fast",
+                    "hu": "Gyors"
+                }
+            },
             "interpolate": {
                 "en": "Frame interpolation",
                 "hu": "Képkocka-interpoláció"
@@ -224,6 +238,10 @@
             "reading": {
                 "en": "{backend} · {ms} ms per frame",
                 "hu": "{backend} · {ms} ms képkockánként"
+            },
+            "readingUpscaler": {
+                "en": "{backend} · {ms} ms per frame · {upscaler}",
+                "hu": "{backend} · {ms} ms képkockánként · {upscaler}"
             },
             "idle": {
                 "en": "{backend} · ready",

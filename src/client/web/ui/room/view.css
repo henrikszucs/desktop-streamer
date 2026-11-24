@@ -234,6 +234,12 @@
     padding-inline-start: 1rem;
 }
 
+/* a choice that belongs to the row above it (which upscaler): indented by
+   that row's mark and gap, so its own mark sits under the row's text */
+menu > li.room-menu-sub {
+    padding-inline-start: 3.5rem;
+}
+
 /* a row of a menu that is a line of text and not a choice: the reason the
    rows above it are greyed, or the reading of what they cost */
 .room-menu-note {

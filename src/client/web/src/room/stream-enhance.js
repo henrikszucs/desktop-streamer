@@ -5,7 +5,8 @@
 // out is handed on as frames the drawer draws like any other. Three
 // enhancements - upscale, frame interpolation, frame extrapolation - each a
 // graph under /media/models: the upscaler trained and told each frame's QP,
-// the two others the desktop-streamer-ai repository's tile searches. Runs in the
+// in a quality and a fast build, the two others the desktop-streamer-ai
+// repository's tile searches. Runs in the
 // worker beside the decoder and never touches the document. The reasoning is
 // .claude/CLIENT.md, "The enhancer".
 //
@@ -30,6 +31,7 @@ const ORT_WASM_PATH = new URL("/libs/onnxruntime/", import.meta.url).href;
 // both on, the pair that places theirs by thirds (3x, see schedule).
 const MODELS = {
     "upscale": {"url": new URL("/media/models/upscale.onnx", import.meta.url).href, "half": new URL("/media/models/upscale_fp16.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
+    "upscaleFast": {"url": new URL("/media/models/upscaleFast.onnx", import.meta.url).href, "half": new URL("/media/models/upscaleFast_fp16.onnx", import.meta.url).href, "inputs": ["input"], "scale": 2},
     "interpolate": {"url": new URL("/media/models/interpolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
     "extrapolate": {"url": new URL("/media/models/extrapolate.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
     "interpolate3x": {"url": new URL("/media/models/interpolate3x.onnx", import.meta.url).href, "inputs": ["previous", "current"], "scale": 1},
@@ -38,6 +40,19 @@ const MODELS = {
 const KINDS = ["upscale", "interpolate", "extrapolate"];
 const GRAPHS = Object.keys(MODELS);
 const OUTPUT_NAME = "output";
+
+// the two upscalers and the graph each runs: the told 24x2 for quality, and
+// the one a quarter of the pixels wide for a GPU that cannot keep up with it.
+// "auto" starts on quality and falls back (see chooseUpscaler).
+const UPSCALERS = {"quality": "upscale", "fast": "upscaleFast"};
+const UPSCALER_MODES = ["auto", ...Object.keys(UPSCALERS)];
+
+// what "auto" judges by: the frames after a change that are not judged, since
+// the first runs of a model compile its kernels; the frames judged together;
+// and the share of the frame interval the quality upscaler may take
+const AUTO_SETTLE = 5;
+const AUTO_WINDOW = 15;
+const AUTO_LIMIT = 0.9;
 
 // what a told graph is told of a frame, beside the picture: `condition`, the
 // slice QP / 51, the loop filter and I frame as 0 or 1, read by
@@ -58,14 +73,16 @@ const MAX_INTERVAL = 200;
 // since a picture that is late is worth less than the one after it
 const PENDING_MAX = 1;
 
-const OFF = Object.freeze({"upscale": false, "interpolate": false, "extrapolate": false});
+const OFF = Object.freeze({"upscale": false, "interpolate": false, "extrapolate": false, "upscaler": "auto"});
 
-// the options as the three booleans they are, whatever was handed in
+// the options as the three booleans they are and the upscaler chosen,
+// whatever was handed in
 const normalizeOptions = function(options) {
     const out = {};
     for (const kind of KINDS) {
         out[kind] = (options?.[kind] === true);
     }
+    out["upscaler"] = (UPSCALER_MODES.includes(options?.["upscaler"]) === true ? options["upscaler"] : "auto");
     return out;
 };
 
@@ -129,14 +146,54 @@ const conditionOf = function(picture) {
 };
 
 // the graphs a set of options needs loaded: with both frame generators on,
-// their 3x pair
+// their 3x pair, and for "auto" both upscalers, so a fall back is not a load
 const modelsFor = function(options) {
     const isBoth = (options["interpolate"] === true && options["extrapolate"] === true);
+    const upscaler = options["upscaler"] ?? "auto";
     return KINDS.filter(function(kind) {
         return options[kind] === true;
-    }).map(function(kind) {
-        return (isBoth === true && kind !== "upscale" ? kind + "3x" : kind);
+    }).flatMap(function(kind) {
+        if (kind === "upscale") {
+            return (upscaler === "auto" ? Object.values(UPSCALERS) : [UPSCALERS[upscaler]]);
+        }
+        return [isBoth === true ? kind + "3x" : kind];
     });
+};
+
+// the graph that upscales: the one chosen, or for "auto" the one it is on
+const upscalerGraph = function(options, auto) {
+    const upscaler = options["upscaler"] ?? "auto";
+    return UPSCALERS[upscaler === "auto" ? auto["model"] : upscaler];
+};
+
+// where "auto" starts, for one piece of work: the quality upscaler
+const newAuto = function(workload = "") {
+    return {"model": "quality", "workload": workload, "settle": AUTO_SETTLE, "costs": [], "intervals": []};
+};
+
+const median = function(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+};
+
+// "auto" after one more frame ({ms, interval, workload}): it falls back to the
+// fast upscaler once a window of frames costs, at the median, more than
+// AUTO_LIMIT of their interval, and goes back to quality only when the work
+// changes - the frame's size or how many pictures a frame is made into.
+// Pure, and tested in tests/enhance.test.js.
+const chooseUpscaler = function(state, sample) {
+    if (sample["workload"] !== state["workload"]) {
+        return newAuto(sample["workload"]);
+    }
+    if (state["settle"] > 0) {
+        return {...state, "settle": state["settle"] - 1};
+    }
+    const costs = [...state["costs"], sample["ms"]].slice(-AUTO_WINDOW);
+    const intervals = [...state["intervals"], sample["interval"]].slice(-AUTO_WINDOW);
+    if (state["model"] === "quality" && costs.length === AUTO_WINDOW && median(costs) > AUTO_LIMIT * median(intervals)) {
+        return {...newAuto(state["workload"]), "model": "fast"};
+    }
+    return {...state, "costs": costs, "intervals": intervals};
 };
 
 // the enhancements a backend can run: the frame generators read with
@@ -901,6 +958,7 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     let isClosed = false;
     let generation = 0;             // bumped by reset(), so a frame in flight across it is let go
     let lostReason = "";            // why the GPU is gone, once it is: nothing turns on after
+    let auto = newAuto();           // which upscaler "auto" is on, and what it has measured
 
     // counted between two stats readings
     let runCount = 0;
@@ -987,7 +1045,7 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         }
         console.error("The enhancer's GPU was lost:", info?.reason, info?.message);
         lostReason = "the GPU was reset or taken away - reload to turn it on again";
-        options = {...OFF};
+        options = {...OFF, "upscaler": options["upscaler"]};   // off, the upscaler chosen kept
         for (const entry of scheduled) {
             clearTimeout(entry["timerId"]);
             entry["frame"].close();
@@ -1080,8 +1138,9 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 }
                 if (options["upscale"] === true) {
                     const source = picture;
+                    const graph = upscalerGraph(options, auto);
                     try {
-                        picture = await engine.run(await loadSession("upscale", source["dims"]), feedsOf("upscale", [source]), MODELS["upscale"]["scale"], condition);
+                        picture = await engine.run(await loadSession(graph, source["dims"]), feedsOf(graph, [source]), MODELS[graph]["scale"], condition);
                     } finally {
                         if (source !== current) {
                             engine.release(source);
@@ -1119,8 +1178,12 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             previous = current;
             isKept = true;
             previousTimestamp = timestamp;
+            const ms = performance.now() - started;
             runCount++;
-            runMs += performance.now() - started;
+            runMs += ms;
+            if (options["upscale"] === true && options["upscaler"] === "auto") {
+                auto = chooseUpscaler(auto, {"ms": ms, "interval": interval, "workload": current["dims"].join("x") + "/" + steps.length});
+            }
         } finally {
             // a close() across the frame has taken the engine, and its pool
             if (isKept === false) {
@@ -1148,7 +1211,7 @@ const createEnhancer = async function({backend, onPresent, onError}) {
                 try {
                     await process(entry["frame"], entry["condition"]);
                 } catch (error) {
-                    options = {...OFF};
+                    options = {...OFF, "upscaler": options["upscaler"]};   // off, the upscaler chosen kept
                     dropPrevious();
                     // a lost GPU fails the frame in flight too, and was said once already
                     if (lostReason === "") {
@@ -1189,6 +1252,10 @@ const createEnhancer = async function({backend, onPresent, onError}) {
             }
             const wasTwoFrame = (options["interpolate"] === true || options["extrapolate"] === true);
             const isTwoFrame = (next["interpolate"] === true || next["extrapolate"] === true);
+            // upscaling turned on, or another upscaler chosen: "auto" starts over on quality
+            if (next["upscale"] !== options["upscale"] || next["upscaler"] !== options["upscaler"]) {
+                auto = newAuto();
+            }
             options = next;
             if (wasTwoFrame === true && isTwoFrame === false) {
                 dropPrevious();
@@ -1244,14 +1311,15 @@ const createEnhancer = async function({backend, onPresent, onError}) {
         },
 
         // the reading since the last one: what a frame costs from arrival to
-        // its last picture done on the GPU, and how many were not worth
-        // waiting for
+        // its last picture done on the GPU, how many were not worth waiting
+        // for, and which upscaler runs ("quality" or "fast", null while off)
         "getStats": function() {
             const stats = {
                 "backend": backend,
                 "ms": (runCount > 0 ? Math.round(runMs / runCount * 10) / 10 : 0),
                 "runs": runCount,
-                "dropped": droppedCount
+                "dropped": droppedCount,
+                "upscaler": (options["upscale"] === true ? (options["upscaler"] === "auto" ? auto["model"] : options["upscaler"]) : null)
             };
             runCount = 0;
             runMs = 0;
@@ -1276,5 +1344,5 @@ const createEnhancer = async function({backend, onPresent, onError}) {
     };
 };
 
-export { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames, probeBackend, createEnhancer };
-export default { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames, probeBackend, createEnhancer };
+export { KINDS, GRAPHS, OFF, UPSCALERS, UPSCALER_MODES, AUTO_SETTLE, AUTO_WINDOW, AUTO_LIMIT, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, upscalerGraph, newAuto, chooseUpscaler, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames, probeBackend, createEnhancer };
+export default { KINDS, GRAPHS, OFF, UPSCALERS, UPSCALER_MODES, AUTO_SETTLE, AUTO_WINDOW, AUTO_LIMIT, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, upscalerGraph, newAuto, chooseUpscaler, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames, probeBackend, createEnhancer };

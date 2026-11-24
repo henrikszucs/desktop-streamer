@@ -18,7 +18,8 @@ which is not a problem but the three stand-ins the client runs today (see below)
 `src/client/web/media/models/` holds the graphs the client's enhancement menu runs
 through ONNX Runtime Web (`src/client/web/src/room/stream-enhance.js`), all trained now by
 the desktop-streamer-ai repository: `upscale.onnx` (notebook 23, told each frame's slice QP,
-loop filter and I or P as a second input, `condition`, float32 `[3]`), and the frame
+loop filter and I or P as a second input, `condition`, float32 `[3]`), the fast
+`upscaleFast.onnx` under the same contract (notebook 27's training of notebook 24's body), and the frame
 generators `interpolate.onnx` and `extrapolate.onnx` (`src/frame_gen_intra/` notebook 1,
 `src/frame_gen_extra/` notebook 13) with the `3x` twins the client runs when both are on.
 `mock/make_mock_models.py` writes its mocks over them only when named - `--upscale`,

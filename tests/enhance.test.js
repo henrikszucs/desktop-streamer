@@ -11,7 +11,7 @@ import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 // first-party dependencies
-import { KINDS, GRAPHS, OFF, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames } from "../src/client/web/src/room/stream-enhance.js";
+import { KINDS, GRAPHS, OFF, UPSCALERS, UPSCALER_MODES, AUTO_SETTLE, AUTO_WINDOW, AUTO_LIMIT, TILE_STEP, HALO, CONDITION_NAME, DEFAULT_CONDITION, schedule, presentDelay, conditionOf, planTiles, isSameShape, normalizeOptions, isAnyOn, modelsFor, upscalerGraph, newAuto, chooseUpscaler, kindsFor, feedsOf, bytesOf, patchInputDims, readInputDims, readInputNames } from "../src/client/web/src/room/stream-enhance.js";
 
 const modelsPath = path.resolve(import.meta.dirname, "..", "src", "client", "web", "media", "models");
 const runtimePath = path.resolve(import.meta.dirname, "..", "src", "client", "web", "libs", "onnxruntime");
@@ -29,12 +29,16 @@ const runtimePath = path.resolve(import.meta.dirname, "..", "src", "client", "we
 // through the runtime the client loads, on the one provider it has under
 // Node - the CPU's - which answers what the GPU's does to a millionth.
 
-test("the options are three booleans whatever was handed in", () => {
+test("the options are three booleans and an upscaler whatever was handed in", () => {
     assert.deepEqual(KINDS, ["upscale", "interpolate", "extrapolate"]);
+    assert.deepEqual(UPSCALER_MODES, ["auto", "quality", "fast"]);
     assert.deepEqual(normalizeOptions(undefined), OFF);
     assert.deepEqual(normalizeOptions({"upscale": 1, "interpolate": "yes"}), OFF);
-    assert.deepEqual(normalizeOptions({"upscale": true, "other": true}), {"upscale": true, "interpolate": false, "extrapolate": false});
+    assert.deepEqual(normalizeOptions({"upscale": true, "other": true}), {"upscale": true, "interpolate": false, "extrapolate": false, "upscaler": "auto"});
+    assert.equal(normalizeOptions({"upscaler": "fast"})["upscaler"], "fast");
+    assert.equal(normalizeOptions({"upscaler": "turbo"})["upscaler"], "auto");
     assert.equal(isAnyOn(OFF), false);
+    assert.equal(isAnyOn({...OFF, "upscaler": "fast"}), false, "an upscaler chosen is not upscaling on");
     assert.equal(isAnyOn({...OFF, "extrapolate": true}), true);
 });
 
@@ -116,8 +120,11 @@ test("a picture's place is counted from the frame's first picture, not from when
 
 test("only the models that are on are loaded, and both frame generators as their 3x pair", () => {
     assert.deepEqual(modelsFor(OFF), []);
-    assert.deepEqual(modelsFor({"upscale": true, "interpolate": false, "extrapolate": true}), ["upscale", "extrapolate"]);
-    assert.deepEqual(modelsFor({"upscale": true, "interpolate": true, "extrapolate": true}), ["upscale", "interpolate3x", "extrapolate3x"]);
+    assert.deepEqual(modelsFor({"upscale": true, "interpolate": false, "extrapolate": true, "upscaler": "quality"}), ["upscale", "extrapolate"]);
+    assert.deepEqual(modelsFor({"upscale": true, "interpolate": true, "extrapolate": true, "upscaler": "fast"}), ["upscaleFast", "interpolate3x", "extrapolate3x"]);
+    // "auto" has both upscalers loaded, so falling back is not a load
+    assert.deepEqual(modelsFor({"upscale": true, "interpolate": false, "extrapolate": false, "upscaler": "auto"}), ["upscale", "upscaleFast"]);
+    assert.deepEqual(modelsFor({"upscale": false, "interpolate": true, "extrapolate": false, "upscaler": "fast"}), ["interpolate"]);
     for (const upscale of [false, true]) {
         for (const interpolate of [false, true]) {
             for (const extrapolate of [false, true]) {
@@ -129,6 +136,61 @@ test("only the models that are on are loaded, and both frame generators as their
             }
         }
     }
+});
+
+test("the upscaler that runs is the one chosen, or for auto the one it is on", () => {
+    assert.deepEqual(UPSCALERS, {"quality": "upscale", "fast": "upscaleFast"});
+    assert.equal(upscalerGraph({...OFF, "upscaler": "quality"}, newAuto()), "upscale");
+    assert.equal(upscalerGraph({...OFF, "upscaler": "fast"}, newAuto()), "upscaleFast");
+    assert.equal(upscalerGraph({...OFF, "upscaler": "auto"}, newAuto()), "upscale", "auto starts on quality");
+    assert.equal(upscalerGraph({...OFF, "upscaler": "auto"}, {...newAuto(), "model": "fast"}), "upscaleFast");
+    assert.equal(upscalerGraph({...OFF, "upscaler": "quality"}, {...newAuto(), "model": "fast"}), "upscale", "a choice is not overruled");
+});
+
+// frames of `ms` each, `interval` apart, on one piece of work
+const runAuto = function(state, count, ms, interval, workload) {
+    for (let i = 0; i < count; i++) {
+        state = chooseUpscaler(state, {"ms": ms, "interval": interval, "workload": workload});
+    }
+    return state;
+};
+
+test("auto stays on quality while the GPU keeps up, and falls back to fast once a window does not", () => {
+    const work = "16x3x188x328/1";
+    let state = runAuto(newAuto(), 1 + AUTO_SETTLE + 3 * AUTO_WINDOW, 0.75 * 33.3, 33.3, work);
+    assert.equal(state["model"], "quality", "a frame inside the limit keeps quality");
+    state = runAuto(newAuto(), 1 + AUTO_SETTLE + AUTO_WINDOW - 1, 36, 33.3, work);
+    assert.equal(state["model"], "quality", "one frame short of a window decides nothing");
+    state = runAuto(state, 1, 36, 33.3, work);
+    assert.equal(state["model"], "fast", "a window over " + AUTO_LIMIT + " of the interval falls back");
+    state = runAuto(state, 10 * AUTO_WINDOW, 5, 33.3, work);
+    assert.equal(state["model"], "fast", "and stays there while the work is the same");
+});
+
+test("auto does not judge the frames that settle a model in, and judges the median", () => {
+    const work = "36x3x188x328/3";
+    // the first runs of a model compile its kernels: slow, and not counted
+    let state = runAuto(newAuto(), 1, 12, 16.7, work);
+    state = runAuto(state, AUTO_SETTLE, 500, 16.7, work);
+    state = runAuto(state, AUTO_WINDOW, 12, 16.7, work);
+    assert.equal(state["model"], "quality");
+    // a few slow frames in a window are not a GPU that cannot keep up
+    state = runAuto(newAuto(), 1 + AUTO_SETTLE, 12, 16.7, work);
+    for (let i = 0; i < AUTO_WINDOW; i++) {
+        state = chooseUpscaler(state, {"ms": (i % 4 === 0 ? 40 : 12), "interval": 16.7, "workload": work});
+    }
+    assert.equal(state["model"], "quality");
+});
+
+test("auto tries quality again when the work changes: another frame size, or another number of pictures a frame", () => {
+    let state = runAuto(newAuto(), 1 + AUTO_SETTLE + AUTO_WINDOW, 40, 16.7, "16x3x188x328/1");
+    assert.equal(state["model"], "fast");
+    state = runAuto(state, 1, 40, 16.7, "4x3x188x328/1");
+    assert.equal(state["model"], "quality", "a smaller frame tries quality again");
+    state = runAuto(state, AUTO_SETTLE + AUTO_WINDOW, 40, 16.7, "4x3x188x328/1");
+    assert.equal(state["model"], "fast");
+    state = runAuto(state, 1, 40, 16.7, "4x3x188x328/2");
+    assert.equal(state["model"], "quality", "a frame generator turned on tries quality again");
 });
 
 test("the frame generators run on WebGPU only", () => {
@@ -145,11 +207,14 @@ test("a picture's bytes are its float32 count rounded to 16", () => {
     assert.equal(bytesOf([1, 6, 3, 3]) % 16, 0);
 });
 
-// the upscaler is the trained one, told a frame's condition as a second
-// input of three numbers; the frame generators, 2x and 3x, take two frames
+// the upscalers are the trained ones, quality and fast, told a frame's
+// condition as a second input of three numbers; the frame generators, 2x and
+// 3x, take two frames
+const UPSCALER_GRAPHS = Object.values(UPSCALERS);
 const PICTURE_DIMS = ["N", 3, "H", "W"];
 const INPUT_DIMS = {
     "upscale": [PICTURE_DIMS, [3]],
+    "upscaleFast": [PICTURE_DIMS, [3]],
     "interpolate": [PICTURE_DIMS, PICTURE_DIMS],
     "extrapolate": [PICTURE_DIMS, PICTURE_DIMS],
     "interpolate3x": [PICTURE_DIMS, PICTURE_DIMS],
@@ -160,7 +225,7 @@ test("every graph is there and takes a batch of tiles of any size, one frame per
     assert.deepEqual(GRAPHS, Object.keys(INPUT_DIMS));
     for (const kind of GRAPHS) {
         const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, kind + ".onnx")));
-        assert.deepEqual(readInputDims(bytes), INPUT_DIMS[kind], kind + " takes " + (kind === "upscale" ? "one frame and its condition" : "two frames"));
+        assert.deepEqual(readInputDims(bytes), INPUT_DIMS[kind], kind + " takes " + (UPSCALER_GRAPHS.includes(kind) === true ? "one frame and its condition" : "two frames"));
     }
 });
 
@@ -455,9 +520,10 @@ const TILE_HEIGHT = TILE_STEP["height"] + 2 * HALO;
 test("every graph runs in the client's runtime and answers a batch of tiles", async () => {
     const batch = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 0, 0), render(TILE_WIDTH, TILE_HEIGHT, 900, 300)]);
     for (const graph of GRAPHS) {
-        const pictures = (graph === "upscale" ? [batch] : [batch, batch]);
+        const isUpscaler = UPSCALER_GRAPHS.includes(graph);
+        const pictures = (isUpscaler === true ? [batch] : [batch, batch]);
         const output = await runGraph(graph, pictures);
-        const scale = (graph === "upscale" ? 2 : 1);
+        const scale = (isUpscaler === true ? 2 : 1);
         assert.deepEqual(output["dims"], [2, 3, TILE_HEIGHT * scale, TILE_WIDTH * scale], graph);
         assert.equal(output["data"].every(Number.isFinite), true, graph + " answers a number for every pixel");
     }
@@ -499,7 +565,7 @@ test("each frame generator shows the moment schedule() presents it at, one motio
 
 test("a frame generator gives a picture that does not move back as it is", async () => {
     const still = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 40, 40), render(TILE_WIDTH, TILE_HEIGHT, 700, 90)]);
-    for (const graph of GRAPHS.filter((name) => name !== "upscale")) {
+    for (const graph of GRAPHS.filter((name) => UPSCALER_GRAPHS.includes(name) === false)) {
         const output = await runGraph(graph, [still, still]);
         assert.equal(maxDifference(output["data"], still["data"]) < 1e-4, true, graph);
     }
@@ -507,12 +573,11 @@ test("a frame generator gives a picture that does not move back as it is", async
 
 // tiled and merged is the whole frame run at once with its edges read again
 // by the halo, the way the tiles read them: no seam between two tiles, and
-// no padding at the frame's edge
-test("the upscaler reads no further than the halo", async () => {
+// no padding at the frame's edge - for each upscaler, the fast one's body
+// working on 2x2 cells as well
+test("each upscaler reads no further than the halo", async () => {
     const frame = render(500, 300, 20, 30);
     const {plan, batch} = tilesOf(frame);
-    const tiled = stitch(plan, await runGraph("upscale", [batch]));
-
     const wide = render(500 + 2 * HALO, 300 + 2 * HALO, 0, 0, 0);
     for (let c = 0; c < 3; c++) {
         for (let y = 0; y < wide["height"]; y++) {
@@ -521,57 +586,66 @@ test("the upscaler reads no further than the halo", async () => {
             }
         }
     }
-    const whole = await runGraph("upscale", [asBatch([wide])]);
-    let max = 0;
-    for (let c = 0; c < 3; c++) {
-        for (let y = 0; y < tiled["height"]; y++) {
-            for (let x = 0; x < tiled["width"]; x++) {
-                const inWhole = (c * wide["height"] * 2 + y + 2 * HALO) * wide["width"] * 2 + x + 2 * HALO;
-                max = Math.max(max, Math.abs(tiled["data"][(c * tiled["height"] + y) * tiled["width"] + x] - whole["data"][inWhole]));
+    for (const graph of UPSCALER_GRAPHS) {
+        const tiled = stitch(plan, await runGraph(graph, [batch]));
+        const whole = await runGraph(graph, [asBatch([wide])]);
+        let max = 0;
+        for (let c = 0; c < 3; c++) {
+            for (let y = 0; y < tiled["height"]; y++) {
+                for (let x = 0; x < tiled["width"]; x++) {
+                    const inWhole = (c * wide["height"] * 2 + y + 2 * HALO) * wide["width"] * 2 + x + 2 * HALO;
+                    max = Math.max(max, Math.abs(tiled["data"][(c * tiled["height"] + y) * tiled["width"] + x] - whole["data"][inWhole]));
+                }
             }
         }
+        assert.equal(max < 1e-5, true, graph + ": tiled and whole differ by " + max);
     }
-    assert.equal(max < 1e-5, true, "tiled and whole differ by " + max);
 });
 
 // the graph pads with zeros, and the outermost rows of a picture were a
 // fifth darker for it before the frame's edge was given a halo of its own
-test("the upscaler leaves a flat picture flat out to its edges, and listens to its condition", async () => {
-    for (const level of [0.1, 0.5, 0.9]) {
-        const {plan, batch} = tilesOf(render(500, 300, 0, 0, level));
-        for (const condition of [DEFAULT_CONDITION, [18 / 51, 0, 1], [40 / 51, 1, 0]]) {
-            const output = stitch(plan, await runGraph("upscale", [batch], condition));
-            const worst = output["data"].reduce((max, value) => Math.max(max, Math.abs(value - level)), 0);
-            assert.equal(worst < 1 / 255, true, "level " + level + " told " + condition.join(",") + " is off by " + (worst * 255).toFixed(2) + "/255");
+test("each upscaler leaves a flat picture flat out to its edges, and listens to its condition", async () => {
+    for (const graph of UPSCALER_GRAPHS) {
+        for (const level of [0.1, 0.5, 0.9]) {
+            const {plan, batch} = tilesOf(render(500, 300, 0, 0, level));
+            for (const condition of [DEFAULT_CONDITION, [18 / 51, 0, 1], [40 / 51, 1, 0]]) {
+                const output = stitch(plan, await runGraph(graph, [batch], condition));
+                const worst = output["data"].reduce((max, value) => Math.max(max, Math.abs(value - level)), 0);
+                assert.equal(worst < 1 / 255, true, graph + " at level " + level + " told " + condition.join(",") + " is off by " + (worst * 255).toFixed(2) + "/255");
+            }
         }
+        const picture = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 300, 200)]);
+        const low = await runGraph(graph, [picture], [18 / 51, 0, 1]);
+        const high = await runGraph(graph, [picture], [40 / 51, 1, 0]);
+        assert.equal(maxDifference(low["data"], high["data"]) > 1e-3, true, graph + ": the condition changes the picture");
     }
-    const picture = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 300, 200)]);
-    const low = await runGraph("upscale", [picture], [18 / 51, 0, 1]);
-    const high = await runGraph("upscale", [picture], [40 / 51, 1, 0]);
-    assert.equal(maxDifference(low["data"], high["data"]) > 1e-3, true, "the condition changes the picture");
 });
 
 test("a graph patched for WebGL still loads, and answers what the original does", async () => {
     const batch = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 0, 0), render(TILE_WIDTH, TILE_HEIGHT, 400, 100)]);
-    const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, "upscale.onnx")));
-    const patched = await sessionOf("upscale", patchInputDims(bytes, [2, TILE_HEIGHT, TILE_WIDTH]));
-    const fixed = await runGraph("upscale", [batch], DEFAULT_CONDITION, patched);
-    const dynamic = await runGraph("upscale", [batch]);
-    assert.deepEqual(fixed["dims"], dynamic["dims"]);
-    assert.equal(maxDifference(fixed["data"], dynamic["data"]) < 1e-6, true);
+    for (const graph of UPSCALER_GRAPHS) {
+        const bytes = new Uint8Array(await fs.readFile(path.join(modelsPath, graph + ".onnx")));
+        const patched = await sessionOf(graph, patchInputDims(bytes, [2, TILE_HEIGHT, TILE_WIDTH]));
+        const fixed = await runGraph(graph, [batch], DEFAULT_CONDITION, patched);
+        const dynamic = await runGraph(graph, [batch]);
+        assert.deepEqual(fixed["dims"], dynamic["dims"], graph);
+        assert.equal(maxDifference(fixed["data"], dynamic["data"]) < 1e-6, true, graph);
+    }
 });
 
 // the WASM provider has no float16 Conv and runs it through casts, so this
 // holds the file to the float32 graph's inputs and answers, not the GPU's math
-test("the float16 upscaler takes what the float32 one does, and answers it within an 8-bit step", async () => {
-    const half = await sessionOf("upscale_fp16");
-    assert.deepEqual(half.inputNames, (await sessionOf("upscale")).inputNames);
+test("each float16 upscaler takes what its float32 one does, and answers it within an 8-bit step", async () => {
     const batch = asBatch([render(TILE_WIDTH, TILE_HEIGHT, 0, 0), render(TILE_WIDTH, TILE_HEIGHT, 400, 100)]);
-    for (const condition of [DEFAULT_CONDITION, [18 / 51, 0, 1], [40 / 51, 1, 0]]) {
-        const full = await runGraph("upscale", [batch], condition);
-        const fp16 = await runGraph("upscale", [batch], condition, half);
-        assert.deepEqual(fp16["dims"], full["dims"]);
-        const worst = maxDifference(fp16["data"], full["data"]);
-        assert.equal(worst < 1 / 255, true, "told " + condition.join(",") + " is off by " + (worst * 255).toFixed(2) + "/255");
+    for (const graph of UPSCALER_GRAPHS) {
+        const half = await sessionOf(graph + "_fp16");
+        assert.deepEqual(half.inputNames, (await sessionOf(graph)).inputNames, graph);
+        for (const condition of [DEFAULT_CONDITION, [18 / 51, 0, 1], [40 / 51, 1, 0]]) {
+            const full = await runGraph(graph, [batch], condition);
+            const fp16 = await runGraph(graph, [batch], condition, half);
+            assert.deepEqual(fp16["dims"], full["dims"], graph);
+            const worst = maxDifference(fp16["data"], full["data"]);
+            assert.equal(worst < 1 / 255, true, graph + " told " + condition.join(",") + " is off by " + (worst * 255).toFixed(2) + "/255");
+        }
     }
 });
