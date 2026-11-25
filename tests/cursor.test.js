@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import zlib from "node:zlib";
 
 // first-party dependencies
-import { cursorFingerprint, hasPicture, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor } from "../src/client/web/src/room/cursor.js";
+import { cursorFingerprint, hasPicture, isBlank, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor } from "../src/client/web/src/room/cursor.js";
 import { pictureBox, createInput } from "../src/client/web/src/room/stream-input.js";
 import { createStream } from "../src/client/web/src/room/stream.js";
 
@@ -34,6 +34,9 @@ const icon = function(width, height, fill = 1, xOffset = 0, yOffset = 0) {
 // and a pointer the host has hidden, as the addon reports one
 const HIDDEN = {"width": 0, "height": 0, "data": new Uint8Array(0), "xOffset": 0, "yOffset": 0};
 
+// or hidden by an application handing the system a shape with nothing in it
+const BLANK = {"width": 16, "height": 16, "data": new Uint8Array(16 * 16 * 4), "xOffset": 0, "yOffset": 0};
+
 const SCREEN = {"width": 2560, "height": 1440, "x": 0, "y": 0, "index": 0, "scaleFactor": 1};
 
 //
@@ -52,6 +55,20 @@ test("a pointer the host is not showing has no fingerprint at all", () => {
     assert.equal(cursorFingerprint(HIDDEN), "");
     assert.equal(cursorFingerprint(undefined), "");
     assert.equal(cursorFingerprint({"width": 8, "height": 8, "data": [1, 2, 3]}), "");
+});
+
+test("a shape shows nothing when it has no picture, or not one pixel that is not transparent", () => {
+    assert.equal(isBlank(HIDDEN), true);
+    assert.equal(isBlank(BLANK), true);
+    assert.equal(isBlank(icon(16, 16)), false);
+    // one pixel is enough, the last one included
+    const data = new Uint8Array(16 * 16 * 4);
+    data[data.length - 1] = 1;
+    assert.equal(isBlank({...BLANK, "data": data}), false);
+    // colour behind no alpha is still nothing to see
+    assert.equal(isBlank({...BLANK, "data": new Uint8Array(16 * 16 * 4).fill(255).map(function(value, i) {
+        return (i % 4 === 3 ? 0 : value);
+    })}), true);
 });
 
 //
@@ -170,10 +187,16 @@ const wait = function(ms) {
 // a host whose pointer is whatever the test says it is. `looks` counts the
 // shape's id being asked, every tick, and `reads` the picture being read,
 // which is only worth doing when that id changed. A shape of 0 is a pointer
-// the host hides, `pin` a place something on the host holds it at whatever
-// the peer does, and `moves` the distances the peer moved it by.
+// the host hides, one below 0 a shape with nothing to see in it, `isShownOnMove`
+// a hidden pointer that comes back once it is moved - hidden while typing, or
+// by a player gone idle - and `moves` the distances the peer moved it by.
 const fakeHost = function() {
-    const state = {"shape": 1, "x": 480, "y": 270, "looks": 0, "reads": 0, "pin": null, "moves": []};
+    const state = {"shape": 1, "x": 480, "y": 270, "looks": 0, "reads": 0, "isShownOnMove": false, "moves": []};
+    const shownOnMove = function() {
+        if (state["isShownOnMove"] === true && state["shape"] <= 0) {
+            state["shape"] = 1;
+        }
+    };
     const sent = [];
     const target = new EventTarget();
     const room = {
@@ -210,19 +233,24 @@ const fakeHost = function() {
                     },
                     "getIcon": function() {
                         state["reads"]++;
-                        return (state["shape"] === 0 ? HIDDEN : icon(16, 16, state["shape"]));
+                        if (state["shape"] === 0) {
+                            return HIDDEN;
+                        }
+                        return (state["shape"] < 0 ? BLANK : icon(16, 16, state["shape"]));
                     },
                     "getPosition": function() {
                         return {"x": state["x"], "y": state["y"]};
                     },
                     "setPosition": function(x, y) {
-                        state["x"] = state["pin"]?.["x"] ?? x;
-                        state["y"] = state["pin"]?.["y"] ?? y;
+                        state["x"] = x;
+                        state["y"] = y;
+                        shownOnMove();
                     },
                     "moveBy": function(x, y) {
                         state["moves"].push([x, y]);
-                        state["x"] = state["pin"]?.["x"] ?? state["x"] + x;
-                        state["y"] = state["pin"]?.["y"] ?? state["y"] + y;
+                        state["x"] += x;
+                        state["y"] += y;
+                        shownOnMove();
                     }
                 }
             },
@@ -329,7 +357,7 @@ const locks = function(fake) {
     });
 };
 
-test("a pointer the host hides and holds is held on the peer too, until it is shown", async (t) => {
+test("a pointer that stays hidden while the peer moves it is held on the peer too, until it is shown", async (t) => {
     const fake = fakeHost();
     const stream = createStream(fake.ctx);
     // a failed assertion must not leave the watch ticking
@@ -338,10 +366,9 @@ test("a pointer the host hides and holds is held on the peer too, until it is sh
     await wait(100);
     fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
 
-    // the game takes it: hidden, and back in the middle after every move
+    // the game takes it, hidden however the peer moves it
     fake.state["shape"] = 0;
-    fake.state["pin"] = {"x": 960, "y": 540};
-    await drive(fake, 250);
+    await drive(fake, 300);
     assert.deepEqual(locks(fake), [true], "said once, and only once it was sure");
 
     // from then on the peer sends distances, and those are what a game reads
@@ -353,52 +380,57 @@ test("a pointer the host hides and holds is held on the peer too, until it is sh
 
     // the game lets go - a menu, the desktop - and shows the pointer again
     fake.state["shape"] = 5;
-    fake.state["pin"] = null;
     await wait(100);
     assert.deepEqual(locks(fake), [true, false]);
-    await stream.stop();
 });
 
-test("a pointer that is only hidden, or only held, is not held on the peer", async (t) => {
+test("a shape with nothing to see in it is a hidden pointer too", async (t) => {
     const fake = fakeHost();
     const stream = createStream(fake.ctx);
-    // a failed assertion must not leave the watch ticking
+    t.after(stream.stop);
+    fake.room.dispatch("connected", {"isHost": true});
+    await wait(100);
+    fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
+
+    fake.state["shape"] = -1;
+    await drive(fake, 300);
+    assert.deepEqual(locks(fake), [true]);
+});
+
+test("a pointer that is hidden only until it moves, or that nobody moves, is not held on the peer", async (t) => {
+    const fake = fakeHost();
+    const stream = createStream(fake.ctx);
     t.after(stream.stop);
     fake.room.dispatch("connected", {"isHost": true});
     await wait(100);
 
-    // a pointer held where nobody drives is nothing the peer would walk off
+    // hidden where nobody drives is nothing the peer would walk off
     fake.state["shape"] = 0;
-    fake.state["pin"] = {"x": 960, "y": 540};
-    await drive(fake, 200);
+    await drive(fake, 250);
     assert.deepEqual(locks(fake), [], "nobody driving");
 
-    // hidden while typing, or by a player gone idle: it goes where it is put
+    // hidden while the peer drives but does not move it - it typed
     fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
-    fake.state["pin"] = null;
-    await drive(fake, 200);
-    assert.deepEqual(locks(fake), [], "hidden but free");
+    await wait(300);
+    assert.deepEqual(locks(fake), [], "not moved");
 
-    // a window that keeps a pointer it shows inside it is still a pointer the
-    // peer can see and follow
-    fake.state["shape"] = 1;
-    fake.state["pin"] = {"x": 960, "y": 540};
-    await drive(fake, 200);
-    assert.deepEqual(locks(fake), [], "held but shown");
-    await stream.stop();
+    // and back the moment it is moved, as a pointer hidden while typing or by
+    // a player gone idle is
+    fake.state["isShownOnMove"] = true;
+    await drive(fake, 250);
+    assert.deepEqual(locks(fake), [], "shown again");
+    assert.equal(fake.state["shape"], 1);
 });
 
 test("letting go of the mouse lets go of the lock, and a restart of the share keeps it", async (t) => {
     const fake = fakeHost();
     const stream = createStream(fake.ctx);
-    // a failed assertion must not leave the watch ticking
     t.after(stream.stop);
     fake.room.dispatch("connected", {"isHost": true});
     await wait(100);
     fake.room.dispatch("message", {"data": {"kind": "control", "isControl": true}});
     fake.state["shape"] = 0;
-    fake.state["pin"] = {"x": 960, "y": 540};
-    await drive(fake, 250);
+    await drive(fake, 300);
     assert.deepEqual(locks(fake), [true]);
 
     // a new frame rate is a new encoder on the same display, not a new game
@@ -411,7 +443,6 @@ test("letting go of the mouse lets go of the lock, and a restart of the share ke
 
     fake.room.dispatch("message", {"data": {"kind": "control", "isControl": false}});
     assert.deepEqual(locks(fake), [true, false]);
-    await stream.stop();
 });
 
 // the peer's half: a canvas, the document it is in and a frame clock, enough
@@ -476,7 +507,7 @@ const fakePeer = function(options = {}) {
     const ctx = {"conf": {"local": {"exitShortcuts": options["exitShortcuts"] ?? []}}, "desktop": {"isAvailable": false}};
     const input = createInput(canvas, ctx, function(message) {
         sent.push(...message["events"]);
-    }, options["onRelease"] ?? function() {});
+    }, options["onRelease"] ?? function() {}, function() {}, options["onLockRefused"] ?? function() {});
     input.setPicture({"width": 1920, "height": 1080});
     const pointer = function(type, fields) {
         canvas.dispatchEvent(Object.assign(new Event(type), {"pointerId": 1, "button": 0, "clientX": 0, "clientY": 0,
@@ -513,13 +544,24 @@ test("the peer holds its pointer while the host's is held, and moves it by dista
 
 test("a lock the browser refuses waits for a click, and one without raw counts is asked for plainly", async (t) => {
     let isRefused = true;
-    const peer = fakePeer({"isRaw": false, "isRefused": function() { return isRefused; }});
+    let refusals = 0;
+    const peer = fakePeer({
+        "isRaw": false,
+        "isRefused": function() { return isRefused; },
+        "onLockRefused": function() { refusals++; }
+    });
     t.after(peer.restore);
     peer.input.enable();
 
     peer.input.setLocked(true);
     await wait(0);
     assert.equal(peer.doc.pointerLockElement, null, "no gesture yet");
+    assert.equal(refusals, 1, "and the screen is told, so it can ask for the click");
+
+    // a click refused too is the person's own doing, and nothing to say again
+    peer.pointer("pointerdown", {"clientX": 960, "clientY": 540});
+    await wait(5);
+    assert.equal(refusals, 1);
 
     // the click is the gesture, and it still reaches the host
     isRefused = false;

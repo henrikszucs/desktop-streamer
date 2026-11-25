@@ -279,6 +279,7 @@ const RoomScreen = class extends Screen {
         ctx["stream"].addEventListener("share", this.onStreamShare);
         ctx["stream"].addEventListener("clipboard", this.onStreamClipboard);
         ctx["stream"].addEventListener("hold", this.onStreamHold);
+        ctx["stream"].addEventListener("lock", this.onStreamLock);
 
         // the host's pointer - the picture of it and where it is. The stage
         // changing shape - a window resized, the fullscreen taken - moves the
@@ -575,6 +576,14 @@ const RoomScreen = class extends Screen {
     onStreamControl = (event) => {
         if (event.detail?.["isControl"] === false && this.settings["isControl"] === true) {
             this.setControl(false);
+        }
+    };
+
+    // the host's pointer is held and the browser would not hold this one
+    // without a click: the pointer has gone, so say what brings it back
+    onStreamLock = (event) => {
+        if (event.detail?.["isRefused"] === true && this.isOpen === true) {
+            this.ctx["ui"].snackbar.show(this.ctx["localization"].get("room.control.lock"));
         }
     };
 

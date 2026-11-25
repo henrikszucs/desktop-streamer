@@ -33,7 +33,7 @@
 import { HEADER_SIZE, FLAG_KEY, FLAG_AUDIO, FLAG_CONFIG, packFrame, packConfig, readConfig, createReassembler } from "./frame.js";
 import { buildLines, parseEncoders, CODEC, AUDIO_PCM, listAudioParams, parseAudioDevices, buildAudioLines } from "./stream-ffmpeg.js";
 import { createInput } from "./stream-input.js";
-import { cursorFingerprint, packCursor } from "./cursor.js";
+import { cursorFingerprint, isBlank, packCursor } from "./cursor.js";
 import { createClipboard } from "./clipboard.js";
 
 // what the host runs at before the peer says anything: the room bar's own
@@ -121,10 +121,8 @@ const CURSOR_POLL = 1000 / 30;
 const CURSOR_SHAPES = 32;
 
 // a pointer something on the host holds - a game, a pointer-locked page - is
-// one that is hidden and not where the peer's move put it, on LOCK_TICKS ticks
-// running; LOCK_SLACK is the rounding between a move and the read after it
-const LOCK_TICKS = 3;
-const LOCK_SLACK = 2;
+// one that stays hidden while the peer moves it, on LOCK_TICKS ticks running
+const LOCK_TICKS = 5;
 
 // the most one relative move may carry, in mouse counts: the addon's own limit
 const MOVE_BY_MAX = 100000;
@@ -1197,11 +1195,12 @@ const countOf = function(value) {
 const createControl = function(ctx) {
     const control = ctx["desktop"]?.["Control"];
     let screen = null;
+    let target = null;      // where the last move put the pointer
 
-    // what one event did to the pointer: where a move put it, or nothing
+    // whether one event moved the pointer
     const apply = function(event) {
         if (control === undefined || screen === null) {
-            return null;
+            return false;
         }
         const mouse = control["Mouse"];
         const keyboard = control["Keyboard"];
@@ -1212,7 +1211,9 @@ const createControl = function(ctx) {
                 const x = screen["x"] + event["x"] * screen["width"];
                 const y = screen["y"] + event["y"] * screen["height"];
                 mouse.setPosition(x, y);
-                return {"x": x, "y": y};
+                const isMoved = (target === null || target["x"] !== x || target["y"] !== y);
+                target = {"x": x, "y": y};
+                return isMoved;
             }
             case "move-by": {
                 // a distance, for a pointer the host holds: what a game reads,
@@ -1221,6 +1222,7 @@ const createControl = function(ctx) {
                 const y = countOf(event["y"]);
                 if ((x !== 0 || y !== 0) && typeof mouse.moveBy === "function") {
                     mouse.moveBy(x, y);
+                    return true;
                 }
                 break;
             }
@@ -1247,7 +1249,7 @@ const createControl = function(ctx) {
                 }
                 break;
         }
-        return null;
+        return false;
     };
 
     return {
@@ -1256,17 +1258,17 @@ const createControl = function(ctx) {
         },
         "start": function(sharedScreen) {
             screen = sharedScreen;
+            target = null;
         },
-        // and where the last move of the batch put the pointer, or null for
-        // a batch that placed it nowhere
+        // and whether the batch moved the pointer at all
         "apply": function(events) {
-            let target = null;
+            let isMoved = false;
             if (Array.isArray(events) === false) {
-                return target;
+                return isMoved;
             }
             for (const event of events) {
                 try {
-                    target = apply(event) ?? target;
+                    isMoved = (apply(event) === true || isMoved);
                 } catch (error) {
                     // the system refusing input - a UAC prompt, the lock
                     // screen - is a state rather than a fault, and would be a
@@ -1276,7 +1278,7 @@ const createControl = function(ctx) {
                     }
                 }
             }
-            return target;
+            return isMoved;
         },
         // a peer that lets go leaves nothing pressed behind it: the addon
         // keeps every button and key it pressed and did not release yet
@@ -1329,8 +1331,10 @@ const createCursorWatch = function(ctx, say) {
     let position = "";              // and the position, as it was last said
     let isControlled = false;
     let isPacking = false;
-    let target = null;              // where the peer's last move put the pointer
-    let lockStreak = 0;             // ticks running that found it somewhere else
+    let readId = null;              // the id of the shape last read
+    let readBlank = false;          // and whether it showed nothing
+    let isMoved = false;            // whether the peer moved the pointer since the last tick
+    let lockStreak = 0;             // ticks running it stayed hidden while it did
     let isLocked = false;           // and whether the peer was told it is held
 
     // the shape, if it is one the peer has not been given. The addon's id of
@@ -1349,6 +1353,8 @@ const createCursorWatch = function(ctx, say) {
         } catch (error) {
             return;     // the addon is gone with the shell
         }
+        readId = id;
+        readBlank = isBlank(icon);
         const fingerprint = cursorFingerprint(icon);
         if (fingerprint === shape) {
             shapeId = id;
@@ -1418,31 +1424,31 @@ const createCursorWatch = function(ctx, say) {
     };
 
     // whether something on the host holds the pointer - a game, a pointer-
-    // locked page: hidden, and not where the peer's move put it, on LOCK_TICKS
-    // ticks running. Held, the peer moves it by distances it cannot walk off
-    // its window with, until the pointer is shown again.
+    // locked page: hidden, and still hidden on LOCK_TICKS ticks running on
+    // which the peer moved it, where a pointer hidden while typing or by an
+    // idle player is shown again. Held, the peer moves it by distances it
+    // cannot walk off its window with, until the pointer is shown again.
     const readLock = function(id) {
-        const moved = target;
-        target = null;
+        const wasMoved = isMoved;
+        isMoved = false;
         if (screen === null || isControlled === false || id === null || typeof mouse?.["moveBy"] !== "function") {
             return;
         }
-        if (id !== 0) {
+        // hidden: no shape at all, or one with nothing to see in it; a shape
+        // not read yet - one waiting behind another being packed - says nothing
+        const isHidden = (id === 0 ? true : (id === readId ? readBlank : null));
+        if (isHidden === null) {
+            return;
+        }
+        if (isHidden === false) {
             lockStreak = 0;
             setLocked(false);
             return;
         }
-        if (isLocked === true || moved === null) {
-            return;     // nothing the peer did to judge it by
-        }
-        let at = null;
-        try {
-            at = mouse.getPosition();
-        } catch (error) {
+        if (isLocked === true || wasMoved === false) {
             return;
         }
-        const isHeld = (Math.abs(at["x"] - moved["x"]) + Math.abs(at["y"] - moved["y"]) > LOCK_SLACK);
-        lockStreak = (isHeld === true ? lockStreak + 1 : 0);
+        lockStreak++;
         if (lockStreak >= LOCK_TICKS) {
             lockStreak = 0;
             setLocked(true);
@@ -1451,7 +1457,8 @@ const createCursorWatch = function(ctx, say) {
 
     // one tick, every half. The position goes first: it is the cheap one and
     // it must not wait behind a shape being packed. The shape's id is read
-    // once for the two that need it.
+    // once for the two that need it, and the shape before the lock, which
+    // asks whether a new one shows anything.
     //
     // The next one is scheduled against the clock the run started on rather
     // than against this one, so the work inside a tick is not added to the gap
@@ -1466,10 +1473,10 @@ const createCursorWatch = function(ctx, say) {
         } catch (error) {
             id = null;      // the addon is gone with the shell
         }
-        readLock(id);
         readShape(id).catch(function(error) {
             console.error("Cannot read the pointer:", error);
         });
+        readLock(id);
         if (screen === null) {
             return;     // stopped inside the tick
         }
@@ -1486,8 +1493,10 @@ const createCursorWatch = function(ctx, say) {
         screen = null;
         shape = "";
         shapeId = null;
+        readId = null;
+        readBlank = false;
         position = "";
-        target = null;
+        isMoved = false;
         lockStreak = 0;
     };
 
@@ -1513,16 +1522,13 @@ const createCursorWatch = function(ctx, say) {
         "setControlled": function(isOn) {
             isControlled = (isOn === true);
             position = "";
-            target = null;
+            isMoved = false;
             lockStreak = 0;
             setLocked(false);
         },
-        // where the peer's last move put the pointer, for the next tick to
-        // look for it there
-        "noteTarget": function(at) {
-            if (at !== null && typeof at === "object") {
-                target = at;
-            }
+        // the peer moved the pointer, for the next tick to judge it by
+        "noteMoved": function(isOn) {
+            isMoved = (isOn === true || isMoved);
         },
         "stop": function() {
             forget();
@@ -1536,7 +1542,8 @@ const createCursorWatch = function(ctx, say) {
 // the module
 //
 const createStream = function(ctx) {
-    // events: started, stopped, stats, size, control
+    // events: started, stopped, failed, stats, size, share, control, hold, lock,
+    // cursor, clipboard, enhance
     const events = new EventTarget();
     const emit = function(type, detail) {
         events.dispatchEvent(new CustomEvent(type, {"detail": detail}));
@@ -2063,7 +2070,7 @@ const createStream = function(ctx) {
                     cursorWatch?.setControlled(message["isControl"] === true);
                     break;
                 case "input":
-                    cursorWatch?.noteTarget(control?.apply(message["events"]) ?? null);
+                    cursorWatch?.noteMoved(control?.apply(message["events"]));
                     break;
                 case "clipboard":
                     setClipboardOn(message["isClipboard"] === true);
@@ -2138,6 +2145,8 @@ const createStream = function(ctx) {
                 emit("control", {"isControl": false});
             }, function(delay) {
                 emit("hold", {"delay": delay});
+            }, function() {
+                emit("lock", {"isRefused": true});
             });
             input.setPicture(picture);
             // coming back to the picture is what says this machine may have

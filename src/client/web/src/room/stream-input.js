@@ -24,7 +24,8 @@
 // innermost thing: the pointer lock while there is one, then the fullscreen,
 // the keyboard and the mouse otherwise. `onHold(delay)` says a hold has
 // started and `onHold(null)` that it ended, either way, so the screen can draw
-// the wait.
+// the wait. `onLockRefused()` says the browser would not lock the pointer when
+// the host asked, so the screen can ask for the click it is waiting for.
 
 const BUTTONS = ["left", "middle", "right", "back", "forward"];
 
@@ -67,7 +68,7 @@ const builtinShortcuts = function(isDesktop) {
     return [{"delay": 1, "keys": ["Escape"]}, {"delay": 1, "keys": ["F11"]}];
 };
 
-const createInput = function(canvas, ctx, send, onRelease, onHold = function() {}) {
+const createInput = function(canvas, ctx, send, onRelease, onHold = function() {}, onLockRefused = function() {}) {
     let isEnabled = false;
     let queue = [];
     let flushId = -1;
@@ -86,8 +87,9 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
 
     // held where the host's is, or the pointer walks off the window while the
     // host's goes on turning: raw counts where the platform has them, a
-    // browser that wants a gesture first is asked again at the next click
-    const lock = function() {
+    // browser that wants a gesture first is asked again at the next click -
+    // and said to be, when it was the host's word that asked
+    const lock = function(isTold = false) {
         if (isEnabled === false || isLockWanted === false || isLockPending === true
             || isPointerLocked() === true || typeof canvas.requestPointerLock !== "function") {
             return;
@@ -105,8 +107,11 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
                 throw error;
             }
             return request();
-        }).catch(function() {
+        }).catch(function(error) {
             // refused: no gesture yet, or the person just took it back
+            if (isTold === true && isEnabled === true && isLockWanted === true) {
+                onLockRefused(error);
+            }
         }).finally(function() {
             isLockPending = false;
         });
@@ -369,7 +374,7 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         "setLocked": function(isLocked) {
             isLockWanted = (isLocked === true);
             if (isLockWanted === true) {
-                lock();
+                lock(true);
             } else {
                 unlock();
             }
