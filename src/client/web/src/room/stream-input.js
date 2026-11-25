@@ -8,17 +8,23 @@
 //
 // Events out, batched per animation frame so a fast mouse is one message:
 //     {"t": "move", "x": 0..1, "y": 0..1}
+//     {"t": "move-by", "x": counts, "y": counts}      while the pointer is locked
 //     {"t": "down" | "up", "b": "left" | "middle" | "right" | "back" | "forward"}
 //     {"t": "scroll", "x": notches, "y": notches}     (fractions of one included)
 //     {"t": "key", "c": KeyboardEvent.code, "d": isDown}
+//
+// While the host says something there holds its pointer (`setLocked`), this
+// one is locked over the canvas too and moves go as distances - see
+// .claude/CLIENT.md, "A pointer the host holds".
 //
 // The way out is a shortcut held for its delay - Escape for a second in a
 // browser, five under the desktop shell, and whatever the settings added -
 // because every key the peer presses goes to the host, this one included, so
 // a key alone cannot mean "stop": holding it is what does. It lets go of the
-// innermost thing: the fullscreen while there is one, the keyboard and the
-// mouse otherwise. `onHold(delay)` says a hold has started and `onHold(null)`
-// that it ended, either way, so the screen can draw the wait.
+// innermost thing: the pointer lock while there is one, then the fullscreen,
+// the keyboard and the mouse otherwise. `onHold(delay)` says a hold has
+// started and `onHold(null)` that it ended, either way, so the screen can draw
+// the wait.
 
 const BUTTONS = ["left", "middle", "right", "back", "forward"];
 
@@ -71,6 +77,51 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     const held = new Map();         // KeyboardEvent.code -> KeyboardEvent.key
     const downButtons = new Set();  // the mouse buttons down right now
     let picture = null;             // the size of the picture being drawn
+    let isLockWanted = false;       // whether the host's pointer is held
+    let isLockPending = false;      // and a lock asked for and not answered yet
+
+    const isPointerLocked = function() {
+        return document.pointerLockElement === canvas;
+    };
+
+    // held where the host's is, or the pointer walks off the window while the
+    // host's goes on turning: raw counts where the platform has them, a
+    // browser that wants a gesture first is asked again at the next click
+    const lock = function() {
+        if (isEnabled === false || isLockWanted === false || isLockPending === true
+            || isPointerLocked() === true || typeof canvas.requestPointerLock !== "function") {
+            return;
+        }
+        const request = function(options) {
+            try {
+                return Promise.resolve(canvas.requestPointerLock(options));
+            } catch (error) {
+                return Promise.reject(error);
+            }
+        };
+        isLockPending = true;
+        request({"unadjustedMovement": true}).catch(function(error) {
+            if (error?.["name"] !== "NotSupportedError") {
+                throw error;
+            }
+            return request();
+        }).catch(function() {
+            // refused: no gesture yet, or the person just took it back
+        }).finally(function() {
+            isLockPending = false;
+        });
+    };
+    const unlock = function() {
+        if (isPointerLocked() === true) {
+            document.exitPointerLock?.();
+        }
+    };
+    // a lock granted after it stopped being wanted is let go at once
+    document.addEventListener("pointerlockchange", function() {
+        if (isPointerLocked() === true && (isEnabled === false || isLockWanted === false)) {
+            unlock();
+        }
+    });
 
     const shortcuts = function() {
         const own = (ctx["conf"]["local"]?.["exitShortcuts"] ?? []).filter(function(shortcut) {
@@ -90,9 +141,14 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     };
 
     const push = function(event) {
-        // a move replaces the move before it: the host only wants the newest
-        if (event["t"] === "move" && queue.length > 0 && queue[queue.length - 1]["t"] === "move") {
+        // a move replaces the move before it: the host only wants the newest.
+        // A distance is added to the one before it, since each is a part.
+        const last = queue[queue.length - 1];
+        if (event["t"] === "move" && last?.["t"] === "move") {
             queue[queue.length - 1] = event;
+        } else if (event["t"] === "move-by" && last?.["t"] === "move-by") {
+            last["x"] = Math.round((last["x"] + event["x"]) * 100) / 100;
+            last["y"] = Math.round((last["y"] + event["y"]) * 100) / 100;
         } else {
             queue.push(event);
         }
@@ -117,6 +173,15 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
     };
 
     const onPointerMove = function(event) {
+        // a locked pointer has no place, only the distance it moved
+        if (isPointerLocked() === true) {
+            const x = Math.round((Number(event.movementX) || 0) * 100) / 100;
+            const y = Math.round((Number(event.movementY) || 0) * 100) / 100;
+            if (x !== 0 || y !== 0) {
+                push({"t": "move-by", "x": x, "y": y});
+            }
+            return;
+        }
         const position = positionOf(event);
         if (typeof position === "undefined") {
             return;
@@ -130,6 +195,8 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         }
         event.preventDefault();
         canvas.focus?.();
+        // a click is the gesture a lock the browser refused was waiting for
+        lock();
         // the release is the canvas's wherever it happens - over the bar, or
         // outside the window - or the host is left holding the button
         try {
@@ -192,6 +259,10 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
             shortcutTimerId = setTimeout(function() {
                 shortcutTimerId = -1;
                 onHold(null);
+                if (isPointerLocked() === true) {
+                    unlock();
+                    return;
+                }
                 if (document.fullscreenElement !== null) {
                     document.exitFullscreen?.().catch?.(function() {});
                     return;
@@ -239,6 +310,8 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
             return;
         }
         isEnabled = true;
+        // the host starts a peer that takes the mouse from a free pointer
+        isLockWanted = false;
         canvas.tabIndex = 0;
         canvas.addEventListener("pointermove", onPointerMove);
         canvas.addEventListener("pointerdown", onPointerDown);
@@ -257,6 +330,8 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
             return;
         }
         isEnabled = false;
+        isLockWanted = false;
+        unlock();
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointerup", onPointerUp);
@@ -288,6 +363,16 @@ const createInput = function(canvas, ctx, send, onRelease, onHold = function() {
         // letterbox around it is
         "setPicture": function(size) {
             picture = (typeof size === "undefined" || size === null ? null : {...size});
+        },
+        // whether something on the host holds its pointer, as the host says:
+        // this one is held over the canvas while the peer drives
+        "setLocked": function(isLocked) {
+            isLockWanted = (isLocked === true);
+            if (isLockWanted === true) {
+                lock();
+            } else {
+                unlock();
+            }
         },
         "enable": enable,
         "release": release,

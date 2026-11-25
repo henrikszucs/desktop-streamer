@@ -21,6 +21,7 @@
 //     {"kind": "share-end"}
 //     {"kind": "cursor", "image", "width", "height", "hotspotX", "hotspotY", "imageWidth", "imageHeight"}
 //     {"kind": "cursor-move", "x": 0..1, "y": 0..1}
+//     {"kind": "cursor-lock", "isLocked"}         the host's pointer held, see createCursorWatch
 // and either way while that switch is on:
 //     {"kind": "clipboard-text", "text"}          see clipboard.js
 // `screens` is the host's displays as it lists them ({width, height,
@@ -118,6 +119,15 @@ const CLIPBOARD_POLL = 700;
 // application is a handful.
 const CURSOR_POLL = 1000 / 30;
 const CURSOR_SHAPES = 32;
+
+// a pointer something on the host holds - a game, a pointer-locked page - is
+// one that is hidden and not where the peer's move put it, on LOCK_TICKS ticks
+// running; LOCK_SLACK is the rounding between a move and the read after it
+const LOCK_TICKS = 3;
+const LOCK_SLACK = 2;
+
+// the most one relative move may carry, in mouse counts: the addon's own limit
+const MOVE_BY_MAX = 100000;
 
 // what a pointer picture from the host may be: the PNG data URL cursor.js packs
 // and nothing else. The peer puts it in a CSS url() and an img src, so a string
@@ -1178,22 +1188,42 @@ const createWebEncoder = function() {
 //
 // the host's hands: the peer's events applied with easy-control
 //
+// a relative move as the addon takes it: mouse counts, fractions kept
+const countOf = function(value) {
+    const count = Number(value);
+    return (Number.isFinite(count) === true ? Math.max(-MOVE_BY_MAX, Math.min(MOVE_BY_MAX, count)) : 0);
+};
+
 const createControl = function(ctx) {
     const control = ctx["desktop"]?.["Control"];
     let screen = null;
 
+    // what one event did to the pointer: where a move put it, or nothing
     const apply = function(event) {
         if (control === undefined || screen === null) {
-            return;
+            return null;
         }
         const mouse = control["Mouse"];
         const keyboard = control["Keyboard"];
         switch (event["t"]) {
-            case "move":
+            case "move": {
                 // in one step, fractions kept: a scaled display has more
                 // pixels than its whole logical ones reach
-                mouse.setPosition(screen["x"] + event["x"] * screen["width"], screen["y"] + event["y"] * screen["height"]);
+                const x = screen["x"] + event["x"] * screen["width"];
+                const y = screen["y"] + event["y"] * screen["height"];
+                mouse.setPosition(x, y);
+                return {"x": x, "y": y};
+            }
+            case "move-by": {
+                // a distance, for a pointer the host holds: what a game reads,
+                // and setPosition never makes
+                const x = countOf(event["x"]);
+                const y = countOf(event["y"]);
+                if ((x !== 0 || y !== 0) && typeof mouse.moveBy === "function") {
+                    mouse.moveBy(x, y);
+                }
                 break;
+            }
             case "down":
                 mouse.buttonDown(event["b"]);
                 break;
@@ -1217,6 +1247,7 @@ const createControl = function(ctx) {
                 }
                 break;
         }
+        return null;
     };
 
     return {
@@ -1226,13 +1257,16 @@ const createControl = function(ctx) {
         "start": function(sharedScreen) {
             screen = sharedScreen;
         },
+        // and where the last move of the batch put the pointer, or null for
+        // a batch that placed it nowhere
         "apply": function(events) {
+            let target = null;
             if (Array.isArray(events) === false) {
-                return;
+                return target;
             }
             for (const event of events) {
                 try {
-                    apply(event);
+                    target = apply(event) ?? target;
                 } catch (error) {
                     // the system refusing input - a UAC prompt, the lock
                     // screen - is a state rather than a fault, and would be a
@@ -1242,6 +1276,7 @@ const createControl = function(ctx) {
                     }
                 }
             }
+            return target;
         },
         // a peer that lets go leaves nothing pressed behind it: the addon
         // keeps every button and key it pressed and did not release yet
@@ -1279,7 +1314,9 @@ const createControl = function(ctx) {
 // while the peer is driving, because the peer's own pointer is then where the
 // host's is and sending it from here would only be sending it late. A shape is
 // packed once and kept, since a session crosses the same handful over and over
-// and packing one costs more than reading ten.
+// and packing one costs more than reading ten. While the peer drives, the same
+// tick asks whether something on the host holds the pointer, so the peer can
+// hold its own - .claude/CLIENT.md, "A pointer the host holds".
 //
 const createCursorWatch = function(ctx, say) {
     const mouse = ctx["desktop"]?.["Control"]?.["Mouse"];
@@ -1292,23 +1329,22 @@ const createCursorWatch = function(ctx, say) {
     let position = "";              // and the position, as it was last said
     let isControlled = false;
     let isPacking = false;
+    let target = null;              // where the peer's last move put the pointer
+    let lockStreak = 0;             // ticks running that found it somewhere else
+    let isLocked = false;           // and whether the peer was told it is held
 
     // the shape, if it is one the peer has not been given. The addon's id of
-    // the shape is asked first and the picture only read when that changed -
-    // on Windows and Linux the id is a handle and costs next to nothing, on a
-    // Mac it is a hash of the picture - and the fingerprint is what decides
-    // after it, since one id can come back to a shape the peer already has.
-    const readShape = async function() {
-        if (isPacking === true || screen === null) {
+    // the shape (`id`, read by the tick) is asked first and the picture only
+    // read when that changed - on Windows and Linux the id is a handle and
+    // costs next to nothing, on a Mac it is a hash of the picture - and the
+    // fingerprint is what decides after it, since one id can come back to a
+    // shape the peer already has.
+    const readShape = async function(id) {
+        if (isPacking === true || screen === null || id === null || id === shapeId) {
             return;
         }
-        let id = null;
         let icon = null;
         try {
-            id = mouse.getIconId();
-            if (id === shapeId) {
-                return;
-            }
             icon = mouse.getIcon();
         } catch (error) {
             return;     // the addon is gone with the shell
@@ -1373,8 +1409,49 @@ const createCursorWatch = function(ctx, say) {
         say(message);
     };
 
-    // one tick, both halves. The position goes first: it is the cheap one and
-    // it must not wait behind a shape being packed.
+    const setLocked = function(isOn) {
+        if (isLocked === isOn) {
+            return;
+        }
+        isLocked = isOn;
+        say({"kind": "cursor-lock", "isLocked": isOn});
+    };
+
+    // whether something on the host holds the pointer - a game, a pointer-
+    // locked page: hidden, and not where the peer's move put it, on LOCK_TICKS
+    // ticks running. Held, the peer moves it by distances it cannot walk off
+    // its window with, until the pointer is shown again.
+    const readLock = function(id) {
+        const moved = target;
+        target = null;
+        if (screen === null || isControlled === false || id === null || typeof mouse?.["moveBy"] !== "function") {
+            return;
+        }
+        if (id !== 0) {
+            lockStreak = 0;
+            setLocked(false);
+            return;
+        }
+        if (isLocked === true || moved === null) {
+            return;     // nothing the peer did to judge it by
+        }
+        let at = null;
+        try {
+            at = mouse.getPosition();
+        } catch (error) {
+            return;
+        }
+        const isHeld = (Math.abs(at["x"] - moved["x"]) + Math.abs(at["y"] - moved["y"]) > LOCK_SLACK);
+        lockStreak = (isHeld === true ? lockStreak + 1 : 0);
+        if (lockStreak >= LOCK_TICKS) {
+            lockStreak = 0;
+            setLocked(true);
+        }
+    };
+
+    // one tick, every half. The position goes first: it is the cheap one and
+    // it must not wait behind a shape being packed. The shape's id is read
+    // once for the two that need it.
     //
     // The next one is scheduled against the clock the run started on rather
     // than against this one, so the work inside a tick is not added to the gap
@@ -1383,7 +1460,14 @@ const createCursorWatch = function(ctx, say) {
     // the picture's.
     const tick = function() {
         readPosition();
-        readShape().catch(function(error) {
+        let id = null;
+        try {
+            id = mouse.getIconId();
+        } catch (error) {
+            id = null;      // the addon is gone with the shell
+        }
+        readLock(id);
+        readShape(id).catch(function(error) {
             console.error("Cannot read the pointer:", error);
         });
         if (screen === null) {
@@ -1393,12 +1477,26 @@ const createCursorWatch = function(ctx, say) {
         pollTimerId = setTimeout(tick, CURSOR_POLL - (elapsed % CURSOR_POLL));
     };
 
+    // what the peer was told of the shape and the place, which a display is
+    // told again; whether the peer drives, and whether the pointer is held,
+    // outlast a restart of the share
+    const forget = function() {
+        clearTimeout(pollTimerId);
+        pollTimerId = -1;
+        screen = null;
+        shape = "";
+        shapeId = null;
+        position = "";
+        target = null;
+        lockStreak = 0;
+    };
+
     return {
         "isAvailable": function() {
             return typeof mouse?.["getIcon"] === "function";
         },
         "start": function(sharedScreen) {
-            this.stop();
+            forget();
             if (this.isAvailable() === false) {
                 return;
             }
@@ -1411,19 +1509,25 @@ const createCursorWatch = function(ctx, say) {
         },
         // the peer driving is the peer drawing its own pointer, so there is
         // nothing to send until it lets go - and then at once, wherever the
-        // pointer was left
+        // pointer was left. Either way the pointer starts out free.
         "setControlled": function(isOn) {
             isControlled = (isOn === true);
             position = "";
+            target = null;
+            lockStreak = 0;
+            setLocked(false);
+        },
+        // where the peer's last move put the pointer, for the next tick to
+        // look for it there
+        "noteTarget": function(at) {
+            if (at !== null && typeof at === "object") {
+                target = at;
+            }
         },
         "stop": function() {
-            clearTimeout(pollTimerId);
-            pollTimerId = -1;
-            screen = null;
-            shape = "";
-            shapeId = null;
-            position = "";
+            forget();
             isControlled = false;
+            isLocked = false;
         }
     };
 };
@@ -1959,7 +2063,7 @@ const createStream = function(ctx) {
                     cursorWatch?.setControlled(message["isControl"] === true);
                     break;
                 case "input":
-                    control?.apply(message["events"]);
+                    cursorWatch?.noteTarget(control?.apply(message["events"]) ?? null);
                     break;
                 case "clipboard":
                     setClipboardOn(message["isClipboard"] === true);
@@ -1983,6 +2087,7 @@ const createStream = function(ctx) {
                     viewer?.reset();
                     audioPlayer?.reset();
                     forgetCursor();
+                    input?.setLocked(false);
                     emit("share", null);
                     break;
                 case "cursor":
@@ -2004,6 +2109,9 @@ const createStream = function(ctx) {
                         ? {"x": message["x"], "y": message["y"]}
                         : null);
                     emitCursor();
+                    break;
+                case "cursor-lock":
+                    input?.setLocked(message["isLocked"] === true);
                     break;
                 case "clipboard-text":
                     takeClipboard(message["text"]);

@@ -799,7 +799,8 @@ keyboard already taken from a host that then says it has none is let go.
 **Fullscreen is the stage alone** - `#room-stage`, the canvas and nothing of
 the bar - so the way out is the exit shortcut: the browser's own Escape, or
 under the desktop shell the hold. The hold lets go of the innermost thing
-first, the fullscreen and then the keyboard on a second hold, and while it runs
+first - a pointer lock while there is one (see "A pointer the host holds"),
+then the fullscreen, and the keyboard on the hold after that - and while it runs
 the stream's `hold` event (`onHold` in `stream-input.js`, the delay in it)
 fills the ring over the picture, since five seconds on a key that shows nothing
 reads as a key that does nothing.
@@ -1247,6 +1248,48 @@ a second one over it would be two pointers. Because the shape lands in a CSS
 `url()` and an `img src`, the peer takes one only as the PNG data URL
 `cursor.js` packs (`CURSOR_IMAGE` in `stream.js`); a string that is anything
 else - a quote closing the `url()`, an address to fetch - is read as no pointer.
+
+**A pointer the host holds is held here too.** A game on the host - or a page
+in pointer lock there - hides the pointer, keeps it in one place, and reads the
+distances the mouse makes rather than where the pointer is. Two things break for
+a peer driving that with places: `Mouse.setPosition` makes no motion such a
+reader sees (easy-control's README, "Raw Input"), and the peer's own pointer,
+which nothing holds, walks off its window while the host's goes on turning. So
+on every tick the peer drives, the watch in `stream.js` asks whether the
+pointer is held: **hidden** (`Mouse.getIconId()` answers 0) **and not where the
+peer's last move put it** (`control.apply` hands back the target, the tick reads
+the pointer and allows `LOCK_SLACK` for rounding), on `LOCK_TICKS` ticks
+running that had a move in them. Neither alone will do - a pointer hidden while
+typing, or by a player gone idle, goes where it is put, and one a window keeps
+inside it but shows is a pointer the peer can see and follow. It is held
+against the *target* rather than against the read before it: a game that puts
+the pointer back every frame reads differently from one tick to the next but is
+mostly not where it was put, and Chromium's own pointer lock, which on Windows
+only re-centres near its window's edges, is caught exactly while the peer's
+pointer is heading for one. The host then says `{"kind": "cursor-lock",
+"isLocked": true}` and the peer locks its pointer over the canvas
+(`setLocked` in `stream-input.js`): asked for raw counts
+(`unadjustedMovement`), because `Mouse.moveBy` applies the host's own pointer
+speed the way a mouse plugged in there would, and for the platform's motion
+where raw counts are `NotSupportedError`. Moves then go as `{"t": "move-by"}` -
+`movementX`/`movementY`, added up within a frame rather than replaced, since
+each is a part of the distance - and the host applies them with
+`Mouse.moveBy`. A browser wants a recent gesture before it locks; the click
+that put the game in that state usually still is one when the message lands,
+and when it is not, the next click on the canvas is (and it reaches the host
+like any other). **It is let go of when the pointer is shown again** - a menu,
+the desktop - and not when a hidden one merely starts moving: the distances
+work for that too (a game's own drawn cursor in a menu follows them), and
+telling a free pointer from one a game re-centres would mean trusting reads
+that disagree half the time. Taking or letting go of the mouse starts both ends
+from a free pointer; a restart of the share - a new frame rate - keeps the
+lock, since it is the same game on the same pointer, which is why the watch's
+`start()` keeps who drives and what is held and forgets only the shape and the
+place. Where the hidden state cannot be read the pointer is never held: Linux
+cannot tell, and on a Mac a pointer hidden with `[NSCursor hide]` keeps its
+picture while a game there dissociates the pointer rather than putting it back,
+so a Mac host is not caught. The exact answer on Windows would be
+`GetClipCursor`, which the addon does not read yet.
 
 **Where it is drawn is where a click lands.** `#room-cursor` sits over
 `#room-stage` and is placed by `pictureBox()` in `stream-input.js` - the same
