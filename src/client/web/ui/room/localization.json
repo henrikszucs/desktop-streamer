@@ -26,6 +26,10 @@
             "none": {
                 "en": "The other device does not let its keyboard and mouse be taken",
                 "hu": "A másik eszköz nem engedi átvenni a billentyűzetét és az egerét"
+            },
+            "lock": {
+                "en": "The other device is holding its pointer. Click the picture to hold yours too.",
+                "hu": "A másik eszköz rögzítette az egérmutatóját. Kattints a képre, hogy itt is rögzüljön."
             }
         },
         "clipboard": {

@@ -36,6 +36,21 @@ const hasPicture = function(icon) {
     return (isPixels === true && width > 0 && height > 0 && data.length >= width * height * 4);
 };
 
+// whether the icon shows nothing: no picture, or one whose every pixel is
+// transparent - a pointer hidden by handing the system an empty shape
+const isBlank = function(icon) {
+    if (hasPicture(icon) === false) {
+        return true;
+    }
+    const data = icon["data"];
+    for (let i = 3, length = icon["width"] * icon["height"] * 4; i < length; i += 4) {
+        if ((data[i] & 0xff) !== 0) {
+            return false;
+        }
+    }
+    return true;
+};
+
 // the fingerprint of a shape, for telling one cursor from the next without
 // encoding either: FNV-1a over the pixels as they arrive, with the size and
 // the hotspot in front of it. 32 bits is a hash two shapes could collide in,
@@ -204,5 +219,5 @@ const packCursor = async function(icon, screen) {
     };
 };
 
-export { cursorFingerprint, hasPicture, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
-export default { cursorFingerprint, hasPicture, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
+export { cursorFingerprint, hasPicture, isBlank, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
+export default { cursorFingerprint, hasPicture, isBlank, readIcon, cursorScale, normalizeCursor, encodePNG, toDataURL, packCursor };
